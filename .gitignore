@@ -1,0 +1,33 @@
+# Build output
+bin/
+obj/
+dist/
+TestResults/
+coverage/
+*.tsbuildinfo
+web/vite.config.js
+web/vite.config.d.ts
+tools/git-worker/test/.test-worktree/
+tools/git-worker/test/.tmp-git-*/
+
+# Dependencies
+node_modules/
+
+# Local configuration and secrets
+.env
+appsettings.Production.json
+*.user
+*.suo
+
+# Runtime data
+repositories/
+postgres-data/
+artifacts/
+data/
+
+# Editors / OS
+.vs/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

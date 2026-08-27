@@ -1,0 +1,9 @@
+**/bin
+**/obj
+**/node_modules
+**/dist
+.git
+.env
+repositories
+postgres-data
+AI_Git_Architecture_Reviewer_상세설계서.docx

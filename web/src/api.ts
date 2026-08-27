@@ -1,0 +1,36 @@
+import type { AnalysisResponse, NaturalDiagramRecord, Repository, RepositoryInspection } from "./types";
+
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...init?.headers,
+    },
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string; detail?: string } | null;
+    throw new Error(body?.error ?? body?.detail ?? `요청 실패 (${response.status})`);
+  }
+  return (await response.json()) as T;
+}
+
+export const api = {
+  listRepositories: () => request<Repository[]>("/api/v1/repositories"),
+  inspectRepository: (localPath: string) =>
+    request<RepositoryInspection>("/api/v1/repositories/inspect", {
+      method: "POST",
+      body: JSON.stringify({ localPath }),
+    }),
+  registerRepository: (input: { name: string; localPath: string; defaultBranch: string }) =>
+    request<Repository>("/api/v1/repositories", { method: "POST", body: JSON.stringify(input) }),
+  createNaturalDiagram: (input: { prompt: string; diagramType: string }) =>
+    request<NaturalDiagramRecord>("/api/v1/natural-diagrams", { method: "POST", body: JSON.stringify(input) }),
+  createAnalysis: (input: {
+    repositoryId: string;
+    baseRevision: string;
+    targetRevision: string;
+    includeLlmSummary: boolean;
+  }) => request<AnalysisResponse>("/api/v1/analyses", { method: "POST", body: JSON.stringify(input) }),
+  getAnalysis: (id: string) => request<AnalysisResponse>(`/api/v1/analyses/${id}`),
+};

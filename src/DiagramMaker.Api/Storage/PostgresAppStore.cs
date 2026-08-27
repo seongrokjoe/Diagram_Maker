@@ -1,0 +1,205 @@
+using System.Text.Json;
+using DiagramMaker.Domain;
+using Npgsql;
+using NpgsqlTypes;
+
+namespace DiagramMaker.Storage;
+
+public sealed class PostgresAppStore : IAppStore
+{
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly NpgsqlDataSource _dataSource;
+
+    public PostgresAppStore(string connectionString)
+    {
+        _dataSource = NpgsqlDataSource.Create(connectionString);
+    }
+
+    public async Task InitializeAsync(CancellationToken cancellationToken)
+    {
+        const string sql = """
+            CREATE TABLE IF NOT EXISTS repositories (
+                id uuid PRIMARY KEY,
+                definition jsonb NOT NULL,
+                created_at timestamptz NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS analysis_jobs (
+                id uuid PRIMARY KEY,
+                state text NOT NULL,
+                payload jsonb NOT NULL,
+                created_at timestamptz NOT NULL,
+                updated_at timestamptz NOT NULL,
+                lease_until timestamptz NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_analysis_jobs_queue
+                ON analysis_jobs (state, created_at);
+            CREATE TABLE IF NOT EXISTS natural_diagrams (
+                id uuid PRIMARY KEY,
+                payload jsonb NOT NULL,
+                created_at timestamptz NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS audit_events (
+                id uuid PRIMARY KEY,
+                payload jsonb NOT NULL,
+                created_at timestamptz NOT NULL
+            );
+            """;
+
+        await using var command = _dataSource.CreateCommand(sql);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<RepositoryDefinition>> ListRepositoriesAsync(CancellationToken cancellationToken)
+    {
+        const string sql = "SELECT definition::text FROM repositories ORDER BY definition->>'name'";
+        var values = new List<RepositoryDefinition>();
+        await using var command = _dataSource.CreateCommand(sql);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            values.Add(Deserialize<RepositoryDefinition>(reader.GetString(0)));
+        }
+
+        return values;
+    }
+
+    public Task<RepositoryDefinition?> GetRepositoryAsync(Guid id, CancellationToken cancellationToken) =>
+        GetByIdAsync<RepositoryDefinition>("repositories", "definition", id, cancellationToken);
+
+    public async Task SaveRepositoryAsync(RepositoryDefinition repository, CancellationToken cancellationToken)
+    {
+        const string sql = """
+            INSERT INTO repositories (id, definition, created_at)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (id) DO UPDATE SET definition = EXCLUDED.definition
+            """;
+        await ExecuteJsonUpsertAsync(sql, repository.Id, repository, repository.CreatedAt, cancellationToken);
+    }
+
+    public async Task SaveAnalysisAsync(AnalysisJob job, CancellationToken cancellationToken)
+    {
+        const string sql = """
+            INSERT INTO analysis_jobs (id, state, payload, created_at, updated_at, lease_until)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (id) DO UPDATE SET
+                state = EXCLUDED.state,
+                payload = EXCLUDED.payload,
+                updated_at = EXCLUDED.updated_at,
+                lease_until = EXCLUDED.lease_until
+            """;
+        await using var command = _dataSource.CreateCommand(sql);
+        command.Parameters.AddWithValue(job.Id);
+        command.Parameters.AddWithValue(job.State.ToString());
+        command.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(job, JsonOptions));
+        command.Parameters.AddWithValue(job.CreatedAt);
+        command.Parameters.AddWithValue(job.UpdatedAt);
+        command.Parameters.AddWithValue((object?)job.LeaseUntil ?? DBNull.Value);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public Task<AnalysisJob?> GetAnalysisAsync(Guid id, CancellationToken cancellationToken) =>
+        GetByIdAsync<AnalysisJob>("analysis_jobs", "payload", id, cancellationToken);
+
+    public async Task<AnalysisJob?> TryLeaseAnalysisAsync(TimeSpan leaseDuration, CancellationToken cancellationToken)
+    {
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        const string selectSql = """
+            SELECT id, payload::text
+            FROM analysis_jobs
+            WHERE state = 'Queued'
+               OR (lease_until < now() AND state NOT IN ('Completed', 'Partial', 'Failed'))
+            ORDER BY created_at
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+            """;
+        await using var select = new NpgsqlCommand(selectSql, connection, transaction);
+        await using var reader = await select.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return null;
+        }
+
+        var id = reader.GetGuid(0);
+        var job = Deserialize<AnalysisJob>(reader.GetString(1));
+        await reader.CloseAsync();
+
+        var now = DateTimeOffset.UtcNow;
+        var leased = job with
+        {
+            State = AnalysisState.Resolving,
+            Progress = 5,
+            StageMessage = "Resolving immutable revisions",
+            LeaseUntil = now.Add(leaseDuration),
+            UpdatedAt = now
+        };
+
+        const string updateSql = "UPDATE analysis_jobs SET state=$2, payload=$3, updated_at=$4, lease_until=$5 WHERE id=$1";
+        await using var update = new NpgsqlCommand(updateSql, connection, transaction);
+        update.Parameters.AddWithValue(id);
+        update.Parameters.AddWithValue(leased.State.ToString());
+        update.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(leased, JsonOptions));
+        update.Parameters.AddWithValue(now);
+        update.Parameters.AddWithValue(leased.LeaseUntil!.Value);
+        await update.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return leased;
+    }
+
+    public async Task SaveNaturalDiagramAsync(NaturalDiagramRecord record, CancellationToken cancellationToken)
+    {
+        const string sql = """
+            INSERT INTO natural_diagrams (id, payload, created_at)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload
+            """;
+        await ExecuteJsonUpsertAsync(sql, record.Id, record, record.CreatedAt, cancellationToken);
+    }
+
+    public Task<NaturalDiagramRecord?> GetNaturalDiagramAsync(Guid id, CancellationToken cancellationToken) =>
+        GetByIdAsync<NaturalDiagramRecord>("natural_diagrams", "payload", id, cancellationToken);
+
+    public async Task SaveAuditAsync(AuditEvent auditEvent, CancellationToken cancellationToken)
+    {
+        const string sql = "INSERT INTO audit_events (id, payload, created_at) VALUES ($1, $2, $3)";
+        await ExecuteJsonUpsertAsync(sql, auditEvent.Id, auditEvent, auditEvent.CreatedAt, cancellationToken);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _dataSource.DisposeAsync();
+    }
+
+    private async Task<T?> GetByIdAsync<T>(string table, string column, Guid id, CancellationToken cancellationToken)
+    {
+        var allowed = table switch
+        {
+            "repositories" when column == "definition" => true,
+            "analysis_jobs" when column == "payload" => true,
+            "natural_diagrams" when column == "payload" => true,
+            _ => false
+        };
+        if (!allowed)
+        {
+            throw new InvalidOperationException("Invalid storage query target.");
+        }
+
+        await using var command = _dataSource.CreateCommand($"SELECT {column}::text FROM {table} WHERE id=$1");
+        command.Parameters.AddWithValue(id);
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        return value is string json ? Deserialize<T>(json) : default;
+    }
+
+    private async Task ExecuteJsonUpsertAsync<T>(string sql, Guid id, T value, DateTimeOffset createdAt, CancellationToken cancellationToken)
+    {
+        await using var command = _dataSource.CreateCommand(sql);
+        command.Parameters.AddWithValue(id);
+        command.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(value, JsonOptions));
+        command.Parameters.AddWithValue(createdAt);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static T Deserialize<T>(string json) =>
+        JsonSerializer.Deserialize<T>(json, JsonOptions) ?? throw new InvalidOperationException($"Stored {typeof(T).Name} payload is invalid.");
+}

@@ -1,0 +1,48 @@
+services:
+  app:
+    build:
+      context: .
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      Storage__Provider: PostgreSQL
+      Storage__ConnectionString: Host=postgres;Port=5432;Database=diagram_maker;Username=diagram_maker;Password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      Security__TrustReverseProxyHeaders: "true"
+      Llm__Enabled: ${LLM_ENABLED:-false}
+      Llm__BaseUrl: ${LLM_BASE_URL:-http://internal-llm.invalid}
+      Llm__ChatPath: ${LLM_CHAT_PATH:-/v1/chat/completions}
+      Llm__Model: ${LLM_MODEL:-internal-code-model}
+      Llm__ApiKey: ${LLM_API_KEY:-}
+      Llm__AllowedHosts__0: ${LLM_ALLOWED_HOST:-internal-llm.invalid}
+    volumes:
+      - ${REPOSITORY_ROOT:?set REPOSITORY_ROOT}:/repositories:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
+    security_opt:
+      - no-new-privileges:true
+
+  postgres:
+    image: postgres:18-bookworm
+    environment:
+      POSTGRES_DB: diagram_maker
+      POSTGRES_USER: diagram_maker
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U diagram_maker -d diagram_maker"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  postgres-data:

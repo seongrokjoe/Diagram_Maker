@@ -1,0 +1,80 @@
+:root {
+  font-family: Arial, "Malgun Gothic", sans-serif;
+  color: #14213a;
+  background: #eef2f7;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 1080px; min-height: 100vh; }
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+
+.app-shell { min-height: 100vh; }
+.topbar { height: 96px; padding: 20px 38px; background: #132744; color: white; display: flex; align-items: center; justify-content: space-between; border-bottom: 4px solid #2f7ddb; }
+.topbar h1 { margin: 3px 0 0; font-size: 25px; letter-spacing: -.4px; }
+.eyebrow, .section-label { margin: 0; color: #6b86a8; font-size: 11px; font-weight: 800; letter-spacing: 1.5px; }
+.topbar .eyebrow { color: #90bff1; }
+.network-badge { padding: 8px 13px; border: 1px solid #3f956a; background: #173c35; color: #a8e6c2; border-radius: 4px; font-size: 12px; font-weight: 700; }
+.tabs { display: flex; gap: 2px; padding: 0 38px; background: white; border-bottom: 1px solid #cbd5e1; }
+.tabs button { border: 0; border-bottom: 3px solid transparent; padding: 17px 22px 14px; background: transparent; color: #58708f; font-weight: 700; }
+.tabs button.active { color: #175ba8; border-bottom-color: #2f7ddb; }
+main { padding: 28px 38px 44px; }
+.workspace-grid { display: grid; grid-template-columns: minmax(330px, .72fr) minmax(600px, 1.5fr); gap: 22px; align-items: start; }
+.repository-layout { display: grid; grid-template-columns: 420px 1fr; gap: 22px; align-items: start; }
+.panel { background: white; border: 1px solid #cbd6e2; box-shadow: 0 4px 14px rgba(33, 56, 84, .06); padding: 25px; min-height: 230px; }
+.panel h2 { margin: 7px 0 22px; font-size: 20px; }
+.panel h3 { margin: 24px 0 10px; font-size: 15px; }
+.controls { display: flex; flex-direction: column; gap: 16px; }
+label { display: flex; flex-direction: column; gap: 7px; font-size: 12px; font-weight: 700; color: #3c526e; }
+input, select, textarea { width: 100%; border: 1px solid #b7c5d5; border-radius: 3px; padding: 11px 12px; color: #14213a; background: #fbfdff; outline: none; }
+input:focus, select:focus, textarea:focus { border-color: #2f7ddb; box-shadow: 0 0 0 3px rgba(47, 125, 219, .12); }
+textarea { resize: vertical; line-height: 1.55; }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.checkbox { flex-direction: row; align-items: center; }
+.checkbox input { width: auto; }
+.primary { border: 1px solid #165da9; background: #1e6ec8; color: white; padding: 12px 16px; border-radius: 3px; font-weight: 800; }
+.primary:hover { background: #165da9; }
+.primary:disabled, .secondary:disabled { opacity: .5; cursor: default; }
+.button-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.secondary { border: 1px solid #9eb3ca; background: #f4f8fc; color: #244f7d; padding: 12px 16px; border-radius: 3px; font-weight: 800; }
+.secondary:hover { background: #e8f1fa; }
+.connection-card { display: flex; flex-direction: column; gap: 6px; padding: 13px 14px; border: 1px solid #a9ddc0; border-left: 4px solid #278457; background: #effaf4; color: #315b48; font-size: 12px; }
+.connection-card strong { color: #176b43; }
+.connection-card code, .repository-list code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connection-card small { color: #607d6d; }
+.help { margin: -4px 0 0; color: #70839b; font-size: 11px; line-height: 1.5; }
+.panel-heading { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid #e0e7ef; margin: -3px 0 20px; }
+.status-chip { display: inline-block; padding: 5px 9px; background: #e8f2ff; color: #1763b7; border: 1px solid #b9d6f7; border-radius: 3px; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.status-chip.completed { background: #e5f7ed; color: #167348; border-color: #b7e5ca; }
+.status-chip.partial { background: #fff4d6; color: #966600; border-color: #f0d286; }
+.status-chip.failed { background: #fee9e7; color: #b32d24; border-color: #efbab5; }
+.diagram-canvas { min-height: 390px; overflow: auto; padding: 20px; display: grid; place-items: center; background: #fafcff; border: 1px solid #e0e8f1; }
+.diagram-canvas svg { max-width: 100%; height: auto; }
+.empty-state { min-height: 380px; display: grid; place-content: center; text-align: center; color: #8293a8; border: 1px dashed #c4cfdb; background: #fafcff; }
+.empty-icon { font-size: 42px; color: #aac0d8; }
+.empty-state p { margin: 10px 0; }
+.error-panel { margin: 18px 38px 0; border-left: 4px solid #cc3b32; background: #fff0ef; color: #90251f; padding: 13px 16px; }
+.error-text { color: #a52720; }
+.progress-block { margin: 60px 10px; }
+.progress-meta { display: flex; justify-content: space-between; margin-bottom: 9px; color: #4b617c; }
+.progress-track { height: 9px; background: #e3eaf2; overflow: hidden; }
+.progress-track span { height: 100%; display: block; background: #2f7ddb; transition: width .3s ease; }
+.summary-card { border-left: 4px solid #2f7ddb; padding: 14px 16px; background: #f0f6fd; }
+.summary-card p { margin: 6px 0 0; line-height: 1.55; }
+.warning { background: #fff7df; border-left: 3px solid #d99b18; padding: 10px 13px; font-size: 12px; }
+.file-list, .repository-list { list-style: none; margin: 0; padding: 0; }
+.file-list li, .repository-list li { display: flex; gap: 10px; align-items: center; padding: 10px 3px; border-bottom: 1px solid #e4eaf1; }
+.change { width: 68px; padding: 3px 5px; text-align: center; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #e8eef5; }
+.change.added { color: #147141; background: #def5e8; }
+.change.deleted { color: #a52a23; background: #fde5e3; }
+.change.modified { color: #8b6300; background: #fff0c2; }
+.change.renamed { color: #5d3a9f; background: #eee6fc; }
+.risk { display: flex; gap: 12px; margin: 8px 0; padding: 10px 12px; background: #fff3f1; border: 1px solid #f0c7c2; font-size: 12px; }
+.risk strong { color: #b33027; text-transform: uppercase; }
+.repository-list li { justify-content: space-between; }
+.repository-list div { display: flex; flex-direction: column; gap: 4px; }
+.repository-list span { color: #718198; font-size: 12px; }
+details { margin-top: 16px; }
+summary { cursor: pointer; color: #4b6685; font-size: 12px; font-weight: 700; }
+pre { overflow: auto; max-height: 260px; padding: 14px; background: #101c2d; color: #d4e7ff; font-size: 11px; line-height: 1.5; }
