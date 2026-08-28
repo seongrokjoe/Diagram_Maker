@@ -53,7 +53,11 @@ public sealed class StructuredLlmCompletion(VllmClient client)
                 "The internal LLM stopped because the output limit was reached.",
                 failureKind: "Truncated",
                 initialFailureKind: initialFailureKind,
-                repairAttempted: repairAttempted);
+                repairAttempted: repairAttempted,
+                requestedMaxOutputTokens: result.RequestedMaxOutputTokens,
+                promptTokens: result.PromptTokens,
+                completionTokens: result.CompletionTokens,
+                totalTokens: result.TotalTokens);
     }
 
     private static StructuredAttempt<T> Deserialize<T>(string content, Func<T, string?> validator)

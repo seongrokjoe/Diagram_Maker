@@ -10,6 +10,7 @@
     "RequestTimeoutSeconds": 300,
     "DiagramOutputTokens": 16000,
     "ReviewOutputTokens": 8000,
+    "ThinkingOutputTokens": 60000,
     "OutputHardLimit": 60000,
     "MaxInputCharacters": 60000,
     "MaxTransientRetries": 1

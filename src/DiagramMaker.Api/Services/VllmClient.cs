@@ -12,13 +12,21 @@ public sealed class LlmClientException(
     Exception? innerException = null,
     string? failureKind = null,
     string? initialFailureKind = null,
-    bool repairAttempted = false)
+    bool repairAttempted = false,
+    int? requestedMaxOutputTokens = null,
+    int? promptTokens = null,
+    int? completionTokens = null,
+    int? totalTokens = null)
     : Exception(message, innerException)
 {
     public string Code { get; } = code;
     public string? FailureKind { get; } = failureKind;
     public string? InitialFailureKind { get; } = initialFailureKind;
     public bool RepairAttempted { get; } = repairAttempted;
+    public int? RequestedMaxOutputTokens { get; } = requestedMaxOutputTokens;
+    public int? PromptTokens { get; } = promptTokens;
+    public int? CompletionTokens { get; } = completionTokens;
+    public int? TotalTokens { get; } = totalTokens;
 }
 
 public sealed record VllmCompletionRequest(
@@ -34,7 +42,11 @@ public sealed record VllmCompletionResult(
     long ElapsedMilliseconds,
     bool StructuredOutputApplied,
     bool StructuredOutputFallbackUsed,
-    int RetryCount);
+    int RetryCount,
+    int RequestedMaxOutputTokens,
+    int? PromptTokens,
+    int? CompletionTokens,
+    int? TotalTokens);
 
 public sealed class VllmClient : IDisposable
 {
@@ -97,7 +109,8 @@ public sealed class VllmClient : IDisposable
                 stopwatch.Stop();
                 LogCompletion(correlationId, stopwatch.ElapsedMilliseconds, request.EnableThinking, retryCount, fallback: true);
                 return new VllmCompletionResult(fallbackContent.Content, fallbackContent.FinishReason,
-                    stopwatch.ElapsedMilliseconds, false, true, retryCount);
+                    stopwatch.ElapsedMilliseconds, false, true, retryCount, request.MaxOutputTokens,
+                    fallbackContent.PromptTokens, fallbackContent.CompletionTokens, fallbackContent.TotalTokens);
             }
 
             EnsureSuccess(initialResponse);
@@ -105,7 +118,8 @@ public sealed class VllmClient : IDisposable
             stopwatch.Stop();
             LogCompletion(correlationId, stopwatch.ElapsedMilliseconds, request.EnableThinking, retryCount, fallback: false);
             return new VllmCompletionResult(content.Content, content.FinishReason,
-                stopwatch.ElapsedMilliseconds, includeSchema, false, retryCount);
+                stopwatch.ElapsedMilliseconds, includeSchema, false, retryCount, request.MaxOutputTokens,
+                content.PromptTokens, content.CompletionTokens, content.TotalTokens);
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested && timeoutSource.IsCancellationRequested)
         {
@@ -167,7 +181,7 @@ public sealed class VllmClient : IDisposable
         };
     }
 
-    private async Task<(string Content, string FinishReason)> ParseResponseAsync(
+    private async Task<ParsedCompletion> ParseResponseAsync(
         HttpResponseMessage response, CancellationToken cancellationToken)
     {
         byte[] body;
@@ -187,13 +201,27 @@ public sealed class VllmClient : IDisposable
                 throw new LlmClientException("LLM_RESPONSE_FORMAT", "The internal LLM response did not contain message content.");
             var finishReason = choice.TryGetProperty("finish_reason", out var finish) && finish.ValueKind == JsonValueKind.String
                 ? finish.GetString() ?? string.Empty : string.Empty;
-            return (content.GetString() ?? string.Empty, finishReason);
+            var usage = json.RootElement.TryGetProperty("usage", out var usageElement) && usageElement.ValueKind == JsonValueKind.Object
+                ? usageElement : default;
+            return new ParsedCompletion(
+                content.GetString() ?? string.Empty,
+                finishReason,
+                GetOptionalInt32(usage, "prompt_tokens"),
+                GetOptionalInt32(usage, "completion_tokens"),
+                GetOptionalInt32(usage, "total_tokens"));
         }
         catch (JsonException exception)
         {
             throw new LlmClientException("LLM_RESPONSE_FORMAT", "The internal LLM returned malformed JSON.", exception);
         }
     }
+
+    private static int? GetOptionalInt32(JsonElement element, string propertyName) =>
+        element.ValueKind == JsonValueKind.Object &&
+        element.TryGetProperty(propertyName, out var value) &&
+        value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number)
+            ? number
+            : null;
 
     private async Task<byte[]> ReadBoundedBodyAsync(Stream stream, CancellationToken cancellationToken)
     {
@@ -263,7 +291,9 @@ public sealed class VllmClient : IDisposable
             throw new InvalidOperationException("LLM timeout values must be between 1 and 1,800 seconds.");
         if (options.OutputHardLimit is <= 0 or > 60_000 || options.DiagramOutputTokens is <= 0 ||
             options.DiagramOutputTokens > options.OutputHardLimit || options.ReviewOutputTokens is <= 0 ||
-            options.ReviewOutputTokens > options.OutputHardLimit || options.MaxInputCharacters is <= 0 or > 200_000 ||
+            options.ReviewOutputTokens > options.OutputHardLimit ||
+            options.ThinkingOutputTokens is <= 0 || options.ThinkingOutputTokens > options.OutputHardLimit ||
+            options.MaxInputCharacters is <= 0 or > 200_000 ||
             options.MaxTransientRetries is < 0 or > 3)
             throw new InvalidOperationException("LLM limits are outside the permitted range.");
         return endpoint;
@@ -275,4 +305,11 @@ public sealed class VllmClient : IDisposable
             correlationId, elapsed, thinking, retries, fallback);
 
     public void Dispose() => _client?.Dispose();
+
+    private sealed record ParsedCompletion(
+        string Content,
+        string FinishReason,
+        int? PromptTokens,
+        int? CompletionTokens,
+        int? TotalTokens);
 }

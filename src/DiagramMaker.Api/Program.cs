@@ -422,7 +422,11 @@ static IResult LlmFailure(LlmClientException exception) => Results.Json(new
     error = exception.Message,
     failureKind = exception.FailureKind,
     initialFailureKind = exception.InitialFailureKind,
-    repairAttempted = exception.RepairAttempted
+    repairAttempted = exception.RepairAttempted,
+    requestedMaxOutputTokens = exception.RequestedMaxOutputTokens,
+    promptTokens = exception.PromptTokens,
+    completionTokens = exception.CompletionTokens,
+    totalTokens = exception.TotalTokens
 }, statusCode: StatusCodes.Status503ServiceUnavailable);
 
 static async Task<AnalysisJob?> AuthorizedJob(Guid id, HttpContext context, IAppStore store, CancellationToken cancellationToken)

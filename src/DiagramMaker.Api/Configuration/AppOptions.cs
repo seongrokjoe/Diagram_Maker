@@ -39,6 +39,7 @@ public sealed class LlmOptions
     public int RequestTimeoutSeconds { get; set; } = 300;
     public int DiagramOutputTokens { get; set; } = 16_000;
     public int ReviewOutputTokens { get; set; } = 8_000;
+    public int? ThinkingOutputTokens { get; set; }
     public int OutputHardLimit { get; set; } = 60_000;
     public int MaxInputCharacters { get; set; } = 60_000;
     public int MaxTransientRetries { get; set; } = 1;

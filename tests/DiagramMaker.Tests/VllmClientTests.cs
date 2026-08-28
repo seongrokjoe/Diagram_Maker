@@ -93,6 +93,10 @@ public sealed class VllmClientTests
         Assert.Equal("LLM_RESPONSE_TRUNCATED", error.Code);
         Assert.Equal("Truncated", error.FailureKind);
         Assert.False(error.RepairAttempted);
+        Assert.Equal(100, error.RequestedMaxOutputTokens);
+        Assert.Equal(10, error.PromptTokens);
+        Assert.Equal(20, error.CompletionTokens);
+        Assert.Equal(30, error.TotalTokens);
         Assert.Single(handler.Requests);
     }
 
@@ -186,9 +190,83 @@ public sealed class VllmClientTests
         Assert.False(nodeItem.GetProperty("additionalProperties").GetBoolean());
         Assert.Contains(nodeItem.GetProperty("required").EnumerateArray(), item => item.GetString() == "group");
         Assert.Equal(0, nodeItem.GetProperty("properties").GetProperty("evidenceIds").GetProperty("maxItems").GetInt32());
+        Assert.False(result.ThinkingEnabled);
+        Assert.Equal(1_000, result.RequestedMaxOutputTokens);
+        Assert.Equal(20, result.CompletionTokens);
+    }
+
+    [Fact]
+    public async Task ThinkingContractUsesConfiguredThinkingBudget()
+    {
+        var handler = new QueueHandler(Response(ValidDiagramContent));
+        var options = Options();
+        options.ThinkingOutputTokens = 1_800;
+        using var transport = new VllmClient(options, handler: handler);
+        var llm = CreateInternalClient(options, transport);
+
+        var result = await llm.TestDiagramContractAsync(enableThinking: true, CancellationToken.None);
+
+        using var payload = JsonDocument.Parse(Assert.Single(handler.Requests).Body);
+        Assert.True(payload.RootElement.GetProperty("chat_template_kwargs").GetProperty("enable_thinking").GetBoolean());
+        Assert.Equal(1_800, payload.RootElement.GetProperty("max_tokens").GetInt32());
+        Assert.True(result.ThinkingEnabled);
+        Assert.Equal(1_800, result.RequestedMaxOutputTokens);
+    }
+
+    [Fact]
+    public async Task ThinkingBudgetFallsBackToOutputHardLimit()
+    {
+        var handler = new QueueHandler(Response(ValidDiagramContent));
+        var options = Options();
+        Assert.Null(options.ThinkingOutputTokens);
+        using var transport = new VllmClient(options, handler: handler);
+        var llm = CreateInternalClient(options, transport);
+
+        await llm.TestDiagramContractAsync(enableThinking: true, CancellationToken.None);
+
+        using var payload = JsonDocument.Parse(Assert.Single(handler.Requests).Body);
+        Assert.Equal(options.OutputHardLimit, payload.RootElement.GetProperty("max_tokens").GetInt32());
+    }
+
+    [Fact]
+    public async Task NaturalDiagramThinkingUsesThinkingBudget()
+    {
+        var handler = new QueueHandler(Response(ValidDiagramContent));
+        var options = Options();
+        options.ThinkingOutputTokens = 1_750;
+        using var transport = new VllmClient(options, handler: handler);
+        var llm = CreateInternalClient(options, transport);
+
+        var diagram = await llm.GenerateNaturalDiagramAsync(
+            "synthetic request", "flowchart", enableThinking: true, CancellationToken.None);
+
+        Assert.NotNull(diagram);
+        using var payload = JsonDocument.Parse(Assert.Single(handler.Requests).Body);
+        Assert.Equal(1_750, payload.RootElement.GetProperty("max_tokens").GetInt32());
+        Assert.True(payload.RootElement.GetProperty("chat_template_kwargs").GetProperty("enable_thinking").GetBoolean());
+    }
+
+    [Fact]
+    public void RejectsThinkingBudgetAboveHardLimit()
+    {
+        var options = Options();
+        options.ThinkingOutputTokens = options.OutputHardLimit + 1;
+
+        Assert.Throws<InvalidOperationException>(() => new VllmClient(options, handler: new QueueHandler()));
     }
 
     private static VllmClient CreateClient(HttpMessageHandler handler) => new(Options(), handler: handler);
+
+    private static InternalLlmClient CreateInternalClient(LlmOptions options, VllmClient transport)
+    {
+        var validator = new DiagramValidator();
+        return new InternalLlmClient(
+            Microsoft.Extensions.Options.Options.Create(options),
+            new SecretMasker(),
+            validator,
+            transport,
+            new StructuredLlmCompletion(transport));
+    }
 
     private static LlmOptions Options() => new()
     {
@@ -217,7 +295,8 @@ public sealed class VllmClientTests
                     message = new { role = "assistant", content, reasoning_content = "must-not-be-read" },
                     finish_reason = finishReason
                 }
-            }
+            },
+            usage = new { prompt_tokens = 10, completion_tokens = 20, total_tokens = 30 }
         });
         return new HttpResponseMessage(HttpStatusCode.OK)
         {

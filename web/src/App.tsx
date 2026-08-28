@@ -359,8 +359,11 @@ function LlmTestCard({ title, value }: { title: string; value?: LlmTestValue }) 
         <dl>
           <dt>응답 시간</dt><dd>{value.elapsedMilliseconds} ms</dd>
           <dt>종료 사유</dt><dd>{value.finishReason || "미제공"}</dd>
+          <dt>출력 토큰 상한</dt><dd>{value.requestedMaxOutputTokens}</dd>
+          <dt>토큰 사용량</dt><dd>{value.promptTokens ?? "-"} / {value.completionTokens ?? "-"} / {value.totalTokens ?? "-"}</dd>
           {"responseCharacters" in value && <><dt>응답 문자</dt><dd>{value.responseCharacters}</dd></>}
           {"nodeCount" in value && <>
+            <dt>Thinking</dt><dd>{value.thinkingEnabled ? "사용" : "미사용"}</dd>
             <dt>노드 / 엣지</dt><dd>{value.nodeCount} / {value.edgeCount}</dd>
             <dt>구조화 적용</dt><dd>{value.structuredOutputApplied ? "예" : "아니오"}</dd>
             <dt>Fallback / 복구</dt><dd>{value.structuredOutputFallbackUsed ? "사용" : "없음"} / {value.repairUsed ? "사용" : "없음"}</dd>

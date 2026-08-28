@@ -19,6 +19,7 @@ app.MapPost("/v1/chat/completions", async (HttpContext context, CancellationToke
     var structured = request.RootElement.TryGetProperty("structured_outputs", out _);
     var thinking = request.RootElement.TryGetProperty("chat_template_kwargs", out var template) &&
                    template.TryGetProperty("enable_thinking", out var enabled) && enabled.GetBoolean();
+    var completionTokens = structured ? (thinking ? 240 : 120) : 2;
     var content = mode == "malformed"
         ? "not-json"
         : structured
@@ -52,7 +53,8 @@ app.MapPost("/v1/chat/completions", async (HttpContext context, CancellationToke
                 message = new { role = "assistant", content, reasoning_content = thinking ? "synthetic-only" : null },
                 finish_reason = mode == "length" ? "length" : "stop"
             }
-        }
+        },
+        usage = new { prompt_tokens = 12, completion_tokens = completionTokens, total_tokens = 12 + completionTokens }
     });
 });
 

@@ -246,7 +246,11 @@ public sealed record LlmConnectionTestResult(
     bool Success,
     long ElapsedMilliseconds,
     string FinishReason,
-    int ResponseCharacters);
+    int ResponseCharacters,
+    int RequestedMaxOutputTokens,
+    int? PromptTokens,
+    int? CompletionTokens,
+    int? TotalTokens);
 
 public sealed record LlmContractTestResult(
     bool Success,
@@ -256,4 +260,9 @@ public sealed record LlmContractTestResult(
     string FinishReason,
     bool StructuredOutputApplied,
     bool StructuredOutputFallbackUsed,
-    bool RepairUsed);
+    bool RepairUsed,
+    bool ThinkingEnabled,
+    int RequestedMaxOutputTokens,
+    int? PromptTokens,
+    int? CompletionTokens,
+    int? TotalTokens);

@@ -23,9 +23,16 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
       failureKind?: string;
       initialFailureKind?: string;
       repairAttempted?: boolean;
+      requestedMaxOutputTokens?: number;
+      completionTokens?: number;
     } | null;
     const message = body?.error ?? body?.detail ?? `요청 실패 (${response.status})`;
-    const diagnostics = [body?.errorCode, body?.failureKind]
+    const diagnostics = [
+      body?.errorCode,
+      body?.failureKind,
+      body?.requestedMaxOutputTokens !== undefined ? `max=${body.requestedMaxOutputTokens}` : undefined,
+      body?.completionTokens !== undefined ? `completion=${body.completionTokens}` : undefined,
+    ]
       .filter((value): value is string => Boolean(value));
     throw new Error(diagnostics.length > 0 ? `${message} [${diagnostics.join(" / ")}]` : message);
   }

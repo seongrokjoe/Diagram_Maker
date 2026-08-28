@@ -114,7 +114,7 @@ public sealed class InternalLlmClient(
             system,
             $"Requested type: {requestedType}\nRequest: {safePrompt}",
             DiagramSchema,
-            _options.DiagramOutputTokens,
+            GetOutputTokens(_options.DiagramOutputTokens, enableThinking),
             enableThinking,
             GetDiagramFailure,
             cancellationToken);
@@ -154,7 +154,7 @@ public sealed class InternalLlmClient(
             system,
             context,
             ReviewSchema,
-            _options.ReviewOutputTokens,
+            GetOutputTokens(_options.ReviewOutputTokens, enableThinking),
             enableThinking,
             value => GetReviewFailure(value, allowedEvidence),
             cancellationToken);
@@ -168,16 +168,27 @@ public sealed class InternalLlmClient(
             "Reply with OK only.",
             8,
             EnableThinking: false), cancellationToken);
-        return new LlmConnectionTestResult(true, result.ElapsedMilliseconds, result.FinishReason, result.Content.Length);
+        return new LlmConnectionTestResult(
+            true,
+            result.ElapsedMilliseconds,
+            result.FinishReason,
+            result.Content.Length,
+            result.RequestedMaxOutputTokens,
+            result.PromptTokens,
+            result.CompletionTokens,
+            result.TotalTokens);
     }
 
     public async Task<LlmContractTestResult> TestDiagramContractAsync(bool enableThinking, CancellationToken cancellationToken)
     {
+        var maxOutputTokens = enableThinking
+            ? GetThinkingOutputTokens()
+            : Math.Min(_options.DiagramOutputTokens, 4_000);
         var result = await structured.CompleteAsync<DiagramIr>(
             "Return exactly one DiagramIR JSON object for synthetic components only.",
             "Create a flow from SyntheticClient to SyntheticService to SyntheticStore.",
             DiagramSchema,
-            Math.Min(_options.DiagramOutputTokens, 4_000),
+            maxOutputTokens,
             enableThinking,
             GetDiagramFailure,
             cancellationToken);
@@ -189,8 +200,18 @@ public sealed class InternalLlmClient(
             result.Completion.FinishReason,
             result.Completion.StructuredOutputApplied,
             result.Completion.StructuredOutputFallbackUsed,
-            result.RepairUsed);
+            result.RepairUsed,
+            enableThinking,
+            result.Completion.RequestedMaxOutputTokens,
+            result.Completion.PromptTokens,
+            result.Completion.CompletionTokens,
+            result.Completion.TotalTokens);
     }
+
+    private int GetOutputTokens(int standardOutputTokens, bool enableThinking) =>
+        enableThinking ? GetThinkingOutputTokens() : standardOutputTokens;
+
+    private int GetThinkingOutputTokens() => _options.ThinkingOutputTokens ?? _options.OutputHardLimit;
 
     private string? GetDiagramFailure(DiagramIr diagram) => validator.GetFailureKind(diagram);
 

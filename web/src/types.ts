@@ -40,6 +40,10 @@ export type LlmConnectionTestResult = {
   elapsedMilliseconds: number;
   finishReason: string;
   responseCharacters: number;
+  requestedMaxOutputTokens: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
 };
 
 export type LlmContractTestResult = {
@@ -51,6 +55,11 @@ export type LlmContractTestResult = {
   structuredOutputApplied: boolean;
   structuredOutputFallbackUsed: boolean;
   repairUsed: boolean;
+  thinkingEnabled: boolean;
+  requestedMaxOutputTokens: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
 };
 
 export type ChangedFile = {
