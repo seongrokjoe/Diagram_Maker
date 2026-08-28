@@ -25,7 +25,11 @@ LocalAssist_Company_LLM_Integration_Reference_KO.txt
 # Runtime data
 repositories/
 postgres-data/
-artifacts/
+artifacts/*
+!artifacts/release/
+artifacts/release/*
+!artifacts/release/*.zip
+!artifacts/release/*.sha256
 data/
 
 # Editors / OS
