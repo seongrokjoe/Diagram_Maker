@@ -87,6 +87,22 @@ public sealed class InMemoryAppStore : IAppStore
         return Task.FromResult(record);
     }
 
+    public Task<IReadOnlyList<NaturalDiagramRecord>> ListNaturalDiagramsAsync(string ownerUserId, int limit, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<NaturalDiagramRecord>>(_diagrams.Values
+            .Where(record => record.OwnerUserId.Equals(ownerUserId, StringComparison.Ordinal) && record.ParentDiagramId is null)
+            .OrderByDescending(record => record.CreatedAt)
+            .Take(limit)
+            .ToArray());
+
+    public Task<IReadOnlyList<NaturalDiagramRecord>> ListNaturalDiagramRevisionsAsync(Guid rootDiagramId, string ownerUserId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<NaturalDiagramRecord>>(_diagrams.Values
+            .Where(record => record.OwnerUserId.Equals(ownerUserId, StringComparison.Ordinal) && (record.RootDiagramId ?? record.Id) == rootDiagramId)
+            .OrderBy(record => record.Diagram.Version)
+            .ToArray());
+
+    public Task<IReadOnlyList<NaturalDiagramRecord>> ListAllNaturalDiagramsAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<NaturalDiagramRecord>>(_diagrams.Values.OrderBy(record => record.CreatedAt).ToArray());
+
     public Task SaveAuditAsync(AuditEvent auditEvent, CancellationToken cancellationToken)
     {
         _audit.Enqueue(auditEvent);

@@ -36,8 +36,18 @@ public sealed class PostgresAppStore : IAppStore
             CREATE TABLE IF NOT EXISTS natural_diagrams (
                 id uuid PRIMARY KEY,
                 payload jsonb NOT NULL,
-                created_at timestamptz NOT NULL
+                created_at timestamptz NOT NULL,
+                owner_user_id text NULL,
+                root_id uuid NULL,
+                parent_id uuid NULL,
+                revision integer NOT NULL DEFAULT 1
             );
+            ALTER TABLE natural_diagrams ADD COLUMN IF NOT EXISTS owner_user_id text NULL;
+            ALTER TABLE natural_diagrams ADD COLUMN IF NOT EXISTS root_id uuid NULL;
+            ALTER TABLE natural_diagrams ADD COLUMN IF NOT EXISTS parent_id uuid NULL;
+            ALTER TABLE natural_diagrams ADD COLUMN IF NOT EXISTS revision integer NOT NULL DEFAULT 1;
+            CREATE INDEX IF NOT EXISTS ix_natural_diagrams_owner_created ON natural_diagrams (owner_user_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS ix_natural_diagrams_root_revision ON natural_diagrams (root_id, revision);
             CREATE TABLE IF NOT EXISTS audit_events (
                 id uuid PRIMARY KEY,
                 payload jsonb NOT NULL,
@@ -150,15 +160,48 @@ public sealed class PostgresAppStore : IAppStore
     public async Task SaveNaturalDiagramAsync(NaturalDiagramRecord record, CancellationToken cancellationToken)
     {
         const string sql = """
-            INSERT INTO natural_diagrams (id, payload, created_at)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload
+            INSERT INTO natural_diagrams (id, payload, created_at, owner_user_id, root_id, parent_id, revision)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, owner_user_id = EXCLUDED.owner_user_id,
+                root_id = EXCLUDED.root_id, parent_id = EXCLUDED.parent_id, revision = EXCLUDED.revision
             """;
-        await ExecuteJsonUpsertAsync(sql, record.Id, record, record.CreatedAt, cancellationToken);
+        await using var command = _dataSource.CreateCommand(sql);
+        command.Parameters.AddWithValue(record.Id);
+        command.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(record, JsonOptions));
+        command.Parameters.AddWithValue(record.CreatedAt);
+        command.Parameters.AddWithValue(record.OwnerUserId);
+        command.Parameters.AddWithValue(record.RootDiagramId ?? record.Id);
+        command.Parameters.AddWithValue(NpgsqlDbType.Uuid, (object?)record.ParentDiagramId ?? DBNull.Value);
+        command.Parameters.AddWithValue(record.Diagram.Version);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public Task<NaturalDiagramRecord?> GetNaturalDiagramAsync(Guid id, CancellationToken cancellationToken) =>
         GetByIdAsync<NaturalDiagramRecord>("natural_diagrams", "payload", id, cancellationToken);
+
+    public async Task<IReadOnlyList<NaturalDiagramRecord>> ListNaturalDiagramsAsync(string ownerUserId, int limit, CancellationToken cancellationToken)
+    {
+        const string sql = "SELECT payload::text FROM natural_diagrams WHERE owner_user_id=$1 AND parent_id IS NULL ORDER BY created_at DESC LIMIT $2";
+        var result = new List<NaturalDiagramRecord>();
+        await using var command = _dataSource.CreateCommand(sql);
+        command.Parameters.AddWithValue(ownerUserId);
+        command.Parameters.AddWithValue(limit);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) result.Add(Deserialize<NaturalDiagramRecord>(reader.GetString(0)));
+        return result;
+    }
+
+    public async Task<IReadOnlyList<NaturalDiagramRecord>> ListNaturalDiagramRevisionsAsync(Guid rootDiagramId, string ownerUserId, CancellationToken cancellationToken)
+    {
+        const string sql = "SELECT payload::text FROM natural_diagrams WHERE root_id=$1 AND owner_user_id=$2 ORDER BY revision";
+        var result = new List<NaturalDiagramRecord>();
+        await using var command = _dataSource.CreateCommand(sql);
+        command.Parameters.AddWithValue(rootDiagramId);
+        command.Parameters.AddWithValue(ownerUserId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) result.Add(Deserialize<NaturalDiagramRecord>(reader.GetString(0)));
+        return result;
+    }
 
     public async Task SaveAuditAsync(AuditEvent auditEvent, CancellationToken cancellationToken)
     {

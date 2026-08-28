@@ -13,27 +13,33 @@ public sealed class LocalFileAppStore(string filePath) : IAppStore
     private readonly InMemoryAppStore _inner = new();
     private readonly SemaphoreSlim _fileLock = new(1, 1);
     private readonly string _filePath = Path.GetFullPath(filePath);
+    private readonly string _diagramFilePath = Path.ChangeExtension(Path.GetFullPath(filePath), ".diagrams.json");
 
     public async Task InitializeAsync(CancellationToken cancellationToken)
     {
         await _inner.InitializeAsync(cancellationToken);
-        if (!File.Exists(_filePath))
-        {
-            return;
-        }
-
         try
         {
-            await using var stream = File.OpenRead(_filePath);
-            var repositories = await JsonSerializer.DeserializeAsync<RepositoryDefinition[]>(stream, JsonOptions, cancellationToken) ?? [];
-            foreach (var repository in repositories)
+            if (File.Exists(_filePath))
             {
-                await _inner.SaveRepositoryAsync(repository, cancellationToken);
+                await using var stream = File.OpenRead(_filePath);
+                var repositories = await JsonSerializer.DeserializeAsync<RepositoryDefinition[]>(stream, JsonOptions, cancellationToken) ?? [];
+                foreach (var repository in repositories)
+                {
+                    await _inner.SaveRepositoryAsync(repository, cancellationToken);
+                }
+            }
+
+            if (File.Exists(_diagramFilePath))
+            {
+                await using var diagramStream = File.OpenRead(_diagramFilePath);
+                var diagrams = await JsonSerializer.DeserializeAsync<NaturalDiagramRecord[]>(diagramStream, JsonOptions, cancellationToken) ?? [];
+                foreach (var diagram in diagrams) await _inner.SaveNaturalDiagramAsync(diagram, cancellationToken);
             }
         }
         catch (JsonException exception)
         {
-            throw new InvalidOperationException($"Local repository registry is invalid: {_filePath}", exception);
+            throw new InvalidOperationException($"A local store file is invalid: {_filePath} or {_diagramFilePath}", exception);
         }
     }
 
@@ -58,11 +64,20 @@ public sealed class LocalFileAppStore(string filePath) : IAppStore
     public Task<AnalysisJob?> TryLeaseAnalysisAsync(TimeSpan leaseDuration, CancellationToken cancellationToken) =>
         _inner.TryLeaseAnalysisAsync(leaseDuration, cancellationToken);
 
-    public Task SaveNaturalDiagramAsync(NaturalDiagramRecord record, CancellationToken cancellationToken) =>
-        _inner.SaveNaturalDiagramAsync(record, cancellationToken);
+    public async Task SaveNaturalDiagramAsync(NaturalDiagramRecord record, CancellationToken cancellationToken)
+    {
+        await _inner.SaveNaturalDiagramAsync(record, cancellationToken);
+        await PersistNaturalDiagramsAsync(cancellationToken);
+    }
 
     public Task<NaturalDiagramRecord?> GetNaturalDiagramAsync(Guid id, CancellationToken cancellationToken) =>
         _inner.GetNaturalDiagramAsync(id, cancellationToken);
+
+    public Task<IReadOnlyList<NaturalDiagramRecord>> ListNaturalDiagramsAsync(string ownerUserId, int limit, CancellationToken cancellationToken) =>
+        _inner.ListNaturalDiagramsAsync(ownerUserId, limit, cancellationToken);
+
+    public Task<IReadOnlyList<NaturalDiagramRecord>> ListNaturalDiagramRevisionsAsync(Guid rootDiagramId, string ownerUserId, CancellationToken cancellationToken) =>
+        _inner.ListNaturalDiagramRevisionsAsync(rootDiagramId, ownerUserId, cancellationToken);
 
     public Task SaveAuditAsync(AuditEvent auditEvent, CancellationToken cancellationToken) =>
         _inner.SaveAuditAsync(auditEvent, cancellationToken);
@@ -85,6 +100,23 @@ public sealed class LocalFileAppStore(string filePath) : IAppStore
             var temporaryPath = _filePath + ".tmp";
             await File.WriteAllTextAsync(temporaryPath, json, new UTF8Encoding(false), cancellationToken);
             File.Move(temporaryPath, _filePath, true);
+        }
+        finally
+        {
+            _fileLock.Release();
+        }
+    }
+
+    private async Task PersistNaturalDiagramsAsync(CancellationToken cancellationToken)
+    {
+        await _fileLock.WaitAsync(cancellationToken);
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(_diagramFilePath)!);
+            var diagrams = await _inner.ListAllNaturalDiagramsAsync(cancellationToken);
+            var temporaryPath = _diagramFilePath + ".tmp";
+            await File.WriteAllTextAsync(temporaryPath, JsonSerializer.Serialize(diagrams, JsonOptions), new UTF8Encoding(false), cancellationToken);
+            File.Move(temporaryPath, _diagramFilePath, true);
         }
         finally
         {

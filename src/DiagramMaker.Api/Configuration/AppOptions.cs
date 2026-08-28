@@ -23,6 +23,8 @@ public sealed class GitWorkerOptions
     public string ScriptPath { get; set; } = "tools/git-worker/index.mjs";
     public int MaxChangedFiles { get; set; } = 200;
     public int MaxTextFileBytes { get; set; } = 1_000_000;
+    public int MaxContextFiles { get; set; } = 200;
+    public int MaxContextFileBytes { get; set; } = 500_000;
     public int TimeoutSeconds { get; set; } = 120;
 }
 
@@ -39,6 +41,8 @@ public sealed class LlmOptions
     public int RequestTimeoutSeconds { get; set; } = 300;
     public int DiagramOutputTokens { get; set; } = 16_000;
     public int ReviewOutputTokens { get; set; } = 8_000;
+    public double NaturalDiagramTemperature { get; set; } = 0;
+    public int? NaturalDiagramSeed { get; set; }
     public int? ThinkingOutputTokens { get; set; }
     public int OutputHardLimit { get; set; } = 60_000;
     public int MaxInputCharacters { get; set; } = 60_000;

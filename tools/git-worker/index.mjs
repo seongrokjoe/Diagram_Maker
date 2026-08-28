@@ -59,6 +59,10 @@ function isText(buffer) {
   return !sample.includes(0);
 }
 
+function isSourceFile(filepath) {
+  return /\.(cs|c|cc|cpp|cxx|h|hh|hpp)$/i.test(filepath);
+}
+
 async function readText(dir, gitdir, commitOid, filepath, maxBytes) {
   try {
     const { blob } = await git.readBlob({ fs, dir, gitdir, oid: commitOid, filepath });
@@ -67,6 +71,18 @@ async function readText(dir, gitdir, commitOid, filepath, maxBytes) {
   } catch {
     return null;
   }
+}
+
+async function collectContextFiles(dir, gitdir, revisionSha, entries, excludedPaths, maxFiles, maxBytes) {
+  const candidates = [...entries.entries()]
+    .filter(([filepath]) => isSourceFile(filepath) && !excludedPaths.has(filepath))
+    .sort(([left], [right]) => left.localeCompare(right));
+  const files = [];
+  for (const [filepath, entry] of candidates.slice(0, maxFiles)) {
+    const content = await readText(dir, gitdir, revisionSha, filepath, maxBytes);
+    if (content !== null) files.push({ path: filepath, revisionSha, blobOid: entry.oid, content });
+  }
+  return { files, truncated: candidates.length > maxFiles };
 }
 
 function createHunks(pathname, before, after) {
@@ -153,7 +169,23 @@ export async function compare(input) {
     });
   }
 
-  return { baseSha, targetSha, files };
+  const excludedPaths = new Set();
+  for (const file of files) {
+    excludedPaths.add(file.path);
+    if (file.previousPath) excludedPaths.add(file.previousPath);
+  }
+  const [baseContext, targetContext] = await Promise.all([
+    collectContextFiles(dir, gitdir, baseSha, baseEntries, excludedPaths, input.maxContextFiles ?? 200, input.maxContextFileBytes ?? input.maxTextFileBytes),
+    collectContextFiles(dir, gitdir, targetSha, targetEntries, excludedPaths, input.maxContextFiles ?? 200, input.maxContextFileBytes ?? input.maxTextFileBytes),
+  ]);
+
+  return {
+    baseSha,
+    targetSha,
+    files,
+    contextFiles: [...baseContext.files, ...targetContext.files],
+    contextFilesTruncated: baseContext.truncated || targetContext.truncated,
+  };
 }
 
 export async function inspectRepository(input) {

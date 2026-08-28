@@ -1,4 +1,6 @@
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
+using System.Text;
 using DiagramMaker.Configuration;
 using DiagramMaker.Domain;
 using DiagramMaker.Storage;
@@ -10,44 +12,75 @@ public sealed class NaturalDiagramService(
     IInternalLlmClient llm,
     MermaidCompiler compiler,
     IAppStore store,
+    NaturalDiagramSessionCache cache,
     IOptions<LlmOptions> options,
     IWebHostEnvironment environment)
 {
+    public const string GeneratorVersion = "natural-v2";
     private readonly LlmOptions _options = options.Value;
 
-    public async Task<NaturalDiagramRecord> GenerateAsync(NaturalDiagramRequest request, CancellationToken cancellationToken)
+    public async Task<NaturalDiagramRecord> GenerateAsync(NaturalDiagramRequest request, string ownerUserId, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.Prompt) || request.Prompt.Length > 10_000)
         {
             throw new ArgumentException("Prompt must contain between 1 and 10,000 characters.");
         }
 
-        DiagramIr? ir = null;
-        if (llm.IsEnabled)
+        var resolvedType = NaturalDiagramTypeResolver.Resolve(request.DiagramType, request.Prompt);
+        var normalizedRequest = request with { DiagramType = resolvedType };
+        var cacheKey = CreateCacheKey(normalizedRequest, ownerUserId);
+        if (!request.ForceRegenerate && cache.TryGet(cacheKey, out var cachedId))
         {
-            ir = await llm.GenerateNaturalDiagramAsync(
-                request.Prompt,
-                request.DiagramType,
-                request.EnableThinking,
-                cancellationToken);
+            var cached = await store.GetNaturalDiagramAsync(cachedId, cancellationToken);
+            if (cached is not null) return cached with { Reused = true };
         }
 
-        if (ir is null && _options.AllowDevelopmentStub && environment.IsDevelopment())
+        var gate = cache.GetGate(cacheKey);
+        await gate.WaitAsync(cancellationToken);
+        try
         {
-            ir = CreateDeterministicDiagram(request);
-        }
+            if (!request.ForceRegenerate && cache.TryGet(cacheKey, out cachedId))
+            {
+                var cached = await store.GetNaturalDiagramAsync(cachedId, cancellationToken);
+                if (cached is not null) return cached with { Reused = true };
+            }
 
-        if (ir is null)
+            DiagramIr? ir = null;
+            if (llm.IsEnabled)
+                ir = await llm.GenerateNaturalDiagramAsync(normalizedRequest.Prompt, resolvedType, normalizedRequest.EnableThinking, cancellationToken);
+            if (ir is null && _options.AllowDevelopmentStub && environment.IsDevelopment()) ir = CreateDeterministicDiagram(normalizedRequest);
+            if (ir is null) throw new InvalidOperationException("The internal LLM is unavailable and no external fallback is permitted.");
+
+            NaturalDiagramRecord? parent = null;
+            if (normalizedRequest.ParentDiagramId is { } parentId)
+            {
+                parent = await store.GetNaturalDiagramAsync(parentId, cancellationToken)
+                         ?? throw new ArgumentException("Parent diagram does not exist.");
+                if (!string.IsNullOrEmpty(parent.OwnerUserId) && !parent.OwnerUserId.Equals(ownerUserId, StringComparison.Ordinal)) throw new UnauthorizedAccessException();
+            }
+            var now = DateTimeOffset.UtcNow;
+            var diagramId = Guid.NewGuid();
+            var version = (parent?.Diagram.Version ?? 0) + 1;
+            var artifact = new DiagramArtifact(diagramId, ir.Type, version, ir, compiler.Compile(ir), now);
+            var rootId = parent?.RootDiagramId ?? parent?.Id ?? diagramId;
+            var record = new NaturalDiagramRecord(diagramId, normalizedRequest with { ForceRegenerate = false }, artifact, now,
+                ownerUserId, rootId, parent?.Id, "generated", GeneratorVersion, false);
+            await store.SaveNaturalDiagramAsync(record, cancellationToken);
+            cache.Set(cacheKey, record.Id);
+            return record;
+        }
+        finally
         {
-            throw new InvalidOperationException("The internal LLM is unavailable and no external fallback is permitted.");
+            gate.Release();
         }
+    }
 
-        var now = DateTimeOffset.UtcNow;
-        var diagramId = Guid.NewGuid();
-        var artifact = new DiagramArtifact(diagramId, ir.Type, 1, ir, compiler.Compile(ir), now);
-        var record = new NaturalDiagramRecord(diagramId, request, artifact, now);
-        await store.SaveNaturalDiagramAsync(record, cancellationToken);
-        return record;
+    private string CreateCacheKey(NaturalDiagramRequest request, string ownerUserId)
+    {
+        var normalizedPrompt = string.Join(' ', request.Prompt.Normalize(NormalizationForm.FormKC)
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        var value = $"{ownerUserId}\n{normalizedPrompt}\n{request.DiagramType}\n{request.EnableThinking}\n{request.ParentDiagramId}\n{_options.Model}\n{GeneratorVersion}";
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
     }
 
     private static DiagramIr CreateDeterministicDiagram(NaturalDiagramRequest request)

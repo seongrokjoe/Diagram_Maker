@@ -29,10 +29,29 @@ export type DiagramArtifact = {
   createdAt: string;
 };
 
+export type DiagramAvailability = {
+  type: string;
+  available: boolean;
+  reason?: string;
+};
+
 export type NaturalDiagramRecord = {
   id: string;
+  request: {
+    prompt: string;
+    diagramType: string;
+    parentDiagramId?: string;
+    enableThinking: boolean;
+    forceRegenerate: boolean;
+  };
   diagram: DiagramArtifact;
   createdAt: string;
+  ownerUserId: string;
+  rootDiagramId?: string;
+  parentDiagramId?: string;
+  source: "generated" | "manualDsl" | string;
+  generatorVersion: string;
+  reused: boolean;
 };
 
 export type LlmConnectionTestResult = {
@@ -101,6 +120,7 @@ export type AnalysisResponse = {
       warnings: string[];
     };
     diagrams: DiagramArtifact[];
+    diagramAvailability?: DiagramAvailability[];
     graph: {
       identities: unknown[];
       versions: unknown[];

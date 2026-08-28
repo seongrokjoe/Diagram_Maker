@@ -3,10 +3,10 @@ import { api } from "./api";
 import { MermaidPreview } from "./MermaidPreview";
 import type {
   AnalysisResponse,
-  DiagramArtifact,
   LlmConnectionTestResult,
   LlmContractTestResult,
   LlmThinkingContractTestResult,
+  NaturalDiagramRecord,
   Repository,
   RepositoryInspection,
 } from "./types";
@@ -20,16 +20,23 @@ const terminalStates = new Set(["Completed", "Partial", "Failed"]);
 export default function App() {
   const [tab, setTab] = useState<Tab>("natural");
   const [repositories, setRepositories] = useState<Repository[]>([]);
-  const [diagram, setDiagram] = useState<DiagramArtifact | null>(null);
+  const [naturalRecord, setNaturalRecord] = useState<NaturalDiagramRecord | null>(null);
+  const [naturalHistory, setNaturalHistory] = useState<NaturalDiagramRecord[]>([]);
+  const [naturalRevisions, setNaturalRevisions] = useState<NaturalDiagramRecord[]>([]);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
+  const [activeAnalysisDiagramType, setActiveAnalysisDiagramType] = useState("flowchart");
   const [repositoryName, setRepositoryName] = useState("");
   const [repositoryPath, setRepositoryPath] = useState("");
   const [defaultBranch, setDefaultBranch] = useState("main");
   const [repositoryInspection, setRepositoryInspection] = useState<RepositoryInspection | null>(null);
   const [includeLlmSummary, setIncludeLlmSummary] = useState(true);
+  const [diagramTypes, setDiagramTypes] = useState<string[]>(["flowchart"]);
+  const [callerDepth, setCallerDepth] = useState(1);
+  const [calleeDepth, setCalleeDepth] = useState(1);
   const [llmTests, setLlmTests] = useState<Partial<Record<LlmTestKind, LlmTestValue>>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const diagram = naturalRecord?.diagram ?? null;
 
   const loadRepositories = async () => {
     try {
@@ -39,9 +46,28 @@ export default function App() {
     }
   };
 
+  const loadNaturalHistory = async () => {
+    try {
+      setNaturalHistory(await api.listNaturalDiagrams());
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "다이어그램 이력을 불러오지 못했습니다.");
+    }
+  };
+
   useEffect(() => {
     void loadRepositories();
+    void loadNaturalHistory();
   }, []);
+
+  useEffect(() => {
+    if (!naturalRecord) {
+      setNaturalRevisions([]);
+      return;
+    }
+    void api.listNaturalDiagramRevisions(naturalRecord.id).then(setNaturalRevisions).catch((reason: unknown) => {
+      setError(reason instanceof Error ? reason.message : "리비전 이력을 불러오지 못했습니다.");
+    });
+  }, [naturalRecord?.id]);
 
   useEffect(() => {
     if (!analysis || terminalStates.has(analysis.state)) return;
@@ -64,11 +90,41 @@ export default function App() {
         diagramType: String(data.get("diagramType")),
         enableThinking: data.get("enableThinking") === "on",
       });
-      setDiagram(record.diagram);
+      setNaturalRecord(record);
+      await loadNaturalHistory();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "생성에 실패했습니다.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function regenerateNatural() {
+    if (!naturalRecord) return;
+    setBusy(true);
+    setError("");
+    try {
+      const record = await api.regenerateNaturalDiagram(naturalRecord.id);
+      setNaturalRecord(record);
+      await loadNaturalHistory();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "재생성에 실패했습니다.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveNaturalDslRevision(mermaidDsl: string) {
+    if (!naturalRecord) return;
+    setError("");
+    try {
+      const record = await api.saveNaturalDiagramDslRevision(naturalRecord.id, mermaidDsl);
+      setNaturalRecord(record);
+      await loadNaturalHistory();
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : "Mermaid 리비전 저장에 실패했습니다.";
+      setError(message);
+      throw reason;
     }
   }
 
@@ -82,6 +138,9 @@ export default function App() {
         repositoryId: String(data.get("repositoryId")),
         baseRevision: String(data.get("baseRevision")),
         targetRevision: String(data.get("targetRevision")),
+        diagramTypes,
+        callerDepth,
+        calleeDepth,
         includeLlmSummary: data.get("includeLlmSummary") === "on",
         enableThinking: data.get("includeLlmSummary") === "on" && data.get("enableThinking") === "on",
       }));
@@ -195,7 +254,13 @@ export default function App() {
               </label>
               <label className="checkbox"><input type="checkbox" name="enableThinking" /> Thinking 모드 사용</label>
               <button className="primary" disabled={busy}>{busy ? "생성 중…" : "다이어그램 생성"}</button>
-              <p className="help">개발 모드에서는 화살표 기반 결정적 생성기를 사용할 수 있습니다. 운영 환경은 사내 LLM만 호출합니다.</p>
+              <p className="help">같은 요청은 현재 서버 세션의 결과를 재사용합니다. 다른 결과가 필요할 때만 명시적으로 재생성하세요.</p>
+              {naturalHistory.length > 0 && <div className="revision-list">
+                <strong>최근 다이어그램</strong>
+                {naturalHistory.map((record) => <button type="button" className={naturalRecord?.id === record.id ? "active" : ""} key={record.id} onClick={() => setNaturalRecord(record)}>
+                  <span>{record.diagram.ir.title}</span><small>{formatDiagramType(record.diagram.type)} · v{record.diagram.version}</small>
+                </button>)}
+              </div>}
             </form>
             <section className="panel preview">
               <div className="panel-heading">
@@ -203,10 +268,17 @@ export default function App() {
                   <p className="section-label">PREVIEW</p>
                   <h2>{diagram?.ir.title ?? "생성 결과"}</h2>
                 </div>
-                {diagram && <span className="status-chip">{diagram.type}</span>}
+                {diagram && <span className="status-chip">{formatDiagramType(diagram.type)} · v{diagram.version}</span>}
               </div>
-              {diagram ? <MermaidPreview source={diagram.mermaidDsl} /> : <EmptyState text="요청을 입력하면 결과가 여기에 표시됩니다." />}
-              {diagram && <details><summary>Mermaid DSL 확인</summary><pre>{diagram.mermaidDsl}</pre></details>}
+              {naturalRecord && <div className="diagram-meta">
+                <span>{naturalRecord.reused ? "세션 결과 재사용" : naturalRecord.source === "manualDsl" ? "DSL 수동 리비전" : "LLM 생성"}</span>
+                <button type="button" className="secondary" disabled={busy} onClick={() => void regenerateNatural()}>LLM으로 다시 생성</button>
+              </div>}
+              {diagram ? <MermaidPreview source={diagram.mermaidDsl} downloadName={`natural-${diagram.type}-v${diagram.version}`} editable onSaveRevision={saveNaturalDslRevision} /> : <EmptyState text="요청을 입력하면 결과가 여기에 표시됩니다." />}
+              {naturalRevisions.length > 1 && <div className="revision-list horizontal">
+                <strong>리비전</strong>
+                {naturalRevisions.map((record) => <button type="button" className={naturalRecord?.id === record.id ? "active" : ""} key={record.id} onClick={() => setNaturalRecord(record)}>v{record.diagram.version} · {record.source === "manualDsl" ? "DSL 편집" : "LLM"}</button>)}
+              </div>}
             </section>
           </section>
         )}
@@ -226,6 +298,19 @@ export default function App() {
               <div className="field-row">
                 <label>Base revision<input name="baseRevision" required placeholder="HEAD~1 또는 SHA" /></label>
                 <label>Target revision<input name="targetRevision" required placeholder="HEAD 또는 SHA" /></label>
+              </div>
+              <fieldset className="diagram-options">
+                <legend>다이어그램 형식</legend>
+                {[["flowchart", "영향도 흐름"], ["class", "클래스"], ["sequence", "호출 시퀀스"], ["state", "상태 전이"]].map(([value, label]) => (
+                  <label className="checkbox" key={value}>
+                    <input type="checkbox" checked={diagramTypes.includes(value)} onChange={(event) => setDiagramTypes((current) => event.target.checked ? [...current, value] : current.length > 1 ? current.filter((item) => item !== value) : current)} />
+                    {label}
+                  </label>
+                ))}
+              </fieldset>
+              <div className="field-row">
+                <label>Caller 깊이<select value={callerDepth} onChange={(event) => setCallerDepth(Number(event.target.value))}>{[0, 1, 2, 3].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+                <label>Callee 깊이<select value={calleeDepth} onChange={(event) => setCalleeDepth(Number(event.target.value))}>{[0, 1, 2].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
               </div>
               <label className="checkbox">
                 <input
@@ -259,7 +344,19 @@ export default function App() {
                 <div className="analysis-result">
                   <div className="summary-card"><strong>요약</strong><p>{analysis.result.narrative.summary}</p></div>
                   {analysis.result.narrative.warnings.map((warning) => <p className="warning" key={warning}>{warning}</p>)}
-                  {analysis.result.diagrams[0] && <MermaidPreview source={analysis.result.diagrams[0].mermaidDsl} />}
+                  <div className="summary-card"><strong>변경 의도</strong><p>{analysis.result.narrative.intent}</p></div>
+                  {analysis.result.diagrams.length > 0 && <div className="diagram-type-tabs" role="tablist">
+                    {analysis.result.diagrams.map((item) => <button type="button" role="tab" aria-selected={activeAnalysisDiagramType === item.type} className={activeAnalysisDiagramType === item.type ? "active" : ""} key={item.id} onClick={() => setActiveAnalysisDiagramType(item.type)}>{formatDiagramType(item.type)}</button>)}
+                  </div>}
+                  {(() => {
+                    const item = analysis.result.diagrams.find((candidate) => candidate.type === activeAnalysisDiagramType) ?? analysis.result.diagrams[0];
+                    return item ? <article className="diagram-result" key={item.id}>
+                      <h3>{formatDiagramType(item.type)}</h3>
+                      <MermaidPreview source={item.mermaidDsl} downloadName={`diagram-${item.type}-${analysis.targetSha?.slice(0, 8) ?? "result"}`} />
+                      <details><summary>Mermaid DSL 확인</summary><pre>{item.mermaidDsl}</pre></details>
+                    </article> : null;
+                  })()}
+                  {analysis.result.diagramAvailability?.filter(item => !item.available).map(item => <p className="warning" key={item.type}>{formatDiagramType(item.type)}: {item.reason}</p>)}
                   <h3>변경 파일</h3>
                   <ul className="file-list">
                     {analysis.result.changedFiles.map((file) => (
@@ -375,6 +472,10 @@ function LlmTestCard({ title, value }: { title: string; value?: LlmTestValue }) 
       )}
     </article>
   );
+}
+
+function formatDiagramType(type: string) {
+  return ({ flowchart: "영향도 흐름", class: "클래스 관계", sequence: "호출 시퀀스", state: "상태 전이" } as Record<string, string>)[type] ?? type;
 }
 
 function EmptyState({ text }: { text: string }) {

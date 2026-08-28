@@ -10,6 +10,8 @@
     "RequestTimeoutSeconds": 300,
     "DiagramOutputTokens": 16000,
     "ReviewOutputTokens": 8000,
+    "NaturalDiagramTemperature": 0,
+    "NaturalDiagramSeed": null,
     "ThinkingOutputTokens": 60000,
     "OutputHardLimit": 60000,
     "MaxInputCharacters": 60000,

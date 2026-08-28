@@ -57,7 +57,10 @@ builder.Services.AddSingleton<IAppStore>(services =>
 builder.Services.AddSingleton<SecretMasker>();
 builder.Services.AddSingleton<DiagramValidator>();
 builder.Services.AddSingleton<MermaidCompiler>();
+builder.Services.AddSingleton<DiagramProjectionService>();
 builder.Services.AddSingleton<SourceGraphAnalyzer>();
+builder.Services.AddSingleton<NaturalDiagramSessionCache>();
+builder.Services.AddScoped<MermaidDslRevisionService>();
 builder.Services.AddSingleton(services => new VllmClient(
     services.GetRequiredService<IOptions<LlmOptions>>().Value,
     services.GetRequiredService<ILogger<VllmClient>>()));
@@ -224,6 +227,10 @@ api.MapPost("/analyses", async (
     {
         return Results.BadRequest(new { error = "CallerDepth must be 0-3 and CalleeDepth must be 0-2." });
     }
+    if (request.DiagramTypes?.Any(type => !DiagramProjectionService.IsSupported(type)) == true)
+    {
+        return Results.BadRequest(new { error = "DiagramTypes must contain only flowchart, class, sequence, or state." });
+    }
 
     var now = DateTimeOffset.UtcNow;
     var job = new AnalysisJob(Guid.NewGuid(), request, AnalysisState.Queued, null, null, 0, "Queued", null, null, null, now, now, null);
@@ -311,13 +318,18 @@ api.MapPost("/natural-diagrams", async (
 {
     try
     {
-        var record = await service.GenerateAsync(request, cancellationToken);
-        await store.SaveAuditAsync(new AuditEvent(Guid.NewGuid(), context.GetInternalIdentity().UserId, "natural-diagram.create", null, "allowed", DateTimeOffset.UtcNow), cancellationToken);
+        var identity = context.GetInternalIdentity();
+        var record = await service.GenerateAsync(request, identity.UserId, cancellationToken);
+        await store.SaveAuditAsync(new AuditEvent(Guid.NewGuid(), identity.UserId, "natural-diagram.create", null, "allowed", DateTimeOffset.UtcNow), cancellationToken);
         return Results.Created($"/api/v1/natural-diagrams/{record.Id}", record);
     }
     catch (ArgumentException exception)
     {
         return Results.BadRequest(new { error = exception.Message });
+    }
+    catch (UnauthorizedAccessException)
+    {
+        return Results.Forbid();
     }
     catch (InvalidOperationException exception)
     {
@@ -377,29 +389,113 @@ api.MapPost("/llm/tests/thinking-contract", async (
     }
 });
 
-api.MapGet("/natural-diagrams/{id:guid}", async (Guid id, IAppStore store, CancellationToken cancellationToken) =>
+api.MapGet("/natural-diagrams", async (int? limit, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
+{
+    var identity = context.GetInternalIdentity();
+    var records = await store.ListNaturalDiagramsAsync(identity.UserId, Math.Clamp(limit ?? 20, 1, 50), cancellationToken);
+    return Results.Ok(records);
+});
+
+api.MapGet("/natural-diagrams/{id:guid}", async (Guid id, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
 {
     var record = await store.GetNaturalDiagramAsync(id, cancellationToken);
-    return record is null ? Results.NotFound() : Results.Ok(record);
+    if (record is null) return Results.NotFound();
+    return CanAccessNaturalDiagram(record, context.GetInternalIdentity().UserId)
+        ? Results.Ok(record)
+        : Results.Forbid();
+});
+
+api.MapGet("/natural-diagrams/{id:guid}/revisions", async (Guid id, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
+{
+    var record = await store.GetNaturalDiagramAsync(id, cancellationToken);
+    if (record is null) return Results.NotFound();
+    var identity = context.GetInternalIdentity();
+    if (!CanAccessNaturalDiagram(record, identity.UserId)) return Results.Forbid();
+    return Results.Ok(await store.ListNaturalDiagramRevisionsAsync(record.RootDiagramId ?? record.Id, identity.UserId, cancellationToken));
 });
 
 api.MapPost("/diagrams/{id:guid}/revisions", async (
     Guid id,
     NaturalDiagramRequest request,
+    HttpContext context,
     NaturalDiagramService service,
     IAppStore store,
     CancellationToken cancellationToken) =>
 {
     var parent = await store.GetNaturalDiagramAsync(id, cancellationToken);
     if (parent is null) return Results.NotFound();
+    var identity = context.GetInternalIdentity();
+    if (!CanAccessNaturalDiagram(parent, identity.UserId)) return Results.Forbid();
     var revised = request with { ParentDiagramId = id };
-    var record = await service.GenerateAsync(revised, cancellationToken);
+    var record = await service.GenerateAsync(revised, identity.UserId, cancellationToken);
     return Results.Created($"/api/v1/natural-diagrams/{record.Id}", record);
+});
+
+api.MapPost("/natural-diagrams/{id:guid}/dsl-revisions", async (
+    Guid id,
+    SaveDiagramDslRevisionRequest request,
+    HttpContext context,
+    MermaidDslRevisionService service,
+    IAppStore store,
+    CancellationToken cancellationToken) =>
+{
+    var parent = await store.GetNaturalDiagramAsync(id, cancellationToken);
+    if (parent is null) return Results.NotFound();
+    var identity = context.GetInternalIdentity();
+    if (!CanAccessNaturalDiagram(parent, identity.UserId)) return Results.Forbid();
+    try
+    {
+        var record = await service.SaveAsync(parent, request.MermaidDsl, identity.UserId, cancellationToken);
+        return Results.Created($"/api/v1/natural-diagrams/{record.Id}", record);
+    }
+    catch (ArgumentException exception)
+    {
+        return Results.BadRequest(new { error = exception.Message });
+    }
+    catch (DiagramValidationException exception)
+    {
+        return Results.BadRequest(new { error = exception.Message });
+    }
+});
+
+api.MapPost("/natural-diagrams/{id:guid}/regenerate", async (
+    Guid id,
+    HttpContext context,
+    NaturalDiagramService service,
+    IAppStore store,
+    CancellationToken cancellationToken) =>
+{
+    var parent = await store.GetNaturalDiagramAsync(id, cancellationToken);
+    if (parent is null) return Results.NotFound();
+    var identity = context.GetInternalIdentity();
+    if (!CanAccessNaturalDiagram(parent, identity.UserId)) return Results.Forbid();
+
+    var request = parent.Request with { ParentDiagramId = id, ForceRegenerate = true };
+    try
+    {
+        var record = await service.GenerateAsync(request, identity.UserId, cancellationToken);
+        return Results.Created($"/api/v1/natural-diagrams/{record.Id}", record);
+    }
+    catch (ArgumentException exception)
+    {
+        return Results.BadRequest(new { error = exception.Message });
+    }
+    catch (InvalidOperationException exception)
+    {
+        return Results.Json(new { error = exception.Message }, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+    catch (LlmClientException exception)
+    {
+        return LlmFailure(exception);
+    }
 });
 
 app.MapFallbackToFile("index.html", new StaticFileOptions { FileProvider = staticFiles });
 
 app.Run();
+
+static bool CanAccessNaturalDiagram(NaturalDiagramRecord record, string userId) =>
+    string.IsNullOrEmpty(record.OwnerUserId) || string.Equals(record.OwnerUserId, userId, StringComparison.Ordinal);
 
 static object ToAnalysisResponse(AnalysisJob job) => new
 {

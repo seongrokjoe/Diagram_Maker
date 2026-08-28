@@ -136,6 +136,13 @@ MalformedJson, Deserialization, DuplicateNodeId, UnknownEdgeNode 같은 고정 �
 1) "자연어 다이어그램" 탭 선택
 2) 요청별로 "Thinking 모드 사용" 선택 또는 해제
 3) 다이어그램 생성
+4) 같은 요청은 서버 프로세스가 실행 중인 동안 기존 결과를 재사용
+5) 새 결과가 필요하면 "LLM으로 다시 생성" 선택
+6) Mermaid DSL 편집 후 미리보기를 확인하고 "새 리비전 저장" 선택
+7) SVG 또는 PNG 다운로드
+
+DSL 편집은 앱이 지원하는 flowchart, sequence, class, state 문법의 제한된 범위만 허용한다.
+외부 링크, click, directive, HTML 실행 콘텐츠는 저장할 수 없으며 기존 리비전은 덮어쓰지 않는다.
 
 Git 변경 분석:
 

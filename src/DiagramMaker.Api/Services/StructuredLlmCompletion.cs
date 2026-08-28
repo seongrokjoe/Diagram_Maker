@@ -13,20 +13,31 @@ public sealed class StructuredLlmCompletion(VllmClient client)
 
     public async Task<StructuredCompletionResult<T>> CompleteAsync<T>(
         string systemPrompt, string userPrompt, JsonElement schema, int maxOutputTokens,
-        bool enableThinking, Func<T, string?> validator, CancellationToken cancellationToken)
+        bool enableThinking, Func<T, string?> validator, CancellationToken cancellationToken,
+        double? temperature = null, int? seed = null, bool allowRepair = true)
     {
         var first = await client.CompleteAsync(new VllmCompletionRequest(
-            systemPrompt, userPrompt, maxOutputTokens, enableThinking, schema), cancellationToken);
+            systemPrompt, userPrompt, maxOutputTokens, enableThinking, schema, temperature, seed), cancellationToken);
         ThrowIfTruncated(first, initialFailureKind: null, repairAttempted: false);
         var firstAttempt = Deserialize(first.Content, validator);
         if (firstAttempt.Value is not null)
             return new StructuredCompletionResult<T>(firstAttempt.Value, first, RepairUsed: false);
+        if (!allowRepair)
+            throw new LlmClientException(
+                "LLM_SCHEMA_INVALID",
+                $"The internal LLM did not return a valid structured result ({firstAttempt.FailureKind}).",
+                failureKind: firstAttempt.FailureKind,
+                repairAttempted: false,
+                requestedMaxOutputTokens: first.RequestedMaxOutputTokens,
+                promptTokens: first.PromptTokens,
+                completionTokens: first.CompletionTokens,
+                totalTokens: first.TotalTokens);
 
         var repairSystem = systemPrompt +
             $"\nThe previous response failed the required JSON contract ({firstAttempt.FailureKind}). " +
             "Return exactly one JSON object matching the schema, without markdown or explanation.";
         var repaired = await client.CompleteAsync(new VllmCompletionRequest(
-            repairSystem, userPrompt, maxOutputTokens, enableThinking, schema), cancellationToken);
+            repairSystem, userPrompt, maxOutputTokens, enableThinking, schema, temperature, seed), cancellationToken);
         ThrowIfTruncated(repaired, firstAttempt.FailureKind, repairAttempted: true);
         var repairedAttempt = Deserialize(repaired.Content, validator);
         if (repairedAttempt.Value is null)

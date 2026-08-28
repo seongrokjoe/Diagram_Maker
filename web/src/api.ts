@@ -49,12 +49,21 @@ export const api = {
     }),
   registerRepository: (input: { name: string; localPath: string; defaultBranch: string }) =>
     request<Repository>("/api/v1/repositories", { method: "POST", body: JSON.stringify(input) }),
-  createNaturalDiagram: (input: { prompt: string; diagramType: string; enableThinking: boolean }) =>
+  listNaturalDiagrams: (limit = 20) => request<NaturalDiagramRecord[]>(`/api/v1/natural-diagrams?limit=${limit}`),
+  listNaturalDiagramRevisions: (id: string) => request<NaturalDiagramRecord[]>(`/api/v1/natural-diagrams/${id}/revisions`),
+  createNaturalDiagram: (input: { prompt: string; diagramType: string; enableThinking: boolean; forceRegenerate?: boolean }) =>
     request<NaturalDiagramRecord>("/api/v1/natural-diagrams", { method: "POST", body: JSON.stringify(input) }),
+  regenerateNaturalDiagram: (id: string) =>
+    request<NaturalDiagramRecord>(`/api/v1/natural-diagrams/${id}/regenerate`, { method: "POST" }),
+  saveNaturalDiagramDslRevision: (id: string, mermaidDsl: string) =>
+    request<NaturalDiagramRecord>(`/api/v1/natural-diagrams/${id}/dsl-revisions`, { method: "POST", body: JSON.stringify({ mermaidDsl }) }),
   createAnalysis: (input: {
     repositoryId: string;
     baseRevision: string;
     targetRevision: string;
+    diagramTypes: string[];
+    callerDepth: number;
+    calleeDepth: number;
     includeLlmSummary: boolean;
     enableThinking: boolean;
   }) => request<AnalysisResponse>("/api/v1/analyses", { method: "POST", body: JSON.stringify(input) }),

@@ -29,6 +29,39 @@ public sealed class LocalFileAppStoreTests
     }
 
     [Fact]
+    public async Task NaturalDiagram_SurvivesStoreRestartWithoutRepositoryRegistry()
+    {
+        var filePath = Path.Combine(AppContext.BaseDirectory, $"diagram-registry-{Guid.NewGuid():N}.json");
+        var id = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        var ir = new DiagramIr(
+            "flowchart", "Persistent",
+            [new DiagramNode("a", "A", "component", null, "unchanged", Confidence.Inferred, [])],
+            [], [], []);
+        var record = new NaturalDiagramRecord(
+            id,
+            new NaturalDiagramRequest("A를 그려줘", "flowchart"),
+            new DiagramArtifact(id, "flowchart", 1, ir, "flowchart LR\n    n_a[\"A\"]\n", now),
+            now,
+            "reviewer",
+            id);
+
+        await using (var first = new LocalFileAppStore(filePath))
+        {
+            await first.InitializeAsync(CancellationToken.None);
+            await first.SaveNaturalDiagramAsync(record, CancellationToken.None);
+        }
+
+        Assert.False(File.Exists(filePath));
+        await using var second = new LocalFileAppStore(filePath);
+        await second.InitializeAsync(CancellationToken.None);
+        var restored = await second.GetNaturalDiagramAsync(id, CancellationToken.None);
+
+        Assert.NotNull(restored);
+        Assert.Equal("Persistent", restored.Diagram.Ir.Title);
+    }
+
+    [Fact]
     public void LocalRepositoryPath_AcceptsRepositoryRootAndDotGitDirectory()
     {
         var repositoryPath = Path.Combine(AppContext.BaseDirectory, $"local-repository-{Guid.NewGuid():N}");

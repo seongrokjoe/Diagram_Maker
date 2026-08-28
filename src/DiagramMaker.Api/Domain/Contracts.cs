@@ -74,7 +74,7 @@ public sealed record AnalyzeRequest(
     string TargetRevision,
     string CompareMode = "direct",
     IReadOnlyList<string>? DiagramTypes = null,
-    int CallerDepth = 2,
+    int CallerDepth = 1,
     int CalleeDepth = 1,
     bool IncludeLlmSummary = true,
     bool EnableThinking = false);
@@ -114,7 +114,15 @@ public sealed record DiffHunk(
 public sealed record GitComparison(
     string BaseSha,
     string TargetSha,
-    IReadOnlyList<ChangedFile> Files);
+    IReadOnlyList<ChangedFile> Files,
+    IReadOnlyList<RepositoryFileSnapshot>? ContextFiles = null,
+    bool ContextFilesTruncated = false);
+
+public sealed record RepositoryFileSnapshot(
+    string Path,
+    string RevisionSha,
+    string BlobOid,
+    string Content);
 
 public sealed record SymbolIdentity(
     string Id,
@@ -216,23 +224,38 @@ public sealed record ReviewNarrative(
     IReadOnlyList<RiskItem> Risks,
     IReadOnlyList<string> Warnings);
 
+public sealed record DiagramAvailability(
+    string Type,
+    bool Available,
+    string? Reason);
+
 public sealed record AnalysisResult(
     IReadOnlyList<ChangedFile> ChangedFiles,
     VersionedGraph Graph,
     ReviewNarrative Narrative,
-    IReadOnlyList<DiagramArtifact> Diagrams);
+    IReadOnlyList<DiagramArtifact> Diagrams,
+    IReadOnlyList<DiagramAvailability> DiagramAvailability = null!);
 
 public sealed record NaturalDiagramRequest(
     string Prompt,
     string DiagramType = "auto",
     Guid? ParentDiagramId = null,
-    bool EnableThinking = false);
+    bool EnableThinking = false,
+    bool ForceRegenerate = false);
 
 public sealed record NaturalDiagramRecord(
     Guid Id,
     NaturalDiagramRequest Request,
     DiagramArtifact Diagram,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    string OwnerUserId = "",
+    Guid? RootDiagramId = null,
+    Guid? ParentDiagramId = null,
+    string Source = "generated",
+    string GeneratorVersion = "natural-v1",
+    bool Reused = false);
+
+public sealed record SaveDiagramDslRevisionRequest(string MermaidDsl);
 
 public sealed record AuditEvent(
     Guid Id,

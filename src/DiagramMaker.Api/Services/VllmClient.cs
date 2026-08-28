@@ -34,7 +34,9 @@ public sealed record VllmCompletionRequest(
     string UserPrompt,
     int MaxOutputTokens,
     bool EnableThinking,
-    JsonElement? StructuredSchema = null);
+    JsonElement? StructuredSchema = null,
+    double? Temperature = null,
+    int? Seed = null);
 
 public sealed record VllmCompletionResult(
     string Content,
@@ -174,6 +176,8 @@ public sealed class VllmClient : IDisposable
         };
         if (includeSchema && request.StructuredSchema.HasValue)
             payload["structured_outputs"] = new { json = request.StructuredSchema.Value };
+        if (request.Temperature.HasValue) payload["temperature"] = request.Temperature.Value;
+        if (request.Seed.HasValue) payload["seed"] = request.Seed.Value;
 
         return new HttpRequestMessage(HttpMethod.Post, _endpoint)
         {
@@ -294,7 +298,7 @@ public sealed class VllmClient : IDisposable
             options.ReviewOutputTokens > options.OutputHardLimit ||
             options.ThinkingOutputTokens is <= 0 || options.ThinkingOutputTokens > options.OutputHardLimit ||
             options.MaxInputCharacters is <= 0 or > 200_000 ||
-            options.MaxTransientRetries is < 0 or > 3)
+            options.MaxTransientRetries is < 0 or > 3 || options.NaturalDiagramTemperature is < 0 or > 2)
             throw new InvalidOperationException("LLM limits are outside the permitted range.");
         return endpoint;
     }

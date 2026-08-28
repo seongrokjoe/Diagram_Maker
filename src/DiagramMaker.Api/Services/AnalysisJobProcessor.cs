@@ -9,6 +9,7 @@ public sealed class AnalysisJobProcessor(
     SourceGraphAnalyzer analyzer,
     IInternalLlmClient llm,
     MermaidCompiler compiler,
+    DiagramProjectionService projection,
     ILogger<AnalysisJobProcessor> logger)
 {
     public async Task ProcessAsync(AnalysisJob leasedJob, CancellationToken cancellationToken)
@@ -84,10 +85,19 @@ public sealed class AnalysisJobProcessor(
                 StageMessage = "Compiling safe Mermaid diagram"
             }, cancellationToken);
 
-            var diagramIr = BuildDiagram(repository.Name, graph, comparison);
-            var artifact = new DiagramArtifact(Guid.NewGuid(), diagramIr.Type, 1, diagramIr, compiler.Compile(diagramIr), DateTimeOffset.UtcNow);
+            var diagrams = projection.Build(
+                repository.Name,
+                graph,
+                comparison,
+                job.Request.DiagramTypes,
+                job.Request.CallerDepth,
+                job.Request.CalleeDepth,
+                comparison.ContextFilesTruncated);
+            var artifacts = diagrams.Artifacts
+                .Select(artifact => artifact with { MermaidDsl = compiler.Compile(artifact.Ir) })
+                .ToArray();
             var safeFiles = comparison.Files.Select(static file => file with { BeforeContent = null, AfterContent = null }).ToArray();
-            var result = new AnalysisResult(safeFiles, graph, narrative, [artifact]);
+            var result = new AnalysisResult(safeFiles, graph, narrative, artifacts, diagrams.Availability);
             var finalState = job.Request.IncludeLlmSummary && !llmSucceeded ? AnalysisState.Partial : AnalysisState.Completed;
             await UpdateAsync(job with
             {
@@ -140,63 +150,10 @@ public sealed class AnalysisJobProcessor(
         }
 
         return new ReviewNarrative(
-            $"{files.Count} files changed; {additions} symbols added, {removals} removed, and {modifications} modified.",
-            "Deterministic summary derived from immutable Git revisions and syntax analysis.",
+            $"{files.Count}개 파일이 변경되었고, 심볼 {additions}개 추가, {removals}개 삭제, {modifications}개 수정이 감지되었습니다.",
+            "불변 Git revision과 정적 구문 분석 결과를 기반으로 생성한 결정론적 요약입니다.",
             risks,
             []);
-    }
-
-    private static DiagramIr BuildDiagram(string repositoryName, VersionedGraph graph, GitComparison comparison)
-    {
-        var changeByIdentity = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var change in graph.Changes)
-        {
-            var before = graph.Versions.FirstOrDefault(version => version.Id == change.BeforeSymbolVersionId);
-            var after = graph.Versions.FirstOrDefault(version => version.Id == change.AfterSymbolVersionId);
-            var identityId = after?.IdentityId ?? before?.IdentityId;
-            if (identityId is null) continue;
-            changeByIdentity[identityId] = change.Type switch
-            {
-                SymbolChangeKind.AddSymbol => "added",
-                SymbolChangeKind.RemoveSymbol => "deleted",
-                _ => "modified"
-            };
-        }
-
-        var selectedIdentities = graph.Identities
-            .OrderBy(identity => changeByIdentity.ContainsKey(identity.Id) ? 0 : 1)
-            .ThenBy(static identity => identity.SemanticKey, StringComparer.Ordinal)
-            .Take(DiagramValidator.MaximumNodes)
-            .ToArray();
-        var selectedIdentityIds = selectedIdentities.Select(static identity => identity.Id).ToHashSet(StringComparer.Ordinal);
-        var nodes = selectedIdentities.Select(identity =>
-        {
-            var version = graph.Versions.FirstOrDefault(candidate => candidate.IdentityId == identity.Id && candidate.RevisionSha == comparison.TargetSha)
-                          ?? graph.Versions.First(candidate => candidate.IdentityId == identity.Id);
-            var evidence = graph.Evidence.Where(item => item.RevisionSha == version.RevisionSha && item.FilePath == version.FilePath &&
-                                                        item.StartLine == version.StartLine).Select(static item => item.Id).ToArray();
-            return new DiagramNode(identity.Id, version.QualifiedName, identity.Kind, Path.GetDirectoryName(version.FilePath),
-                changeByIdentity.GetValueOrDefault(identity.Id, "unchanged"), evidence.Length == 0 ? Confidence.Inferred : Confidence.Exact, evidence);
-        }).ToArray();
-        var edges = graph.Edges
-            .Where(edge => selectedIdentityIds.Contains(edge.FromIdentityId) && selectedIdentityIds.Contains(edge.ToIdentityId))
-            .Take(DiagramValidator.MaximumEdges)
-            .Select(edge => new DiagramEdge(
-                edge.Id, edge.FromIdentityId, edge.ToIdentityId, edge.Type, edge.Label, "unchanged",
-                edge.Confidence, edge.EvidenceIds, edge.SequenceIndex))
-            .ToArray();
-        var notes = new List<string> { "Exact and inferred relations are distinguished in the evidence panel." };
-        if (graph.Identities.Count > nodes.Length || graph.Edges.Count > edges.Length)
-        {
-            notes.Add($"The preview is limited to {nodes.Length} nodes and {edges.Length} edges; the complete graph remains available in the analysis result.");
-        }
-        return new DiagramIr(
-            "dependency",
-            $"{repositoryName}: {comparison.BaseSha[..8]} → {comparison.TargetSha[..8]}",
-            nodes,
-            edges,
-            notes,
-            [comparison.BaseSha, comparison.TargetSha]);
     }
 
     private static string MapErrorCode(Exception exception) => exception switch

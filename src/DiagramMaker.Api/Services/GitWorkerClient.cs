@@ -51,7 +51,9 @@ public sealed class GitWorkerClient : IGitWorkerClient
             baseRevision = request.BaseRevision,
             targetRevision = request.TargetRevision,
             maxChangedFiles = _options.MaxChangedFiles,
-            maxTextFileBytes = _options.MaxTextFileBytes
+            maxTextFileBytes = _options.MaxTextFileBytes,
+            maxContextFiles = _options.MaxContextFiles,
+            maxContextFileBytes = _options.MaxContextFileBytes
         }, cancellationToken);
     }
 

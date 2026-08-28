@@ -37,6 +37,13 @@ public sealed partial class SourceGraphAnalyzer
             }
         }
 
+        foreach (var file in comparison.ContextFiles ?? [])
+        {
+            var parsed = Parse(repositoryId, file.RevisionSha, file.BlobOid, file.Path, file.Content);
+            if (file.RevisionSha == comparison.BaseSha) before.AddRange(parsed);
+            if (file.RevisionSha == comparison.TargetSha) after.AddRange(parsed);
+        }
+
         var beforeByIdentity = before.GroupBy(static symbol => symbol.Identity.Id).ToDictionary(static group => group.Key, static group => group.First());
         var afterByIdentity = after.GroupBy(static symbol => symbol.Identity.Id).ToDictionary(static group => group.Key, static group => group.First());
         var changes = BuildChanges(beforeByIdentity, afterByIdentity);
