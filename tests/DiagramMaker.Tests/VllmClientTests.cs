@@ -88,9 +88,11 @@ public sealed class VllmClientTests
 
         var error = await Assert.ThrowsAsync<LlmClientException>(() => structured.CompleteAsync<TestResult>(
             "system", "user", schemaDocument.RootElement.Clone(), 100, false,
-            value => !string.IsNullOrWhiteSpace(value.Result), CancellationToken.None));
+            value => string.IsNullOrWhiteSpace(value.Result) ? "MissingResult" : null, CancellationToken.None));
 
         Assert.Equal("LLM_RESPONSE_TRUNCATED", error.Code);
+        Assert.Equal("Truncated", error.FailureKind);
+        Assert.False(error.RepairAttempted);
         Assert.Single(handler.Requests);
     }
 
@@ -105,12 +107,85 @@ public sealed class VllmClientTests
 
         var result = await structured.CompleteAsync<TestResult>(
             "system", "synthetic user", schemaDocument.RootElement.Clone(), 100, false,
-            value => value.Result == "valid", CancellationToken.None);
+            value => value.Result == "valid" ? null : "MissingResult", CancellationToken.None);
 
         Assert.True(result.RepairUsed);
         Assert.Equal("valid", result.Value.Result);
         Assert.Equal(2, handler.Requests.Count);
         Assert.DoesNotContain(rejected, handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.Contains("MalformedJson", handler.Requests[1].Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ReportsBoundedFailureKindsWithoutRejectedContent()
+    {
+        const string firstRejected = "prefix {\"result\":\"secret-one\"}";
+        const string secondRejected = "secret-two";
+        var handler = new QueueHandler(Response(firstRejected), Response($"{{\"result\":\"{secondRejected}\"}}"));
+        using var client = CreateClient(handler);
+        var structured = new StructuredLlmCompletion(client);
+        using var schemaDocument = JsonDocument.Parse("""{"type":"object"}""");
+
+        var error = await Assert.ThrowsAsync<LlmClientException>(() => structured.CompleteAsync<TestResult>(
+            "system", "synthetic user", schemaDocument.RootElement.Clone(), 100, false,
+            _ => "SemanticValidation", CancellationToken.None));
+
+        Assert.Equal("LLM_SCHEMA_INVALID", error.Code);
+        Assert.Equal("MixedContent", error.InitialFailureKind);
+        Assert.Equal("SemanticValidation", error.FailureKind);
+        Assert.True(error.RepairAttempted);
+        Assert.DoesNotContain("secret-one", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(secondRejected, error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AcceptsSingleJsonCodeFence()
+    {
+        var handler = new QueueHandler(Response("""
+            ```json
+            {"result":"valid"}
+            ```
+            """));
+        using var client = CreateClient(handler);
+        var structured = new StructuredLlmCompletion(client);
+        using var schemaDocument = JsonDocument.Parse("""{"type":"object"}""");
+
+        var result = await structured.CompleteAsync<TestResult>(
+            "system", "synthetic user", schemaDocument.RootElement.Clone(), 100, false,
+            value => value.Result == "valid" ? null : "MissingResult", CancellationToken.None);
+
+        Assert.False(result.RepairUsed);
+        Assert.Equal("valid", result.Value.Result);
+    }
+
+    [Fact]
+    public async Task DiagramContractSendsStrictBoundedSchema()
+    {
+        var handler = new QueueHandler(Response(ValidDiagramContent));
+        var options = Options();
+        using var transport = new VllmClient(options, handler: handler);
+        var validator = new DiagramValidator();
+        var structured = new StructuredLlmCompletion(transport);
+        var llm = new InternalLlmClient(
+            Microsoft.Extensions.Options.Options.Create(options),
+            new SecretMasker(),
+            validator,
+            transport,
+            structured);
+
+        var result = await llm.TestDiagramContractAsync(enableThinking: false, CancellationToken.None);
+
+        Assert.True(result.Success);
+        using var payload = JsonDocument.Parse(Assert.Single(handler.Requests).Body);
+        var schema = payload.RootElement.GetProperty("structured_outputs").GetProperty("json");
+        Assert.False(schema.GetProperty("additionalProperties").GetBoolean());
+        var nodeSchema = schema.GetProperty("properties").GetProperty("nodes");
+        Assert.Equal(1, nodeSchema.GetProperty("minItems").GetInt32());
+        Assert.Equal(500, nodeSchema.GetProperty("maxItems").GetInt32());
+        var nodeItem = nodeSchema.GetProperty("items");
+        Assert.False(nodeItem.GetProperty("additionalProperties").GetBoolean());
+        Assert.Contains(nodeItem.GetProperty("required").EnumerateArray(), item => item.GetString() == "group");
+        Assert.Equal(0, nodeItem.GetProperty("properties").GetProperty("evidenceIds").GetProperty("maxItems").GetInt32());
     }
 
     private static VllmClient CreateClient(HttpMessageHandler handler) => new(Options(), handler: handler);
@@ -151,6 +226,22 @@ public sealed class VllmClientTests
     }
 
     private sealed record TestResult(string Result);
+
+    private const string ValidDiagramContent = """
+        {
+          "type":"flowchart",
+          "title":"Synthetic Diagram",
+          "nodes":[
+            {"id":"n1","label":"Client","kind":"component","group":null,"status":"unchanged","confidence":"Inferred","evidenceIds":[]},
+            {"id":"n2","label":"Service","kind":"component","group":null,"status":"unchanged","confidence":"Inferred","evidenceIds":[]}
+          ],
+          "edges":[
+            {"id":"e1","sourceId":"n1","targetId":"n2","type":"flow","label":"request","status":"unchanged","confidence":"Inferred","evidenceIds":[],"sequenceIndex":1}
+          ],
+          "notes":[],
+          "provenance":[]
+        }
+        """;
 
     private sealed class QueueHandler(params HttpResponseMessage[] responses) : HttpMessageHandler
     {

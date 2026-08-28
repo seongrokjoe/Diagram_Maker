@@ -1,5 +1,5 @@
 param(
-    [string]$Version = '0.1.0-offline.1',
+    [string]$Version = '0.1.0-offline.2',
     [string]$NodeVersion = '24.12.0',
     [switch]$SkipTests
 )
@@ -48,6 +48,29 @@ $workerTestRoot = Join-Path $workerRoot 'test'
 New-Item -ItemType Directory -Path $workerTestRoot -Force | Out-Null
 Copy-Item -Path (Join-Path $sourceWorkerRoot 'test\*.mjs') -Destination $workerTestRoot
 
+$nodeArchiveName = "node-v$NodeVersion-win-x64.zip"
+$nodeArchive = Join-Path $cacheRoot $nodeArchiveName
+$nodeChecksums = Join-Path $cacheRoot "node-v$NodeVersion-SHASUMS256.txt"
+$nodeBaseUri = "https://nodejs.org/dist/v$NodeVersion"
+if (-not (Test-Path -LiteralPath $nodeArchive)) {
+    Invoke-WebRequest -UseBasicParsing -Uri "$nodeBaseUri/$nodeArchiveName" -OutFile $nodeArchive
+}
+if (-not (Test-Path -LiteralPath $nodeChecksums)) {
+    Invoke-WebRequest -UseBasicParsing -Uri "$nodeBaseUri/SHASUMS256.txt" -OutFile $nodeChecksums
+}
+$expectedLine = Get-Content -LiteralPath $nodeChecksums | Where-Object { $_ -match "\s$([regex]::Escape($nodeArchiveName))$" } | Select-Object -First 1
+if (-not $expectedLine) { throw "Node.js checksum was not found for $nodeArchiveName" }
+$expectedHash = ($expectedLine -split '\s+')[0].ToUpperInvariant()
+$actualHash = (Get-FileHash -LiteralPath $nodeArchive -Algorithm SHA256).Hash
+if ($actualHash -ne $expectedHash) { throw 'Node.js archive SHA-256 verification failed.' }
+
+$nodeExtractRoot = Join-Path $cacheRoot "node-v$NodeVersion-win-x64"
+Assert-ChildPath $cacheRoot $nodeExtractRoot
+if (Test-Path -LiteralPath $nodeExtractRoot) { Remove-Item -LiteralPath $nodeExtractRoot -Recurse -Force }
+Expand-Archive -LiteralPath $nodeArchive -DestinationPath $cacheRoot -Force
+$targetNode = Join-Path $nodeExtractRoot 'node.exe'
+$targetNpmCli = Join-Path $nodeExtractRoot 'node_modules\npm\bin\npm-cli.js'
+
 if (-not $SkipTests) {
     dotnet restore (Join-Path $projectRoot 'DiagramMaker.sln') --locked-mode
     Assert-LastExitCode 'dotnet restore'
@@ -55,20 +78,34 @@ if (-not $SkipTests) {
     Assert-LastExitCode 'dotnet test'
 }
 
-npm.cmd ci --prefix $workerRoot --ignore-scripts
+& $targetNode $targetNpmCli ci --prefix $workerRoot --ignore-scripts
 Assert-LastExitCode 'git worker npm ci'
-npm.cmd test --prefix $workerRoot
-Assert-LastExitCode 'git worker tests'
-npm.cmd audit --prefix $workerRoot --audit-level=low
+Push-Location $workerRoot
+try {
+    & $targetNode --test
+    Assert-LastExitCode 'git worker tests'
+}
+finally {
+    Pop-Location
+}
+& $targetNode $targetNpmCli audit --prefix $workerRoot --audit-level=low
 Assert-LastExitCode 'git worker audit'
 
-npm.cmd ci --prefix $webRoot
+& $targetNode $targetNpmCli ci --prefix $webRoot
 Assert-LastExitCode 'web npm ci'
-npm.cmd run build --prefix $webRoot
+& $targetNode (Join-Path $webRoot 'node_modules\typescript\bin\tsc') -b (Join-Path $webRoot 'tsconfig.json')
+Assert-LastExitCode 'web TypeScript build'
+Push-Location $webRoot
+try {
+    & $targetNode (Join-Path $webRoot 'node_modules\vite\bin\vite.js') build
+}
+finally {
+    Pop-Location
+}
 Assert-LastExitCode 'web build'
-npm.cmd audit --prefix $webRoot --audit-level=low
+& $targetNode $targetNpmCli audit --prefix $webRoot --audit-level=low
 Assert-LastExitCode 'web audit'
-node (Join-Path $projectRoot 'scripts\check-npm-licenses.mjs') (Join-Path $webRoot 'node_modules') (Join-Path $workerRoot 'node_modules')
+& $targetNode (Join-Path $projectRoot 'scripts\check-npm-licenses.mjs') (Join-Path $webRoot 'node_modules') (Join-Path $workerRoot 'node_modules')
 Assert-LastExitCode 'npm license policy check'
 
 dotnet publish $apiProject -c Release -r win-x64 --self-contained true -o $stageRoot
@@ -90,29 +127,9 @@ if (Get-ChildItem -LiteralPath (Join-Path $packagedWorker 'node_modules') -Recur
     throw 'The Git Worker runtime contains a native Node module and cannot be copied across architectures.'
 }
 
-$nodeArchiveName = "node-v$NodeVersion-win-x64.zip"
-$nodeArchive = Join-Path $cacheRoot $nodeArchiveName
-$nodeChecksums = Join-Path $cacheRoot "node-v$NodeVersion-SHASUMS256.txt"
-$nodeBaseUri = "https://nodejs.org/dist/v$NodeVersion"
-if (-not (Test-Path -LiteralPath $nodeArchive)) {
-    Invoke-WebRequest -UseBasicParsing -Uri "$nodeBaseUri/$nodeArchiveName" -OutFile $nodeArchive
-}
-if (-not (Test-Path -LiteralPath $nodeChecksums)) {
-    Invoke-WebRequest -UseBasicParsing -Uri "$nodeBaseUri/SHASUMS256.txt" -OutFile $nodeChecksums
-}
-$expectedLine = Get-Content -LiteralPath $nodeChecksums | Where-Object { $_ -match "\s$([regex]::Escape($nodeArchiveName))$" } | Select-Object -First 1
-if (-not $expectedLine) { throw "Node.js checksum was not found for $nodeArchiveName" }
-$expectedHash = ($expectedLine -split '\s+')[0].ToUpperInvariant()
-$actualHash = (Get-FileHash -LiteralPath $nodeArchive -Algorithm SHA256).Hash
-if ($actualHash -ne $expectedHash) { throw 'Node.js archive SHA-256 verification failed.' }
-
-$nodeExtractRoot = Join-Path $cacheRoot "node-v$NodeVersion-win-x64"
-Assert-ChildPath $cacheRoot $nodeExtractRoot
-if (Test-Path -LiteralPath $nodeExtractRoot) { Remove-Item -LiteralPath $nodeExtractRoot -Recurse -Force }
-Expand-Archive -LiteralPath $nodeArchive -DestinationPath $cacheRoot -Force
 $packagedNode = Join-Path $stageRoot 'runtime\node'
 New-Item -ItemType Directory -Path $packagedNode -Force | Out-Null
-Copy-Item -LiteralPath (Join-Path $nodeExtractRoot 'node.exe') -Destination $packagedNode
+Copy-Item -LiteralPath $targetNode -Destination $packagedNode
 Copy-Item -LiteralPath (Join-Path $nodeExtractRoot 'LICENSE') -Destination $packagedNode
 
 Copy-Item -Path (Join-Path $projectRoot 'packaging\windows\*.cmd') -Destination $stageRoot
@@ -122,7 +139,7 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'packaging\windows\config') -Dest
 $licenseRoot = Join-Path $stageRoot 'licenses'
 $npmLicenseRoot = Join-Path $licenseRoot 'npm'
 New-Item -ItemType Directory -Path $licenseRoot, $npmLicenseRoot -Force | Out-Null
-node (Join-Path $projectRoot 'scripts\collect-npm-licenses.mjs') $npmLicenseRoot (Join-Path $webRoot 'node_modules') (Join-Path $workerRoot 'node_modules')
+& $targetNode (Join-Path $projectRoot 'scripts\collect-npm-licenses.mjs') $npmLicenseRoot (Join-Path $webRoot 'node_modules') (Join-Path $workerRoot 'node_modules')
 Assert-LastExitCode 'npm license collection'
 Copy-Item -LiteralPath (Join-Path $projectRoot 'THIRD_PARTY_NOTICES.md') -Destination $licenseRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE_POLICY.md') -Destination $licenseRoot

@@ -6,10 +6,19 @@ using DiagramMaker.Configuration;
 
 namespace DiagramMaker.Services;
 
-public sealed class LlmClientException(string code, string message, Exception? innerException = null)
+public sealed class LlmClientException(
+    string code,
+    string message,
+    Exception? innerException = null,
+    string? failureKind = null,
+    string? initialFailureKind = null,
+    bool repairAttempted = false)
     : Exception(message, innerException)
 {
     public string Code { get; } = code;
+    public string? FailureKind { get; } = failureKind;
+    public string? InitialFailureKind { get; } = initialFailureKind;
+    public bool RepairAttempted { get; } = repairAttempted;
 }
 
 public sealed record VllmCompletionRequest(

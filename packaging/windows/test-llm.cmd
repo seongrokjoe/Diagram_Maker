@@ -6,17 +6,17 @@ call "%~dp0health-check.cmd"
 if errorlevel 1 exit /b 1
 
 echo [1/3] Basic connection test
-curl.exe --fail --silent --show-error -X POST "%BASE_URL%/connection"
+curl.exe --fail-with-body --silent --show-error -X POST "%BASE_URL%/connection"
 if errorlevel 1 goto :failed
 echo.
 
 echo [2/3] DiagramIR structured contract test
-curl.exe --fail --silent --show-error -X POST "%BASE_URL%/diagram-contract"
+curl.exe --fail-with-body --silent --show-error -X POST "%BASE_URL%/diagram-contract"
 if errorlevel 1 goto :failed
 echo.
 
 echo [3/3] Thinking structured contract test
-curl.exe --fail --silent --show-error -X POST "%BASE_URL%/thinking-contract"
+curl.exe --fail-with-body --silent --show-error -X POST "%BASE_URL%/thinking-contract"
 if errorlevel 1 goto :failed
 echo.
 echo All internal LLM tests passed.

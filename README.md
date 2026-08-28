@@ -64,7 +64,7 @@ docker compose up -d
 
 Production에서는 앱을 OIDC reverse proxy 뒤에 배치하고 proxy가 `X-Remote-User`, `X-Remote-Roles`를 설정해야 합니다. 사용자 PC에는 .NET, Node, Git, Clang 또는 LLM credential이 필요하지 않습니다.
 
-외부 npm 접속이 차단된 Windows x64 PC에는 GitHub Release의 `DiagramMaker-*-win-x64.zip`을 사용합니다. 이 패키지는 self-contained .NET, portable Node.js, 웹 UI와 Git Worker 의존성을 포함하며 CMD에서 `configure-llm.cmd`, `start.cmd`, `test-llm.cmd` 순서로 실행합니다.
+외부 npm 접속 또는 GitHub Release asset 다운로드가 차단된 Windows x64 PC에서는 Source code ZIP 안의 `artifacts/release/DiagramMaker-*-win-x64.zip`을 사용합니다. 이 패키지는 self-contained .NET, portable Node.js, 웹 UI와 Git Worker 의존성을 포함하며 CMD에서 `configure-llm.cmd`, `start.cmd`, `test-llm.cmd` 순서로 실행합니다.
 
 ## 검증
 

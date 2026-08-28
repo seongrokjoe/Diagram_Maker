@@ -325,7 +325,7 @@ api.MapPost("/natural-diagrams", async (
     }
     catch (LlmClientException exception)
     {
-        return Results.Json(new { errorCode = exception.Code, error = exception.Message }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        return LlmFailure(exception);
     }
 });
 
@@ -341,7 +341,7 @@ api.MapPost("/llm/tests/connection", async (
     }
     catch (LlmClientException exception)
     {
-        return Results.Json(new { errorCode = exception.Code, error = exception.Message }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        return LlmFailure(exception);
     }
 });
 
@@ -357,7 +357,7 @@ api.MapPost("/llm/tests/diagram-contract", async (
     }
     catch (LlmClientException exception)
     {
-        return Results.Json(new { errorCode = exception.Code, error = exception.Message }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        return LlmFailure(exception);
     }
 });
 
@@ -373,7 +373,7 @@ api.MapPost("/llm/tests/thinking-contract", async (
     }
     catch (LlmClientException exception)
     {
-        return Results.Json(new { errorCode = exception.Code, error = exception.Message }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        return LlmFailure(exception);
     }
 });
 
@@ -415,6 +415,15 @@ static object ToAnalysisResponse(AnalysisJob job) => new
     job.CreatedAt,
     job.UpdatedAt
 };
+
+static IResult LlmFailure(LlmClientException exception) => Results.Json(new
+{
+    errorCode = exception.Code,
+    error = exception.Message,
+    failureKind = exception.FailureKind,
+    initialFailureKind = exception.InitialFailureKind,
+    repairAttempted = exception.RepairAttempted
+}, statusCode: StatusCodes.Status503ServiceUnavailable);
 
 static async Task<AnalysisJob?> AuthorizedJob(Guid id, HttpContext context, IAppStore store, CancellationToken cancellationToken)
 {

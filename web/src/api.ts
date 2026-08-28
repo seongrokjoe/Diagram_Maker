@@ -16,8 +16,18 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     },
   });
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { error?: string; detail?: string } | null;
-    throw new Error(body?.error ?? body?.detail ?? `요청 실패 (${response.status})`);
+    const body = (await response.json().catch(() => null)) as {
+      error?: string;
+      detail?: string;
+      errorCode?: string;
+      failureKind?: string;
+      initialFailureKind?: string;
+      repairAttempted?: boolean;
+    } | null;
+    const message = body?.error ?? body?.detail ?? `요청 실패 (${response.status})`;
+    const diagnostics = [body?.errorCode, body?.failureKind]
+      .filter((value): value is string => Boolean(value));
+    throw new Error(diagnostics.length > 0 ? `${message} [${diagnostics.join(" / ")}]` : message);
   }
   return (await response.json()) as T;
 }
