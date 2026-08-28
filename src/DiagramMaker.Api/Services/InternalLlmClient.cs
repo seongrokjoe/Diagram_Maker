@@ -11,7 +11,8 @@ public interface IInternalLlmClient
     Task<DiagramIr?> GenerateNaturalDiagramAsync(string prompt, string requestedType, bool enableThinking, CancellationToken cancellationToken);
     Task<ReviewNarrative?> GenerateReviewAsync(VersionedGraph graph, IReadOnlyList<ChangedFile> files, bool enableThinking, CancellationToken cancellationToken);
     Task<LlmConnectionTestResult> TestConnectionAsync(CancellationToken cancellationToken);
-    Task<LlmContractTestResult> TestDiagramContractAsync(bool enableThinking, CancellationToken cancellationToken);
+    Task<LlmContractTestResult> TestDiagramContractAsync(CancellationToken cancellationToken);
+    Task<LlmThinkingContractTestResult> TestThinkingContractAsync(CancellationToken cancellationToken);
 }
 
 public sealed class InternalLlmClient(
@@ -91,6 +92,16 @@ public sealed class InternalLlmClient(
             "warnings": { "type": "array", "items": { "type": "string" } }
           },
           "required": ["summary", "intent", "risks", "warnings"]
+        }
+        """);
+    private static readonly JsonElement ThinkingContractSchema = ParseSchema("""
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "result": { "type": "string", "enum": ["ok"] }
+          },
+          "required": ["result"]
         }
         """);
     private readonly LlmOptions _options = options.Value;
@@ -179,17 +190,17 @@ public sealed class InternalLlmClient(
             result.TotalTokens);
     }
 
-    public async Task<LlmContractTestResult> TestDiagramContractAsync(bool enableThinking, CancellationToken cancellationToken)
+    public async Task<LlmContractTestResult> TestDiagramContractAsync(CancellationToken cancellationToken)
     {
-        var maxOutputTokens = enableThinking
-            ? GetThinkingOutputTokens()
-            : Math.Min(_options.DiagramOutputTokens, 4_000);
         var result = await structured.CompleteAsync<DiagramIr>(
-            "Return exactly one DiagramIR JSON object for synthetic components only.",
-            "Create a flow from SyntheticClient to SyntheticService to SyntheticStore.",
+            """
+            Return exactly one DiagramIR JSON object for synthetic components only.
+            Use unique short node IDs. Every edge sourceId and targetId must exactly match a returned node ID.
+            """,
+            "Create a flow from SyntheticClient to SyntheticService to SyntheticStore using three nodes and two edges.",
             DiagramSchema,
-            maxOutputTokens,
-            enableThinking,
+            Math.Min(_options.DiagramOutputTokens, 4_000),
+            enableThinking: false,
             GetDiagramFailure,
             cancellationToken);
         return new LlmContractTestResult(
@@ -201,7 +212,31 @@ public sealed class InternalLlmClient(
             result.Completion.StructuredOutputApplied,
             result.Completion.StructuredOutputFallbackUsed,
             result.RepairUsed,
-            enableThinking,
+            false,
+            result.Completion.RequestedMaxOutputTokens,
+            result.Completion.PromptTokens,
+            result.Completion.CompletionTokens,
+            result.Completion.TotalTokens);
+    }
+
+    public async Task<LlmThinkingContractTestResult> TestThinkingContractAsync(CancellationToken cancellationToken)
+    {
+        var result = await structured.CompleteAsync<ThinkingContractPayload>(
+            "Perform a brief synthetic reasoning check and return exactly one JSON object matching the schema.",
+            "Privately determine whether SyntheticAlpha and SyntheticBeta are distinct, then return result ok.",
+            ThinkingContractSchema,
+            GetThinkingOutputTokens(),
+            enableThinking: true,
+            value => value.Result == "ok" ? null : "ThinkingContract",
+            cancellationToken);
+        return new LlmThinkingContractTestResult(
+            true,
+            result.Completion.ElapsedMilliseconds,
+            result.Completion.FinishReason,
+            result.Completion.StructuredOutputApplied,
+            result.Completion.StructuredOutputFallbackUsed,
+            result.RepairUsed,
+            true,
             result.Completion.RequestedMaxOutputTokens,
             result.Completion.PromptTokens,
             result.Completion.CompletionTokens,
@@ -228,4 +263,6 @@ public sealed class InternalLlmClient(
     }
 
     private static string Limit(string value, int maximum) => value.Length <= maximum ? value : value[..maximum];
+
+    private sealed record ThinkingContractPayload(string Result);
 }

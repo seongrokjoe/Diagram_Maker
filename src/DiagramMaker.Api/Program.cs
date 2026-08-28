@@ -353,7 +353,7 @@ api.MapPost("/llm/tests/diagram-contract", async (
     if (!context.GetInternalIdentity().Roles.Contains("Admin")) return Results.Forbid();
     try
     {
-        return Results.Ok(await llm.TestDiagramContractAsync(enableThinking: false, cancellationToken));
+        return Results.Ok(await llm.TestDiagramContractAsync(cancellationToken));
     }
     catch (LlmClientException exception)
     {
@@ -369,7 +369,7 @@ api.MapPost("/llm/tests/thinking-contract", async (
     if (!context.GetInternalIdentity().Roles.Contains("Admin")) return Results.Forbid();
     try
     {
-        return Results.Ok(await llm.TestDiagramContractAsync(enableThinking: true, cancellationToken));
+        return Results.Ok(await llm.TestThinkingContractAsync(cancellationToken));
     }
     catch (LlmClientException exception)
     {

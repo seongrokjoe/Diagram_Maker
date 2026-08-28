@@ -266,3 +266,16 @@ public sealed record LlmContractTestResult(
     int? PromptTokens,
     int? CompletionTokens,
     int? TotalTokens);
+
+public sealed record LlmThinkingContractTestResult(
+    bool Success,
+    long ElapsedMilliseconds,
+    string FinishReason,
+    bool StructuredOutputApplied,
+    bool StructuredOutputFallbackUsed,
+    bool RepairUsed,
+    bool ThinkingEnabled,
+    int RequestedMaxOutputTokens,
+    int? PromptTokens,
+    int? CompletionTokens,
+    int? TotalTokens);

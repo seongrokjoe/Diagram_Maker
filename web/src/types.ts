@@ -62,6 +62,20 @@ export type LlmContractTestResult = {
   totalTokens?: number;
 };
 
+export type LlmThinkingContractTestResult = {
+  success: boolean;
+  elapsedMilliseconds: number;
+  finishReason: string;
+  structuredOutputApplied: boolean;
+  structuredOutputFallbackUsed: boolean;
+  repairUsed: boolean;
+  thinkingEnabled: boolean;
+  requestedMaxOutputTokens: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+};
+
 export type ChangedFile = {
   path: string;
   previousPath?: string;

@@ -53,7 +53,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\stop-local.ps1
 
 Endpoint와 AllowedOrigin의 scheme, host, port가 정확히 일치하지 않으면 앱이 시작되지 않습니다. 현재 승인 계약은 API Key 없이 `structured_outputs.json`과 `chat_template_kwargs.enable_thinking`을 사용합니다. Redirect, cookie, 기본 자격 증명과 환경 proxy도 사용하지 않습니다.
 
-웹의 **사내 LLM 점검** 탭은 프로젝트 데이터를 보내지 않고 기본 연결, DiagramIR 구조화, Thinking 구조화 계약을 차례로 확인합니다. 자연어 생성과 Git LLM 요약에서는 요청별 Thinking 체크박스를 사용할 수 있습니다.
+웹의 **사내 LLM 점검** 탭은 프로젝트 데이터를 보내지 않고 기본 연결, DiagramIR 구조화, Thinking 프로토콜을 차례로 확인합니다. 2단계는 DiagramIR 무결성을 검사하고 3단계는 작은 고정 JSON으로 Thinking과 structured output의 결합만 독립 검증합니다. 자연어 생성과 Git LLM 요약에서는 요청별 Thinking 체크박스를 사용할 수 있습니다.
 Thinking 요청의 `max_tokens`는 reasoning과 최종 JSON을 합친 생성 상한이며 `ThinkingOutputTokens`를 사용합니다. `MaxInputCharacters`는 토큰이 아닌 입력 문자 수 제한입니다.
 
 ## 배포

@@ -138,6 +138,10 @@ public sealed class VllmClientTests
         Assert.Equal("MixedContent", error.InitialFailureKind);
         Assert.Equal("SemanticValidation", error.FailureKind);
         Assert.True(error.RepairAttempted);
+        Assert.Equal(100, error.RequestedMaxOutputTokens);
+        Assert.Equal(10, error.PromptTokens);
+        Assert.Equal(20, error.CompletionTokens);
+        Assert.Equal(30, error.TotalTokens);
         Assert.DoesNotContain("secret-one", error.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(secondRejected, error.Message, StringComparison.Ordinal);
     }
@@ -177,7 +181,7 @@ public sealed class VllmClientTests
             transport,
             structured);
 
-        var result = await llm.TestDiagramContractAsync(enableThinking: false, CancellationToken.None);
+        var result = await llm.TestDiagramContractAsync(CancellationToken.None);
 
         Assert.True(result.Success);
         using var payload = JsonDocument.Parse(Assert.Single(handler.Requests).Body);
@@ -198,17 +202,22 @@ public sealed class VllmClientTests
     [Fact]
     public async Task ThinkingContractUsesConfiguredThinkingBudget()
     {
-        var handler = new QueueHandler(Response(ValidDiagramContent));
+        var handler = new QueueHandler(Response("{\"result\":\"ok\"}"));
         var options = Options();
         options.ThinkingOutputTokens = 1_800;
         using var transport = new VllmClient(options, handler: handler);
         var llm = CreateInternalClient(options, transport);
 
-        var result = await llm.TestDiagramContractAsync(enableThinking: true, CancellationToken.None);
+        var result = await llm.TestThinkingContractAsync(CancellationToken.None);
 
         using var payload = JsonDocument.Parse(Assert.Single(handler.Requests).Body);
         Assert.True(payload.RootElement.GetProperty("chat_template_kwargs").GetProperty("enable_thinking").GetBoolean());
         Assert.Equal(1_800, payload.RootElement.GetProperty("max_tokens").GetInt32());
+        var schema = payload.RootElement.GetProperty("structured_outputs").GetProperty("json");
+        var properties = schema.GetProperty("properties");
+        Assert.True(properties.TryGetProperty("result", out var resultProperty));
+        Assert.False(properties.TryGetProperty("nodes", out _));
+        Assert.Equal("ok", Assert.Single(resultProperty.GetProperty("enum").EnumerateArray()).GetString());
         Assert.True(result.ThinkingEnabled);
         Assert.Equal(1_800, result.RequestedMaxOutputTokens);
     }
@@ -216,13 +225,13 @@ public sealed class VllmClientTests
     [Fact]
     public async Task ThinkingBudgetFallsBackToOutputHardLimit()
     {
-        var handler = new QueueHandler(Response(ValidDiagramContent));
+        var handler = new QueueHandler(Response("{\"result\":\"ok\"}"));
         var options = Options();
         Assert.Null(options.ThinkingOutputTokens);
         using var transport = new VllmClient(options, handler: handler);
         var llm = CreateInternalClient(options, transport);
 
-        await llm.TestDiagramContractAsync(enableThinking: true, CancellationToken.None);
+        await llm.TestThinkingContractAsync(CancellationToken.None);
 
         using var payload = JsonDocument.Parse(Assert.Single(handler.Requests).Body);
         Assert.Equal(options.OutputHardLimit, payload.RootElement.GetProperty("max_tokens").GetInt32());

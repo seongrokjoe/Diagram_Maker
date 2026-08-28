@@ -7,8 +7,8 @@ Diagram Maker 사내 PC 오프라인 설치 및 LLM 연결 가이드
 사내 정책으로 GitHub Release asset을 받을 수 없다면 main 브랜치 또는 최신 태그의 Source code
 ZIP을 내려받고, 압축을 푼 저장소 안의 artifacts\release 폴더에서 다음 완성 실행 패키지를 찾는다.
 
-  DiagramMaker-0.1.0-offline.3-win-x64.zip
-  DiagramMaker-0.1.0-offline.3-win-x64.zip.sha256
+  DiagramMaker-0.1.0-offline.4-win-x64.zip
+  DiagramMaker-0.1.0-offline.4-win-x64.zip.sha256
 
 완성 패키지는 다음 항목을 이미 포함한다.
 
@@ -25,7 +25,7 @@ ZIP을 내려받고, 압축을 푼 저장소 안의 artifacts\release 폴더에�
 
 CMD에서 실행한다.
 
-  certutil -hashfile DiagramMaker-0.1.0-offline.3-win-x64.zip SHA256
+  certutil -hashfile DiagramMaker-0.1.0-offline.4-win-x64.zip SHA256
 
 출력된 값이 .sha256 파일의 값과 정확히 같은지 확인한다.
 ZIP은 C:\Tools\DiagramMaker처럼 사용자가 쓰기 가능한 로컬 폴더에 압축 해제한다.
@@ -108,9 +108,11 @@ test-llm.cmd는 실제 프로젝트 데이터 대신 고정 synthetic 데이터�
 
 1) DNS/TCP/TLS/HTTP와 기본 completion 응답
 2) structured_outputs.json 기반 DiagramIR 응답
-3) chat_template_kwargs.enable_thinking=true 기반 Thinking 응답
+3) chat_template_kwargs.enable_thinking=true와 작은 고정 JSON 기반 Thinking 프로토콜 응답
 
-성공 결과에는 응답 시간, finish_reason, 노드/엣지 수를 표시한다. 실패 결과에는 원문 대신
+2단계는 DiagramIR 구조와 노드-엣지 참조 무결성을 확인한다. 3단계는 DiagramIR을 다시 만들지 않고
+Thinking과 structured output의 결합만 독립적으로 확인한다.
+성공 결과에는 응답 시간, finish_reason, 출력 token 상한과 사용량을 표시한다. 실패 결과에는 원문 대신
 MalformedJson, Deserialization, DuplicateNodeId, UnknownEdgeNode 같은 고정 진단 분류를 표시한다.
 모델 응답 원문이나 reasoning_content는 로그와 시험 결과에 저장하지 않는다.
 
@@ -204,7 +206,7 @@ endpoint, prompt, Git 소스, response body와 reasoning 원문은 출력하지 
 ---------------------------------------------------------
 
 Source code ZIP 자체의 소스 트리는 node_modules를 포함하지 않는다. 대신
-artifacts\release\DiagramMaker-0.1.0-offline.3-win-x64.zip에 self-contained .NET,
+artifacts\release\DiagramMaker-0.1.0-offline.4-win-x64.zip에 self-contained .NET,
 portable Node.js, Git Worker 의존성과 빌드된 웹 화면이 포함되어 있다.
 
 실행 목적이면 Source code ZIP 전체를 개발 환경으로 사용하지 말고, 그 안의 완성 실행 패키지를

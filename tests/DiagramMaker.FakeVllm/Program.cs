@@ -16,13 +16,19 @@ app.MapPost("/v1/chat/completions", async (HttpContext context, CancellationToke
         return Results.UnprocessableEntity();
     if (mode == "delay") await Task.Delay(TimeSpan.FromMinutes(5), cancellationToken);
 
-    var structured = request.RootElement.TryGetProperty("structured_outputs", out _);
+    var structured = request.RootElement.TryGetProperty("structured_outputs", out var structuredOutputs);
+    var thinkingContract = structured &&
+                           structuredOutputs.TryGetProperty("json", out var schema) &&
+                           schema.TryGetProperty("properties", out var properties) &&
+                           properties.TryGetProperty("result", out _);
     var thinking = request.RootElement.TryGetProperty("chat_template_kwargs", out var template) &&
                    template.TryGetProperty("enable_thinking", out var enabled) && enabled.GetBoolean();
     var completionTokens = structured ? (thinking ? 240 : 120) : 2;
     var content = mode == "malformed"
         ? "not-json"
-        : structured
+        : thinkingContract
+            ? JsonSerializer.Serialize(new { result = "ok" })
+            : structured
             ? JsonSerializer.Serialize(new
             {
                 type = "flowchart",

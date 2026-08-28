@@ -15,7 +15,7 @@ curl.exe --fail-with-body --silent --show-error -X POST "%BASE_URL%/diagram-cont
 if errorlevel 1 goto :failed
 echo.
 
-echo [3/3] Thinking structured contract test
+echo [3/3] Thinking structured protocol test
 curl.exe --fail-with-body --silent --show-error -X POST "%BASE_URL%/thinking-contract"
 if errorlevel 1 goto :failed
 echo.

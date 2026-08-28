@@ -24,8 +24,7 @@ public sealed class StructuredLlmCompletion(VllmClient client)
 
         var repairSystem = systemPrompt +
             $"\nThe previous response failed the required JSON contract ({firstAttempt.FailureKind}). " +
-            "Return exactly one JSON object matching the schema, without markdown or explanation. " +
-            "Use unique node IDs and make every edge sourceId and targetId exactly match a returned node ID.";
+            "Return exactly one JSON object matching the schema, without markdown or explanation.";
         var repaired = await client.CompleteAsync(new VllmCompletionRequest(
             repairSystem, userPrompt, maxOutputTokens, enableThinking, schema), cancellationToken);
         ThrowIfTruncated(repaired, firstAttempt.FailureKind, repairAttempted: true);
@@ -36,7 +35,11 @@ public sealed class StructuredLlmCompletion(VllmClient client)
                 $"The internal LLM did not return a valid structured result after repair ({repairedAttempt.FailureKind}).",
                 failureKind: repairedAttempt.FailureKind,
                 initialFailureKind: firstAttempt.FailureKind,
-                repairAttempted: true);
+                repairAttempted: true,
+                requestedMaxOutputTokens: repaired.RequestedMaxOutputTokens,
+                promptTokens: repaired.PromptTokens,
+                completionTokens: repaired.CompletionTokens,
+                totalTokens: repaired.TotalTokens);
 
         var merged = repaired with
         {

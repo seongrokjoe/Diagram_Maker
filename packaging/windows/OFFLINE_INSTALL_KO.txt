@@ -3,7 +3,7 @@ Diagram Maker Windows x64 오프라인 설치
 
 1. 함께 제공된 .sha256 파일의 값과 ZIP의 SHA-256을 비교한다.
 
-   certutil -hashfile DiagramMaker-0.1.0-offline.3-win-x64.zip SHA256
+   certutil -hashfile DiagramMaker-0.1.0-offline.4-win-x64.zip SHA256
 
 2. ZIP을 쓰기 가능한 로컬 폴더에 압축 해제한다.
    OneDrive 동기화 폴더보다는 C:\Tools\DiagramMaker 같은 로컬 경로를 권장한다.
@@ -25,6 +25,7 @@ Diagram Maker Windows x64 오프라인 설치
    test-llm.cmd
 
    Thinking 테스트는 reasoning과 최종 JSON을 합쳐 최대 60000 출력 토큰을 허용한다.
+   2단계는 DiagramIR 무결성을, 3단계는 작은 고정 JSON으로 Thinking 프로토콜만 확인한다.
    length 오류가 계속되면 오류의 requestedMaxOutputTokens와 completionTokens를 확인한다.
 
 6. 브라우저에서 http://localhost:5080 을 연다.

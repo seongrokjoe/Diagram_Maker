@@ -2,6 +2,7 @@ import type {
   AnalysisResponse,
   LlmConnectionTestResult,
   LlmContractTestResult,
+  LlmThinkingContractTestResult,
   NaturalDiagramRecord,
   Repository,
   RepositoryInspection,
@@ -60,5 +61,5 @@ export const api = {
   getAnalysis: (id: string) => request<AnalysisResponse>(`/api/v1/analyses/${id}`),
   testLlmConnection: () => request<LlmConnectionTestResult>("/api/v1/llm/tests/connection", { method: "POST" }),
   testLlmDiagramContract: () => request<LlmContractTestResult>("/api/v1/llm/tests/diagram-contract", { method: "POST" }),
-  testLlmThinkingContract: () => request<LlmContractTestResult>("/api/v1/llm/tests/thinking-contract", { method: "POST" }),
+  testLlmThinkingContract: () => request<LlmThinkingContractTestResult>("/api/v1/llm/tests/thinking-contract", { method: "POST" }),
 };
