@@ -1,6 +1,6 @@
 # Third-party notices
 
-This file identifies the primary open-source components. The release SBOM and packaged upstream license texts are the authoritative complete inventory.
+This file identifies the primary open-source components. The release package's exact NPM/NuGet inventory files and packaged upstream license texts are the authoritative dependency record.
 
 | Component | Purpose | License |
 |---|---|---|

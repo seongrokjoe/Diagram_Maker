@@ -5,7 +5,7 @@
 ## 구현된 기능
 
 - 자연어 요청 → 구조화 DiagramIR → 안전한 Mermaid 렌더링
-- 내부 OpenAI-compatible LLM Adapter와 개발 전용 결정적 생성기
+- 인증 없는 사내 vLLM 전용 Adapter, 구조화 출력 fallback, Thinking 요청 선택
 - 내 PC의 로컬 Git 절대 경로 또는 `.git` 경로를 연결해 Base/Target SHA 비교
 - Add/Delete/Modify 및 동일 blob rename 식별
 - C# Roslyn syntax 분석과 C++ low-confidence fallback 분석
@@ -13,7 +13,7 @@
 - LLM 장애 시 정적 분석 결과를 유지하는 `Partial` 완료
 - 재시작 후에도 등록 목록을 유지하는 로컬 JSON 저장소와 PostgreSQL lease queue
 - reverse-proxy identity, repository role ACL, source-free audit metadata
-- React 기반 자연어 생성, Git 분석, 저장소 관리 화면
+- React 기반 자연어 생성, Git 분석, 저장소 관리, 합성 LLM 연결 점검 화면
 
 ## 개인 PC에서 실행
 
@@ -35,18 +35,23 @@ powershell -ExecutionPolicy Bypass -File .\scripts\stop-local.ps1
 
 ## 사내 LLM 연결
 
-운영 설정 또는 환경변수로 다음 값을 제공합니다.
+실제 endpoint와 모델은 저장소가 아닌 `%LOCALAPPDATA%\DiagramMaker\llm-policy.json`에 둡니다. `packaging\windows\config\llm-policy.example.json`을 복사한 뒤 승인된 값으로 수정합니다.
 
-```text
-Llm__Enabled=true
-Llm__BaseUrl=https://internal-llm.company.local
-Llm__ChatPath=/v1/chat/completions
-Llm__Model=internal-code-model
-Llm__AllowedHosts__0=internal-llm.company.local
-Llm__ApiKey=<vault injection>
+```json
+{
+  "Llm": {
+    "Enabled": true,
+    "Endpoint": "https://llm.invalid/v1/chat/completions",
+    "AllowedOrigin": "https://llm.invalid",
+    "Model": "approved-model",
+    "AllowDevelopmentStub": false
+  }
+}
 ```
 
-Base URL의 host가 allowlist와 일치하지 않으면 앱이 시작되지 않습니다. Redirect와 환경 proxy도 사용하지 않습니다.
+Endpoint와 AllowedOrigin의 scheme, host, port가 정확히 일치하지 않으면 앱이 시작되지 않습니다. 현재 승인 계약은 API Key 없이 `structured_outputs.json`과 `chat_template_kwargs.enable_thinking`을 사용합니다. Redirect, cookie, 기본 자격 증명과 환경 proxy도 사용하지 않습니다.
+
+웹의 **사내 LLM 점검** 탭은 프로젝트 데이터를 보내지 않고 기본 연결, DiagramIR 구조화, Thinking 구조화 계약을 차례로 확인합니다. 자연어 생성과 Git LLM 요약에서는 요청별 Thinking 체크박스를 사용할 수 있습니다.
 
 ## 배포
 
@@ -59,13 +64,21 @@ docker compose up -d
 
 Production에서는 앱을 OIDC reverse proxy 뒤에 배치하고 proxy가 `X-Remote-User`, `X-Remote-Roles`를 설정해야 합니다. 사용자 PC에는 .NET, Node, Git, Clang 또는 LLM credential이 필요하지 않습니다.
 
+외부 npm 접속이 차단된 Windows x64 PC에는 GitHub Release의 `DiagramMaker-*-win-x64.zip`을 사용합니다. 이 패키지는 self-contained .NET, portable Node.js, 웹 UI와 Git Worker 의존성을 포함하며 CMD에서 `configure-llm.cmd`, `start.cmd`, `test-llm.cmd` 순서로 실행합니다.
+
 ## 검증
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 ```
 
-검증은 backend unit test, 실제 임시 Git repository 비교, frontend production build, vulnerability audit와 NPM license allowlist를 포함합니다.
+CMD만 허용되는 환경에서는 인터넷과 승인된 패키지 registry가 있는 개발 PC에서 다음을 사용할 수 있습니다.
+
+```bat
+scripts\verify.cmd
+```
+
+검증은 backend unit test, loopback Fake vLLM, 실제 임시 Git repository 비교, frontend production build, vulnerability audit와 NPM license allowlist를 포함합니다. 자동 검증은 실제 사내 LLM에 접속하지 않습니다.
 
 ## 현재 경계
 

@@ -9,6 +9,25 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
+var explicitLlmPolicyPath = Environment.GetEnvironmentVariable("DIAGRAMMAKER_LLM_POLICY_PATH");
+var defaultLlmPolicyPath = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+    "DiagramMaker",
+    "llm-policy.json");
+var llmPolicyPath = string.IsNullOrWhiteSpace(explicitLlmPolicyPath) ? defaultLlmPolicyPath : explicitLlmPolicyPath;
+if (!string.IsNullOrWhiteSpace(explicitLlmPolicyPath) && !Path.IsPathFullyQualified(llmPolicyPath))
+{
+    throw new InvalidOperationException("DIAGRAMMAKER_LLM_POLICY_PATH must be an absolute path.");
+}
+if (File.Exists(llmPolicyPath))
+{
+    builder.Configuration.AddJsonFile(llmPolicyPath, optional: false, reloadOnChange: false);
+    builder.Configuration.AddEnvironmentVariables();
+}
+else if (!string.IsNullOrWhiteSpace(explicitLlmPolicyPath))
+{
+    throw new FileNotFoundException("The configured Diagram Maker LLM policy file does not exist.", llmPolicyPath);
+}
 builder.Logging.ClearProviders();
 builder.Logging.AddSimpleConsole(options =>
 {
@@ -39,6 +58,10 @@ builder.Services.AddSingleton<SecretMasker>();
 builder.Services.AddSingleton<DiagramValidator>();
 builder.Services.AddSingleton<MermaidCompiler>();
 builder.Services.AddSingleton<SourceGraphAnalyzer>();
+builder.Services.AddSingleton(services => new VllmClient(
+    services.GetRequiredService<IOptions<LlmOptions>>().Value,
+    services.GetRequiredService<ILogger<VllmClient>>()));
+builder.Services.AddSingleton<StructuredLlmCompletion>();
 builder.Services.AddSingleton<IInternalLlmClient, InternalLlmClient>();
 builder.Services.AddSingleton<IGitWorkerClient, GitWorkerClient>();
 builder.Services.AddScoped<NaturalDiagramService>();
@@ -63,9 +86,14 @@ if (app.Environment.IsDevelopment())
 
 app.UseMiddleware<InternalIdentityMiddleware>();
 var localWebRoot = Path.GetFullPath("../../web/dist", app.Environment.ContentRootPath);
+var packagedWebRoot = Path.GetFullPath("wwwroot", AppContext.BaseDirectory);
 var selectedWebRoot = app.Environment.IsDevelopment() && Directory.Exists(localWebRoot)
     ? localWebRoot
-    : app.Environment.WebRootPath;
+    : packagedWebRoot;
+if (!Directory.Exists(selectedWebRoot))
+{
+    throw new InvalidOperationException($"Static web directory does not exist: {selectedWebRoot}");
+}
 var staticFiles = new PhysicalFileProvider(selectedWebRoot);
 app.Lifetime.ApplicationStopped.Register(staticFiles.Dispose);
 app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = staticFiles });
@@ -294,6 +322,58 @@ api.MapPost("/natural-diagrams", async (
     catch (InvalidOperationException exception)
     {
         return Results.Json(new { error = exception.Message }, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+    catch (LlmClientException exception)
+    {
+        return Results.Json(new { errorCode = exception.Code, error = exception.Message }, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
+api.MapPost("/llm/tests/connection", async (
+    HttpContext context,
+    IInternalLlmClient llm,
+    CancellationToken cancellationToken) =>
+{
+    if (!context.GetInternalIdentity().Roles.Contains("Admin")) return Results.Forbid();
+    try
+    {
+        return Results.Ok(await llm.TestConnectionAsync(cancellationToken));
+    }
+    catch (LlmClientException exception)
+    {
+        return Results.Json(new { errorCode = exception.Code, error = exception.Message }, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
+api.MapPost("/llm/tests/diagram-contract", async (
+    HttpContext context,
+    IInternalLlmClient llm,
+    CancellationToken cancellationToken) =>
+{
+    if (!context.GetInternalIdentity().Roles.Contains("Admin")) return Results.Forbid();
+    try
+    {
+        return Results.Ok(await llm.TestDiagramContractAsync(enableThinking: false, cancellationToken));
+    }
+    catch (LlmClientException exception)
+    {
+        return Results.Json(new { errorCode = exception.Code, error = exception.Message }, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
+api.MapPost("/llm/tests/thinking-contract", async (
+    HttpContext context,
+    IInternalLlmClient llm,
+    CancellationToken cancellationToken) =>
+{
+    if (!context.GetInternalIdentity().Roles.Contains("Admin")) return Results.Forbid();
+    try
+    {
+        return Results.Ok(await llm.TestDiagramContractAsync(enableThinking: true, cancellationToken));
+    }
+    catch (LlmClientException exception)
+    {
+        return Results.Json(new { errorCode = exception.Code, error = exception.Message }, statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 });
 

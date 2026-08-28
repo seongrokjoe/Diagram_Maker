@@ -1,9 +1,18 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api } from "./api";
 import { MermaidPreview } from "./MermaidPreview";
-import type { AnalysisResponse, DiagramArtifact, Repository, RepositoryInspection } from "./types";
+import type {
+  AnalysisResponse,
+  DiagramArtifact,
+  LlmConnectionTestResult,
+  LlmContractTestResult,
+  Repository,
+  RepositoryInspection,
+} from "./types";
 
-type Tab = "natural" | "analysis" | "repositories";
+type Tab = "natural" | "analysis" | "repositories" | "llm";
+type LlmTestKind = "connection" | "diagram" | "thinking";
+type LlmTestValue = LlmConnectionTestResult | LlmContractTestResult;
 
 const terminalStates = new Set(["Completed", "Partial", "Failed"]);
 
@@ -16,6 +25,8 @@ export default function App() {
   const [repositoryPath, setRepositoryPath] = useState("");
   const [defaultBranch, setDefaultBranch] = useState("main");
   const [repositoryInspection, setRepositoryInspection] = useState<RepositoryInspection | null>(null);
+  const [includeLlmSummary, setIncludeLlmSummary] = useState(true);
+  const [llmTests, setLlmTests] = useState<Partial<Record<LlmTestKind, LlmTestValue>>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -50,6 +61,7 @@ export default function App() {
       const record = await api.createNaturalDiagram({
         prompt: String(data.get("prompt")),
         diagramType: String(data.get("diagramType")),
+        enableThinking: data.get("enableThinking") === "on",
       });
       setDiagram(record.diagram);
     } catch (reason) {
@@ -70,9 +82,27 @@ export default function App() {
         baseRevision: String(data.get("baseRevision")),
         targetRevision: String(data.get("targetRevision")),
         includeLlmSummary: data.get("includeLlmSummary") === "on",
+        enableThinking: data.get("includeLlmSummary") === "on" && data.get("enableThinking") === "on",
       }));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "분석 요청에 실패했습니다.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runLlmTest(kind: LlmTestKind) {
+    setBusy(true);
+    setError("");
+    try {
+      const result = kind === "connection"
+        ? await api.testLlmConnection()
+        : kind === "diagram"
+          ? await api.testLlmDiagramContract()
+          : await api.testLlmThinkingContract();
+      setLlmTests((current) => ({ ...current, [kind]: result }));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "사내 LLM 시험에 실패했습니다.");
     } finally {
       setBusy(false);
     }
@@ -137,6 +167,7 @@ export default function App() {
         <button className={tab === "natural" ? "active" : ""} onClick={() => setTab("natural")}>자연어 다이어그램</button>
         <button className={tab === "analysis" ? "active" : ""} onClick={() => setTab("analysis")}>Git 변경 분석</button>
         <button className={tab === "repositories" ? "active" : ""} onClick={() => setTab("repositories")}>저장소 관리</button>
+        <button className={tab === "llm" ? "active" : ""} onClick={() => setTab("llm")}>사내 LLM 점검</button>
       </nav>
 
       {error && <div className="error-panel" role="alert">{error}</div>}
@@ -161,6 +192,7 @@ export default function App() {
                 요청
                 <textarea name="prompt" required rows={10} placeholder="예: 사용자 → API Gateway → 주문 서비스 → 데이터베이스 흐름을 그려줘" />
               </label>
+              <label className="checkbox"><input type="checkbox" name="enableThinking" /> Thinking 모드 사용</label>
               <button className="primary" disabled={busy}>{busy ? "생성 중…" : "다이어그램 생성"}</button>
               <p className="help">개발 모드에서는 화살표 기반 결정적 생성기를 사용할 수 있습니다. 운영 환경은 사내 LLM만 호출합니다.</p>
             </form>
@@ -194,7 +226,18 @@ export default function App() {
                 <label>Base revision<input name="baseRevision" required placeholder="HEAD~1 또는 SHA" /></label>
                 <label>Target revision<input name="targetRevision" required placeholder="HEAD 또는 SHA" /></label>
               </div>
-              <label className="checkbox"><input type="checkbox" name="includeLlmSummary" defaultChecked /> 사내 LLM 변경 요약 포함</label>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  name="includeLlmSummary"
+                  checked={includeLlmSummary}
+                  onChange={(event) => setIncludeLlmSummary(event.target.checked)}
+                />
+                사내 LLM 변경 요약 포함
+              </label>
+              <label className="checkbox">
+                <input type="checkbox" name="enableThinking" disabled={!includeLlmSummary} /> Thinking 모드 사용
+              </label>
               <button className="primary" disabled={busy || repositories.length === 0}>분석 시작</button>
               {repositories.length === 0 && <p className="help">먼저 관리자가 분석할 저장소를 등록해야 합니다.</p>}
             </form>
@@ -281,8 +324,50 @@ export default function App() {
             </section>
           </section>
         )}
+
+        {tab === "llm" && (
+          <section className="llm-test-layout">
+            <section className="panel controls">
+              <p className="section-label">SYNTHETIC DATA ONLY</p>
+              <h2>사내 LLM 연결 점검</h2>
+              <p className="help">실제 저장소, Commit 또는 사용자 요청을 보내지 않고 고정된 합성 데이터만 사용합니다.</p>
+              <button type="button" className="secondary" disabled={busy} onClick={() => void runLlmTest("connection")}>1. 기본 연결 시험</button>
+              <button type="button" className="secondary" disabled={busy} onClick={() => void runLlmTest("diagram")}>2. DiagramIR 계약 시험</button>
+              <button type="button" className="secondary" disabled={busy} onClick={() => void runLlmTest("thinking")}>3. Thinking 계약 시험</button>
+            </section>
+            <section className="panel">
+              <p className="section-label">BOUNDED DIAGNOSTICS</p>
+              <h2>시험 결과</h2>
+              <div className="llm-result-list">
+                <LlmTestCard title="기본 연결" value={llmTests.connection} />
+                <LlmTestCard title="DiagramIR 구조화" value={llmTests.diagram} />
+                <LlmTestCard title="Thinking 구조화" value={llmTests.thinking} />
+              </div>
+            </section>
+          </section>
+        )}
       </main>
     </div>
+  );
+}
+
+function LlmTestCard({ title, value }: { title: string; value?: LlmTestValue }) {
+  return (
+    <article className={`llm-result-card ${value?.success ? "success" : ""}`}>
+      <div><strong>{title}</strong><span>{value ? (value.success ? "성공" : "실패") : "미실행"}</span></div>
+      {value && (
+        <dl>
+          <dt>응답 시간</dt><dd>{value.elapsedMilliseconds} ms</dd>
+          <dt>종료 사유</dt><dd>{value.finishReason || "미제공"}</dd>
+          {"responseCharacters" in value && <><dt>응답 문자</dt><dd>{value.responseCharacters}</dd></>}
+          {"nodeCount" in value && <>
+            <dt>노드 / 엣지</dt><dd>{value.nodeCount} / {value.edgeCount}</dd>
+            <dt>구조화 적용</dt><dd>{value.structuredOutputApplied ? "예" : "아니오"}</dd>
+            <dt>Fallback / 복구</dt><dd>{value.structuredOutputFallbackUsed ? "사용" : "없음"} / {value.repairUsed ? "사용" : "없음"}</dd>
+          </>}
+        </dl>
+      )}
+    </article>
   );
 }
 

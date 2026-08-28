@@ -24,7 +24,7 @@ The following are blocked unless the company open-source review owner grants a w
 CI requirements:
 
 1. Restore only from approved internal NuGet/NPM/container registries.
-2. Use committed lock files and `npm ci --ignore-scripts`.
+2. Use committed lock files. Use `npm ci --ignore-scripts` for the packaged Git Worker; allow only the lock-file-pinned build scripts required to compile the disposable frontend build tree.
 3. Run `npm audit` and the repository license checker.
 4. Produce and archive SPDX or CycloneDX SBOMs for the deployable image.
 5. Preserve upstream LICENSE/NOTICE files in the release notice bundle.

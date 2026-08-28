@@ -1,0 +1,17 @@
+{
+  "Llm": {
+    "Enabled": true,
+    "AllowDevelopmentStub": false,
+    "Endpoint": "https://llm.invalid/v1/chat/completions",
+    "AllowedOrigin": "https://llm.invalid",
+    "Model": "approved-model",
+    "ConnectTimeoutSeconds": 120,
+    "NoResponseTimeoutSeconds": 120,
+    "RequestTimeoutSeconds": 300,
+    "DiagramOutputTokens": 16000,
+    "ReviewOutputTokens": 8000,
+    "OutputHardLimit": 60000,
+    "MaxInputCharacters": 60000,
+    "MaxTransientRetries": 1
+  }
+}

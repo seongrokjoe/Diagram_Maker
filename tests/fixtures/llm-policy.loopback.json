@@ -1,0 +1,17 @@
+{
+  "Llm": {
+    "Enabled": true,
+    "AllowDevelopmentStub": false,
+    "Endpoint": "http://127.0.0.1:52641/v1/chat/completions",
+    "AllowedOrigin": "http://127.0.0.1:52641",
+    "Model": "synthetic-model",
+    "ConnectTimeoutSeconds": 5,
+    "NoResponseTimeoutSeconds": 5,
+    "RequestTimeoutSeconds": 15,
+    "DiagramOutputTokens": 4000,
+    "ReviewOutputTokens": 2000,
+    "OutputHardLimit": 60000,
+    "MaxInputCharacters": 60000,
+    "MaxTransientRetries": 1
+  }
+}

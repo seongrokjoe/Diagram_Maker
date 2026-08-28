@@ -25,7 +25,11 @@ public sealed class NaturalDiagramService(
         DiagramIr? ir = null;
         if (llm.IsEnabled)
         {
-            ir = await llm.GenerateNaturalDiagramAsync(request.Prompt, request.DiagramType, cancellationToken);
+            ir = await llm.GenerateNaturalDiagramAsync(
+                request.Prompt,
+                request.DiagramType,
+                request.EnableThinking,
+                cancellationToken);
         }
 
         if (ir is null && _options.AllowDevelopmentStub && environment.IsDevelopment())

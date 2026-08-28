@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiagramMaker.Api", "src\Dia
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiagramMaker.Tests", "tests\DiagramMaker.Tests\DiagramMaker.Tests.csproj", "{0991ACFC-086C-4229-9794-D05A031C1569}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiagramMaker.FakeVllm", "tests\DiagramMaker.FakeVllm\DiagramMaker.FakeVllm.csproj", "{FC64AC65-9CC3-4C68-9E53-3B1B8FCE5F57}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,5 +23,9 @@ Global
 		{0991ACFC-086C-4229-9794-D05A031C1569}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{0991ACFC-086C-4229-9794-D05A031C1569}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{0991ACFC-086C-4229-9794-D05A031C1569}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FC64AC65-9CC3-4C68-9E53-3B1B8FCE5F57}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FC64AC65-9CC3-4C68-9E53-3B1B8FCE5F57}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FC64AC65-9CC3-4C68-9E53-3B1B8FCE5F57}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FC64AC65-9CC3-4C68-9E53-3B1B8FCE5F57}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

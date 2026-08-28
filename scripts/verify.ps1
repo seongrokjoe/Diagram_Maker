@@ -28,15 +28,7 @@ Push-Location .\web
 try {
     npm.cmd ci
     Assert-LastExitCode 'web npm ci'
-    $webRoot = (Get-Location).Path
-    $distPath = [System.IO.Path]::GetFullPath((Join-Path $webRoot 'dist'))
-    if (-not $distPath.StartsWith($webRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Refusing to clean an output directory outside the web project: $distPath"
-    }
-    if (Test-Path -LiteralPath $distPath) {
-        Remove-Item -LiteralPath $distPath -Recurse -Force
-    }
-    npm.cmd run build
+    npm.cmd run build -- --outDir ..\artifacts\verify-web-dist --emptyOutDir
     Assert-LastExitCode 'web build'
     npm.cmd audit --audit-level=low
     Assert-LastExitCode 'web audit'

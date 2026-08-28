@@ -76,7 +76,8 @@ public sealed record AnalyzeRequest(
     IReadOnlyList<string>? DiagramTypes = null,
     int CallerDepth = 2,
     int CalleeDepth = 1,
-    bool IncludeLlmSummary = true);
+    bool IncludeLlmSummary = true,
+    bool EnableThinking = false);
 
 public sealed record AnalysisJob(
     Guid Id,
@@ -224,7 +225,8 @@ public sealed record AnalysisResult(
 public sealed record NaturalDiagramRequest(
     string Prompt,
     string DiagramType = "auto",
-    Guid? ParentDiagramId = null);
+    Guid? ParentDiagramId = null,
+    bool EnableThinking = false);
 
 public sealed record NaturalDiagramRecord(
     Guid Id,
@@ -239,3 +241,19 @@ public sealed record AuditEvent(
     Guid? RepositoryId,
     string Outcome,
     DateTimeOffset CreatedAt);
+
+public sealed record LlmConnectionTestResult(
+    bool Success,
+    long ElapsedMilliseconds,
+    string FinishReason,
+    int ResponseCharacters);
+
+public sealed record LlmContractTestResult(
+    bool Success,
+    int NodeCount,
+    int EdgeCount,
+    long ElapsedMilliseconds,
+    string FinishReason,
+    bool StructuredOutputApplied,
+    bool StructuredOutputFallbackUsed,
+    bool RepairUsed);

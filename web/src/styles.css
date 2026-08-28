@@ -22,6 +22,7 @@ button { cursor: pointer; }
 main { padding: 28px 38px 44px; }
 .workspace-grid { display: grid; grid-template-columns: minmax(330px, .72fr) minmax(600px, 1.5fr); gap: 22px; align-items: start; }
 .repository-layout { display: grid; grid-template-columns: 420px 1fr; gap: 22px; align-items: start; }
+.llm-test-layout { display: grid; grid-template-columns: 420px 1fr; gap: 22px; align-items: start; }
 .panel { background: white; border: 1px solid #cbd6e2; box-shadow: 0 4px 14px rgba(33, 56, 84, .06); padding: 25px; min-height: 230px; }
 .panel h2 { margin: 7px 0 22px; font-size: 20px; }
 .panel h3 { margin: 24px 0 10px; font-size: 15px; }
@@ -78,3 +79,11 @@ textarea { resize: vertical; line-height: 1.55; }
 details { margin-top: 16px; }
 summary { cursor: pointer; color: #4b6685; font-size: 12px; font-weight: 700; }
 pre { overflow: auto; max-height: 260px; padding: 14px; background: #101c2d; color: #d4e7ff; font-size: 11px; line-height: 1.5; }
+.llm-result-list { display: grid; gap: 12px; }
+.llm-result-card { border: 1px solid #d6dee8; border-left: 4px solid #9aabba; background: #f8fafc; padding: 14px 16px; }
+.llm-result-card.success { border-left-color: #278457; background: #f1faf5; }
+.llm-result-card > div { display: flex; justify-content: space-between; color: #526981; }
+.llm-result-card.success > div span { color: #176b43; font-weight: 800; }
+.llm-result-card dl { display: grid; grid-template-columns: 130px 1fr; gap: 7px 12px; margin: 14px 0 0; font-size: 12px; }
+.llm-result-card dt { color: #718198; }
+.llm-result-card dd { margin: 0; color: #263d58; }

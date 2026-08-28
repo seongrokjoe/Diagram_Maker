@@ -50,7 +50,11 @@ public sealed class AnalysisJobProcessor(
                 }, cancellationToken);
                 try
                 {
-                    var generated = await llm.GenerateReviewAsync(graph, comparison.Files, cancellationToken);
+                    var generated = await llm.GenerateReviewAsync(
+                        graph,
+                        comparison.Files,
+                        job.Request.EnableThinking,
+                        cancellationToken);
                     if (generated is not null)
                     {
                         narrative = generated;

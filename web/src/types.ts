@@ -35,6 +35,24 @@ export type NaturalDiagramRecord = {
   createdAt: string;
 };
 
+export type LlmConnectionTestResult = {
+  success: boolean;
+  elapsedMilliseconds: number;
+  finishReason: string;
+  responseCharacters: number;
+};
+
+export type LlmContractTestResult = {
+  success: boolean;
+  nodeCount: number;
+  edgeCount: number;
+  elapsedMilliseconds: number;
+  finishReason: string;
+  structuredOutputApplied: boolean;
+  structuredOutputFallbackUsed: boolean;
+  repairUsed: boolean;
+};
+
 export type ChangedFile = {
   path: string;
   previousPath?: string;

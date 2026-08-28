@@ -10,11 +10,10 @@ services:
       Storage__ConnectionString: Host=postgres;Port=5432;Database=diagram_maker;Username=diagram_maker;Password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       Security__TrustReverseProxyHeaders: "true"
       Llm__Enabled: ${LLM_ENABLED:-false}
-      Llm__BaseUrl: ${LLM_BASE_URL:-http://internal-llm.invalid}
-      Llm__ChatPath: ${LLM_CHAT_PATH:-/v1/chat/completions}
+      Llm__Endpoint: ${LLM_ENDPOINT:-https://llm.invalid/v1/chat/completions}
+      Llm__AllowedOrigin: ${LLM_ALLOWED_ORIGIN:-https://llm.invalid}
       Llm__Model: ${LLM_MODEL:-internal-code-model}
-      Llm__ApiKey: ${LLM_API_KEY:-}
-      Llm__AllowedHosts__0: ${LLM_ALLOWED_HOST:-internal-llm.invalid}
+      Llm__AllowDevelopmentStub: "false"
     volumes:
       - ${REPOSITORY_ROOT:?set REPOSITORY_ROOT}:/repositories:ro
     depends_on:

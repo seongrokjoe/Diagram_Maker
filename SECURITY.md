@@ -10,7 +10,7 @@ Repository contents, branch names, commit metadata, diagram prompts, and LLM res
 - Terminate OIDC at an approved reverse proxy. Strip inbound `X-Remote-*` headers and add authenticated values at the trusted proxy only.
 - Configure `Security__TrustReverseProxyHeaders=true` only behind that proxy.
 - In local-only mode, bind to `127.0.0.1` and register only repositories owned by the current Windows user. Container deployments should mount repository mirrors read-only.
-- Store database and LLM credentials in the company vault; never in `.env` or `appsettings.json`.
+- Store database credentials in the company vault; never in `.env` or `appsettings.json`. The current approved LLM contract does not use credentials.
 - Use internal TLS and preferably mTLS for the LLM and database.
 - Run the container read-only, without privilege escalation, and with CPU/memory/process limits.
 - Do not enable the development deterministic LLM stub in Production.

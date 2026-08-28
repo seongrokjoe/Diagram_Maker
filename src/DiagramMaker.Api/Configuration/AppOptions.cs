@@ -31,12 +31,15 @@ public sealed class LlmOptions
     public const string SectionName = "Llm";
     public bool Enabled { get; set; }
     public bool AllowDevelopmentStub { get; set; } = true;
-    public string? BaseUrl { get; set; }
-    public string ChatPath { get; set; } = "/v1/chat/completions";
+    public string? Endpoint { get; set; }
+    public string? AllowedOrigin { get; set; }
     public string Model { get; set; } = "internal-code-model";
-    public string? ApiKey { get; set; }
-    public string[] AllowedHosts { get; set; } = [];
-    public bool SupportsJsonSchema { get; set; } = true;
-    public int TimeoutSeconds { get; set; } = 90;
+    public int ConnectTimeoutSeconds { get; set; } = 120;
+    public int NoResponseTimeoutSeconds { get; set; } = 120;
+    public int RequestTimeoutSeconds { get; set; } = 300;
+    public int DiagramOutputTokens { get; set; } = 16_000;
+    public int ReviewOutputTokens { get; set; } = 8_000;
+    public int OutputHardLimit { get; set; } = 60_000;
     public int MaxInputCharacters { get; set; } = 60_000;
+    public int MaxTransientRetries { get; set; } = 1;
 }
