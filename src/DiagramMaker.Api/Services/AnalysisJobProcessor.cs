@@ -14,13 +14,14 @@ public sealed class AnalysisJobProcessor(
 {
     public async Task ProcessAsync(AnalysisJob leasedJob, CancellationToken cancellationToken)
     {
+        var currentJob = leasedJob;
         try
         {
-            var repository = await store.GetRepositoryAsync(leasedJob.Request.RepositoryId, cancellationToken)
+            var repository = await store.GetRepositoryAsync(currentJob.Request.RepositoryId, cancellationToken)
                              ?? throw new InvalidOperationException("Repository is no longer registered.");
 
-            var comparison = await git.CompareAsync(repository, leasedJob.Request, cancellationToken);
-            var job = await UpdateAsync(leasedJob with
+            var comparison = await git.CompareAsync(repository, currentJob.Request, cancellationToken);
+            currentJob = await UpdateAsync(currentJob with
             {
                 State = AnalysisState.Indexing,
                 BaseSha = comparison.BaseSha,
@@ -30,7 +31,7 @@ public sealed class AnalysisJobProcessor(
             }, cancellationToken);
 
             var graph = analyzer.Analyze(repository.Id, comparison);
-            job = await UpdateAsync(job with
+            currentJob = await UpdateAsync(currentJob with
             {
                 State = AnalysisState.Graphing,
                 Progress = 55,
@@ -41,9 +42,9 @@ public sealed class AnalysisJobProcessor(
             var narrative = deterministic;
             var warnings = deterministic.Warnings.ToList();
             var llmSucceeded = false;
-            if (job.Request.IncludeLlmSummary && llm.IsEnabled)
+            if (currentJob.Request.IncludeLlmSummary && llm.IsEnabled)
             {
-                job = await UpdateAsync(job with
+                currentJob = await UpdateAsync(currentJob with
                 {
                     State = AnalysisState.Summarizing,
                     Progress = 70,
@@ -54,7 +55,7 @@ public sealed class AnalysisJobProcessor(
                     var generated = await llm.GenerateReviewAsync(
                         graph,
                         comparison.Files,
-                        job.Request.EnableThinking,
+                        currentJob.Request.EnableThinking,
                         cancellationToken);
                     if (generated is not null)
                     {
@@ -68,17 +69,17 @@ public sealed class AnalysisJobProcessor(
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {
-                    logger.LogWarning("Internal LLM review failed for analysis {AnalysisId}; deterministic results remain available.", job.Id);
+                    logger.LogWarning("Internal LLM review failed for analysis {AnalysisId}; deterministic results remain available.", currentJob.Id);
                     warnings.Add("Internal LLM review failed; deterministic analysis is shown.");
                 }
             }
-            else if (job.Request.IncludeLlmSummary)
+            else if (currentJob.Request.IncludeLlmSummary)
             {
                 warnings.Add("Internal LLM is disabled; deterministic analysis is shown.");
             }
 
             narrative = narrative with { Warnings = narrative.Warnings.Concat(warnings).Distinct(StringComparer.Ordinal).ToArray() };
-            job = await UpdateAsync(job with
+            currentJob = await UpdateAsync(currentJob with
             {
                 State = AnalysisState.Rendering,
                 Progress = 85,
@@ -89,17 +90,17 @@ public sealed class AnalysisJobProcessor(
                 repository.Name,
                 graph,
                 comparison,
-                job.Request.DiagramTypes,
-                job.Request.CallerDepth,
-                job.Request.CalleeDepth,
+                currentJob.Request.DiagramTypes,
+                currentJob.Request.CallerDepth,
+                currentJob.Request.CalleeDepth,
                 comparison.ContextFilesTruncated);
             var artifacts = diagrams.Artifacts
                 .Select(artifact => artifact with { MermaidDsl = compiler.Compile(artifact.Ir) })
                 .ToArray();
             var safeFiles = comparison.Files.Select(static file => file with { BeforeContent = null, AfterContent = null }).ToArray();
             var result = new AnalysisResult(safeFiles, graph, narrative, artifacts, diagrams.Availability);
-            var finalState = job.Request.IncludeLlmSummary && !llmSucceeded ? AnalysisState.Partial : AnalysisState.Completed;
-            await UpdateAsync(job with
+            var finalState = currentJob.Request.IncludeLlmSummary && !llmSucceeded ? AnalysisState.Partial : AnalysisState.Completed;
+            await UpdateAsync(currentJob with
             {
                 State = finalState,
                 Progress = 100,
@@ -114,8 +115,8 @@ public sealed class AnalysisJobProcessor(
         }
         catch (Exception exception)
         {
-            logger.LogError(exception, "Analysis {AnalysisId} failed at stage {State}.", leasedJob.Id, leasedJob.State);
-            await store.SaveAnalysisAsync(leasedJob with
+            logger.LogError(exception, "Analysis {AnalysisId} failed at stage {State}.", currentJob.Id, currentJob.State);
+            await store.SaveAnalysisAsync(currentJob with
             {
                 State = AnalysisState.Failed,
                 Progress = 100,
@@ -158,14 +159,16 @@ public sealed class AnalysisJobProcessor(
 
     private static string MapErrorCode(Exception exception) => exception switch
     {
+        GitWorkerException gitWorkerException => gitWorkerException.ErrorCode,
         DirectoryNotFoundException => "REPOSITORY_NOT_FOUND",
-        TimeoutException => "ANALYSIS_TIMEOUT",
+        TimeoutException or OperationCanceledException => "ANALYSIS_TIMEOUT",
         DiagramValidationException => "DIAGRAM_INVALID",
         _ => "ANALYSIS_FAILED"
     };
 
     private static string SafeMessage(Exception exception) => exception switch
     {
+        GitWorkerException gitWorkerException => gitWorkerException.UserMessage,
         DirectoryNotFoundException => "The registered repository is unavailable.",
         OperationCanceledException => "The analysis timed out or was cancelled.",
         DiagramValidationException => exception.Message,

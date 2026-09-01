@@ -9,6 +9,7 @@
 - Mermaid 지연 로딩, 제한형 DSL 편집과 검증, SVG/PNG 다운로드
 - 인증 없는 사내 vLLM 전용 Adapter, 구조화 출력 fallback, Thinking 요청 선택
 - 내 PC의 로컬 Git 절대 경로 또는 `.git` 경로를 연결해 Base/Target SHA 비교
+- 설치된 네이티브 Git 우선 처리와 `isomorphic-git` 자동 fallback
 - Add/Delete/Modify 및 동일 blob rename 식별
 - C# Roslyn syntax 분석과 C++ low-confidence fallback 분석
 - commit 독립 `SymbolIdentity`, revision별 `SymbolVersion`, blob 기반 Evidence
@@ -31,7 +32,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-local.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\stop-local.ps1
 ```
 
-저장소 관리 화면에서 `C:\Work\Git\MyRepository` 같은 저장소 루트나 `C:\Work\Git\MyRepository\.git` 경로를 붙여넣고 **연결 테스트** 후 등록합니다. 등록 정보는 Git에서 제외되는 `data/repositories.json`에 저장되어 앱을 재시작해도 유지됩니다. 네트워크 공유 경로와 Git URL은 받지 않으며, 저장소의 build·hook·checkout을 실행하지 않습니다.
+저장소 관리 화면에서 `C:\Work\Git\MyRepository` 같은 저장소 루트나 `C:\Work\Git\MyRepository\.git` 경로를 붙여넣고 **연결 테스트** 후 등록합니다. 등록 정보는 Git에서 제외되는 `data/repositories.json`에 저장되어 앱을 재시작해도 유지됩니다. 네트워크 공유 경로와 Git URL은 받지 않으며, 저장소의 build·hook·checkout을 실행하지 않습니다. Git 변경 분석은 PATH의 `git` 명령을 우선 사용하며, 실행 파일이 없을 때만 포함된 `isomorphic-git` Worker로 전환합니다.
 
 프론트엔드를 수정하며 HMR이 필요할 때만 별도 터미널에서 `npm.cmd run dev --prefix .\web`을 실행하고 `http://localhost:5173`을 사용합니다.
 
@@ -67,7 +68,7 @@ docker compose build
 docker compose up -d
 ```
 
-Production에서는 앱을 OIDC reverse proxy 뒤에 배치하고 proxy가 `X-Remote-User`, `X-Remote-Roles`를 설정해야 합니다. 사용자 PC에는 .NET, Node, Git, Clang 또는 LLM credential이 필요하지 않습니다.
+Production에서는 앱을 OIDC reverse proxy 뒤에 배치하고 proxy가 `X-Remote-User`, `X-Remote-Roles`를 설정해야 합니다. 사용자 PC에는 .NET, Node, Clang 또는 LLM credential이 필요하지 않습니다. Git은 선택 사항이지만 대용량 pack 저장소 분석에는 승인된 네이티브 Git 설치를 권장합니다.
 
 외부 npm 접속 또는 GitHub Release asset 다운로드가 차단된 Windows x64 PC에서는 Source code ZIP 안의 `artifacts/release/DiagramMaker-*-win-x64.zip`을 사용합니다. 이 패키지는 self-contained .NET, portable Node.js, 웹 UI와 Git Worker 의존성을 포함하며 CMD에서 `configure-llm.cmd`, `start.cmd`, `test-llm.cmd` 순서로 실행합니다.
 

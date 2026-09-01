@@ -1,5 +1,5 @@
 param(
-    [string]$Version = '0.1.0-offline.5',
+    [string]$Version = '0.1.0-offline.6',
     [string]$NodeVersion = '24.12.0',
     [switch]$SkipTests
 )
@@ -185,14 +185,18 @@ Copy-Item -LiteralPath (Join-Path $dotnetRoot 'LICENSE.txt') -Destination (Join-
 Copy-Item -LiteralPath (Join-Path $dotnetRoot 'ThirdPartyNotices.txt') -Destination (Join-Path $licenseRoot 'DOTNET_THIRD_PARTY_NOTICES.txt')
 
 $sourceCommit = try { (git -C $projectRoot rev-parse HEAD).Trim() } catch { 'unavailable' }
+$sourceTreeDirty = try { @((git -C $projectRoot status --porcelain --untracked-files=no)).Count -gt 0 } catch { $null }
 $manifest = [ordered]@{
     product = 'Diagram Maker'
     version = $Version
     target = 'win-x64'
     sourceCommit = $sourceCommit
+    sourceTreeDirty = $sourceTreeDirty
     builtAtUtc = [DateTimeOffset]::UtcNow.ToString('O')
     dotnetSdk = (dotnet --version).Trim()
     nodeRuntime = "v$NodeVersion"
+    gitBackend = 'Auto (native git preferred, isomorphic-git fallback)'
+    gitRuntime = 'external command from PATH'
     llmAuthentication = 'none'
     developmentStub = $false
 }

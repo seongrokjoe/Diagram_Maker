@@ -337,7 +337,13 @@ export default function App() {
                 <div className="progress-block">
                   <div className="progress-meta"><span>{analysis.stageMessage}</span><strong>{analysis.progress}%</strong></div>
                   <div className="progress-track"><span style={{ width: `${analysis.progress}%` }} /></div>
-                  {analysis.errorMessage && <p className="error-text">{analysis.errorMessage}</p>}
+                  {analysis.errorMessage && <div className="analysis-error" role="alert">
+                    <p className="error-text">{analysis.errorMessage}</p>
+                    <dl>
+                      <div><dt>오류 코드</dt><dd><code>{analysis.errorCode ?? "ANALYSIS_FAILED"}</code></dd></div>
+                      <div><dt>분석 ID</dt><dd><code>{analysis.id}</code></dd></div>
+                    </dl>
+                  </div>}
                 </div>
               )}
               {analysis?.result && (

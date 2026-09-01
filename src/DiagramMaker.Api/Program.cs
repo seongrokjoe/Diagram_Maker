@@ -141,6 +141,10 @@ api.MapPost("/repositories/inspect", async (
     {
         return Results.Ok(await gitWorker.InspectAsync(request.LocalPath, cancellationToken));
     }
+    catch (GitWorkerException exception)
+    {
+        return Results.BadRequest(new { errorCode = exception.ErrorCode, error = exception.UserMessage });
+    }
     catch (Exception exception) when (exception is ArgumentException or DirectoryNotFoundException or InvalidOperationException or IOException)
     {
         return Results.BadRequest(new { error = exception.Message });
@@ -169,6 +173,10 @@ api.MapPost("/repositories", async (
     try
     {
         inspection = await gitWorker.InspectAsync(request.LocalPath, cancellationToken);
+    }
+    catch (GitWorkerException exception)
+    {
+        return Results.BadRequest(new { errorCode = exception.ErrorCode, error = exception.UserMessage });
     }
     catch (Exception exception) when (exception is ArgumentException or DirectoryNotFoundException or InvalidOperationException or IOException)
     {

@@ -26,6 +26,8 @@ set "Storage__Provider=LocalFile"
 set "Storage__LocalFilePath=%APP_ROOT%data\repositories.json"
 set "GitWorker__NodeExecutable=%APP_ROOT%runtime\node\node.exe"
 set "GitWorker__ScriptPath=%APP_ROOT%tools\git-worker\index.mjs"
+set "GitWorker__Backend=Auto"
+set "GitWorker__GitExecutable=git"
 set "DOTNET_EnableDiagnostics=0"
 
 echo Diagram Maker will listen only on http://127.0.0.1:5080

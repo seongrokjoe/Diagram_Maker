@@ -21,6 +21,8 @@ public sealed class GitWorkerOptions
     public const string SectionName = "GitWorker";
     public string NodeExecutable { get; set; } = "node";
     public string ScriptPath { get; set; } = "tools/git-worker/index.mjs";
+    public string Backend { get; set; } = "Auto";
+    public string GitExecutable { get; set; } = "git";
     public int MaxChangedFiles { get; set; } = 200;
     public int MaxTextFileBytes { get; set; } = 1_000_000;
     public int MaxContextFiles { get; set; } = 200;

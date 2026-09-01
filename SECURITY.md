@@ -4,6 +4,8 @@
 
 Repository contents, branch names, commit metadata, diagram prompts, and LLM responses are untrusted. The application may read registered repositories but does not execute builds, Git hooks, package restore scripts, submodules, LFS downloads, or code from a repository.
 
+Git access prefers non-interactive, read-only plumbing commands (`rev-parse`, `ls-tree`, `for-each-ref`, `show`, and `cat-file --batch`) with shell execution disabled. `GIT_OPTIONAL_LOCKS=0`, `GIT_TERMINAL_PROMPT=0`, and `GIT_NO_REPLACE_OBJECTS=1` are enforced; the worker does not clone, fetch, checkout, invoke external diff tools, or contact remotes.
+
 ## Required production controls
 
 - Block internet egress at the host/container firewall. Permit only the internal Git mirror, PostgreSQL, identity proxy, and internal LLM endpoints.
