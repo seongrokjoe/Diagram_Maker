@@ -32,6 +32,8 @@ await build({
   entryPoints: [resolve(projectDirectory, "src/main.tsx")],
   bundle: true,
   format: "esm",
+  jsx: "automatic",
+  jsxImportSource: "react",
   minify: true,
   sourcemap: false,
   target: "es2020",
@@ -46,5 +48,6 @@ copyFileSync(
   resolve(vendorDirectory, "mermaid.min.js"),
 );
 const html = readFileSync(resolve(projectDirectory, "index.html"), "utf8")
-  .replace("/src/main.tsx", "/assets/app.js");
+  .replace("/src/main.tsx", "/assets/app.js")
+  .replace("</head>", '    <link rel="stylesheet" href="/assets/app.css" />\n  </head>');
 writeFileSync(resolve(outputDirectory, "index.html"), html, "utf8");

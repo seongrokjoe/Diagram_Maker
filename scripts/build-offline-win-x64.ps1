@@ -1,5 +1,5 @@
 param(
-    [string]$Version = '0.1.0-offline.9',
+    [string]$Version = '0.1.0-offline.10',
     [string]$NodeVersion = '24.12.0',
     [switch]$SkipTests
 )
