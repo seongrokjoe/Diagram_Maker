@@ -1,41 +1,44 @@
 Diagram Maker Windows x64 오프라인 설치
 ========================================
 
-1. 함께 제공된 .sha256 파일의 값과 ZIP의 SHA-256을 비교한다.
+1. 함께 제공된 .sha256 파일과 ZIP의 SHA-256을 비교한다.
 
-   certutil -hashfile DiagramMaker-0.1.0-offline.6-win-x64.zip SHA256
+   certutil -hashfile DiagramMaker-0.1.0-offline.9-win-x64.zip SHA256
 
-2. ZIP을 쓰기 가능한 로컬 폴더에 압축 해제한다.
-   OneDrive 동기화 폴더보다는 C:\Tools\DiagramMaker 같은 로컬 경로를 권장한다.
+2. ZIP을 쓰기 가능한 로컬 폴더에 완전히 압축 해제한다.
+   OneDrive 동기화 폴더보다 C:\Tools\DiagramMaker 같은 로컬 경로를 권장한다.
 
 3. CMD에서 git --version을 실행한다.
-   Git 변경 분석은 설치된 네이티브 Git을 우선 사용한다. Git이 없으면 기존 Worker로 동작하지만,
-   대용량 pack 저장소는 분석하지 못할 수 있다.
+   Git 변경 분석은 설치된 네이티브 Git을 우선 사용한다. Git이 없으면 fallback Worker로 동작하지만,
+   대용량 pack 저장소와 C++ 프로젝트 인덱싱은 네이티브 Git이 필요하다.
 
 4. configure-llm.cmd를 실행한다.
-   열린 정책 파일에서 다음 세 값만 승인된 사내 정보로 바꾼다.
+   생성되는 정책 파일에서 승인된 사내 정보만 설정한다.
 
    Endpoint      : /v1/chat/completions까지 포함한 전체 URL
    AllowedOrigin : scheme + host + port
    Model         : 승인된 모델명
 
-   현재 사내 vLLM 계약은 인증을 사용하지 않는다.
-
 5. start.cmd를 실행하고 CMD 창을 닫지 않는다.
 
-6. 다른 CMD 창에서 다음을 실행한다.
+6. 다른 CMD 창에서 아래 명령을 순서대로 실행한다.
 
    health-check.cmd
    test-llm.cmd
 
-   Thinking 테스트는 reasoning과 최종 JSON을 합쳐 최대 60000 출력 토큰을 허용한다.
-   2단계는 DiagramIR 무결성을, 3단계는 작은 고정 JSON으로 Thinking 프로토콜만 확인한다.
-   length 오류가 계속되면 오류의 requestedMaxOutputTokens와 completionTokens를 확인한다.
+   이 시험은 고정된 합성 데이터만 사용하며 실제 저장소나 사용자 prompt를 보내지 않는다.
 
 7. 브라우저에서 http://localhost:5080 을 연다.
 
-8. 종료할 때 start.cmd가 실행 중인 CMD에서 Ctrl+C를 누른다.
+8. Git 변경 분석은 다음 순서로 사용한다.
 
-이 패키지는 .NET SDK, Node.js, npm, PowerShell 및 외부 npm 접속을 요구하지 않는다.
-Git 변경 분석에는 PATH에서 실행 가능한 사내 승인 Git을 권장한다.
-실제 LLM endpoint, 사용자 prompt, Git 소스 및 모델 응답 원문은 기본 로그에 기록하지 않는다.
+   - 저장소 관리에서 로컬 저장소를 등록한다.
+   - Target 커밋을 선택한다. Base는 첫 번째 부모로 자동 선택된다.
+   - 사전 분석 결과에서 표시할 변경 심볼을 체크하고 그룹을 조정한다.
+   - 각 그룹의 다이어그램 형식과 샘플을 선택한 후 생성한다.
+   - 결과 탭에서 SVG 또는 PNG로 다운로드한다.
+
+9. 종료할 때 start.cmd가 실행 중인 CMD에서 Ctrl+C를 누른다.
+
+이 패키지는 .NET SDK, Node.js/npm, 외부 CDN을 요구하지 않는다. Git 분석에는 PATH에서 실행 가능한
+사내 승인 Git을 권장한다. LLM endpoint, prompt, Git diff, 모델 응답 원문은 기본 로그에 기록하지 않는다.

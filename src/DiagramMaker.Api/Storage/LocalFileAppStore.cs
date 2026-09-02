@@ -14,6 +14,8 @@ public sealed class LocalFileAppStore(string filePath) : IAppStore
     private readonly SemaphoreSlim _fileLock = new(1, 1);
     private readonly string _filePath = Path.GetFullPath(filePath);
     private readonly string _diagramFilePath = Path.ChangeExtension(Path.GetFullPath(filePath), ".diagrams.json");
+    private readonly string _analysisDirectory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(filePath))!, "analysis-jobs");
+    private readonly string _planDirectory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(filePath))!, "analysis-plans");
 
     public async Task InitializeAsync(CancellationToken cancellationToken)
     {
@@ -36,6 +38,11 @@ public sealed class LocalFileAppStore(string filePath) : IAppStore
                 var diagrams = await JsonSerializer.DeserializeAsync<NaturalDiagramRecord[]>(diagramStream, JsonOptions, cancellationToken) ?? [];
                 foreach (var diagram in diagrams) await _inner.SaveNaturalDiagramAsync(diagram, cancellationToken);
             }
+
+            await LoadRecordsAsync(_analysisDirectory, async json =>
+                await _inner.SaveAnalysisAsync(Deserialize<AnalysisJob>(json), cancellationToken), cancellationToken);
+            await LoadRecordsAsync(_planDirectory, async json =>
+                await _inner.SaveAnalysisPlanAsync(Deserialize<AnalysisPlan>(json), cancellationToken), cancellationToken);
         }
         catch (JsonException exception)
         {
@@ -55,14 +62,32 @@ public sealed class LocalFileAppStore(string filePath) : IAppStore
         await PersistRepositoriesAsync(cancellationToken);
     }
 
-    public Task SaveAnalysisAsync(AnalysisJob job, CancellationToken cancellationToken) =>
-        _inner.SaveAnalysisAsync(job, cancellationToken);
+    public async Task SaveAnalysisAsync(AnalysisJob job, CancellationToken cancellationToken)
+    {
+        await _inner.SaveAnalysisAsync(job, cancellationToken);
+        await PersistRecordAsync(_analysisDirectory, job.Id, job, cancellationToken);
+    }
 
     public Task<AnalysisJob?> GetAnalysisAsync(Guid id, CancellationToken cancellationToken) =>
         _inner.GetAnalysisAsync(id, cancellationToken);
 
     public Task<AnalysisJob?> TryLeaseAnalysisAsync(TimeSpan leaseDuration, CancellationToken cancellationToken) =>
         _inner.TryLeaseAnalysisAsync(leaseDuration, cancellationToken);
+
+    public async Task SaveAnalysisPlanAsync(AnalysisPlan plan, CancellationToken cancellationToken)
+    {
+        await _inner.SaveAnalysisPlanAsync(plan, cancellationToken);
+        await PersistRecordAsync(_planDirectory, plan.Id, plan, cancellationToken);
+    }
+
+    public Task<AnalysisPlan?> GetAnalysisPlanAsync(Guid id, CancellationToken cancellationToken) =>
+        _inner.GetAnalysisPlanAsync(id, cancellationToken);
+
+    public Task<IReadOnlyList<AnalysisPlan>> ListAnalysisPlansAsync(string ownerUserId, int limit, CancellationToken cancellationToken) =>
+        _inner.ListAnalysisPlansAsync(ownerUserId, limit, cancellationToken);
+
+    public Task<AnalysisPlan?> TryLeaseAnalysisPlanAsync(TimeSpan leaseDuration, CancellationToken cancellationToken) =>
+        _inner.TryLeaseAnalysisPlanAsync(leaseDuration, cancellationToken);
 
     public async Task SaveNaturalDiagramAsync(NaturalDiagramRecord record, CancellationToken cancellationToken)
     {
@@ -117,6 +142,35 @@ public sealed class LocalFileAppStore(string filePath) : IAppStore
             var temporaryPath = _diagramFilePath + ".tmp";
             await File.WriteAllTextAsync(temporaryPath, JsonSerializer.Serialize(diagrams, JsonOptions), new UTF8Encoding(false), cancellationToken);
             File.Move(temporaryPath, _diagramFilePath, true);
+        }
+        finally
+        {
+            _fileLock.Release();
+        }
+    }
+
+    private static T Deserialize<T>(string json) =>
+        JsonSerializer.Deserialize<T>(json, JsonOptions) ?? throw new InvalidOperationException($"Stored {typeof(T).Name} is invalid.");
+
+    private static async Task LoadRecordsAsync(string directory, Func<string, Task> load, CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(directory)) return;
+        foreach (var file in Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly))
+        {
+            await load(await File.ReadAllTextAsync(file, cancellationToken));
+        }
+    }
+
+    private async Task PersistRecordAsync<T>(string directory, Guid id, T record, CancellationToken cancellationToken)
+    {
+        await _fileLock.WaitAsync(cancellationToken);
+        try
+        {
+            Directory.CreateDirectory(directory);
+            var destination = Path.Combine(directory, $"{id:N}.json");
+            var temporary = destination + ".tmp";
+            await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(record, JsonOptions), new UTF8Encoding(false), cancellationToken);
+            File.Move(temporary, destination, true);
         }
         finally
         {

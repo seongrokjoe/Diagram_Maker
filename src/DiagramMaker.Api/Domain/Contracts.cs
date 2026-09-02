@@ -18,6 +18,17 @@ public enum AnalysisState
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter))]
+public enum AnalysisPlanState
+{
+    Queued,
+    Indexing,
+    Grouping,
+    Ready,
+    Failed,
+    Expired
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum ChangeKind
 {
     Added,
@@ -77,7 +88,9 @@ public sealed record AnalyzeRequest(
     int CallerDepth = 1,
     int CalleeDepth = 1,
     bool IncludeLlmSummary = true,
-    bool EnableThinking = false);
+    bool EnableThinking = false,
+    Guid? AnalysisPlanId = null,
+    IReadOnlyList<AnalysisGroupSelection>? Groups = null);
 
 public sealed record AnalysisJob(
     Guid Id,
@@ -117,6 +130,68 @@ public sealed record GitComparison(
     IReadOnlyList<ChangedFile> Files,
     IReadOnlyList<RepositoryFileSnapshot>? ContextFiles = null,
     bool ContextFilesTruncated = false);
+
+public sealed record GitCommitSummary(
+    string Sha,
+    IReadOnlyList<string> ParentShas,
+    DateTimeOffset AuthoredAt,
+    string Message);
+
+public sealed record EvidenceSnippet(
+    string RevisionSha,
+    string BlobOid,
+    string FilePath,
+    int StartLine,
+    int EndLine,
+    string Content);
+
+public sealed record CppCallFact(
+    string Expression,
+    string Name,
+    int ArgumentCount,
+    int Line,
+    int Order);
+
+public sealed record CppSymbolFact(
+    string SemanticKey,
+    string QualifiedName,
+    string SimpleName,
+    string Kind,
+    int? ParameterCount,
+    string Signature,
+    string FilePath,
+    string? ProjectPath,
+    int StartLine,
+    int EndLine,
+    string ContentFingerprint,
+    IReadOnlyList<CppCallFact> Calls,
+    IReadOnlyList<string> Bases);
+
+public sealed record CppEdgeFact(
+    string SourceSemanticKey,
+    string TargetSemanticKey,
+    string Type,
+    string Label,
+    Confidence Confidence,
+    string FilePath,
+    int Line,
+    int? SequenceIndex);
+
+public sealed record CppSourceIndex(
+    string ParserVersion,
+    IReadOnlyList<CppSymbolFact> TargetSymbols,
+    IReadOnlyList<CppEdgeFact> TargetEdges,
+    IReadOnlyList<CppSymbolFact> BeforeChangedSymbols,
+    IReadOnlyList<string> Diagnostics,
+    int AmbiguousCallCount,
+    int IndexedFileCount,
+    long IndexedBytes,
+    bool Truncated,
+    IReadOnlyList<string> ProjectPaths);
+
+public sealed record PreparedRepositoryAnalysis(
+    GitComparison Comparison,
+    CppSourceIndex CppIndex);
 
 public sealed record RepositoryFileSnapshot(
     string Path,
@@ -203,7 +278,8 @@ public sealed record DiagramIr(
     IReadOnlyList<DiagramNode> Nodes,
     IReadOnlyList<DiagramEdge> Edges,
     IReadOnlyList<string> Notes,
-    IReadOnlyList<string> Provenance);
+    IReadOnlyList<string> Provenance,
+    string? Direction = null);
 
 public sealed record DiagramArtifact(
     Guid Id,
@@ -234,14 +310,114 @@ public sealed record AnalysisResult(
     VersionedGraph Graph,
     ReviewNarrative Narrative,
     IReadOnlyList<DiagramArtifact> Diagrams,
-    IReadOnlyList<DiagramAvailability> DiagramAvailability = null!);
+    IReadOnlyList<DiagramAvailability> DiagramAvailability = null!,
+    IReadOnlyList<AnalysisDiagramGroupResult>? DiagramGroups = null);
+
+public sealed record AnalysisDiagramGroupResult(
+    string GroupId,
+    string Title,
+    IReadOnlyList<string> ChangeIds,
+    DiagramArtifact? Diagram,
+    ReviewNarrative Narrative,
+    IReadOnlyList<string> Warnings);
+
+public sealed record DiagramStyleOverrides(
+    string? Direction = null,
+    string? DetailLevel = null,
+    int? CallerDepth = null,
+    int? CalleeDepth = null,
+    int? RelationDepth = null);
+
+public sealed record AnalysisGroupSelection(
+    string Id,
+    string Title,
+    IReadOnlyList<string> ChangeIds,
+    string DiagramType,
+    string PresetId,
+    DiagramStyleOverrides? Overrides = null);
+
+public sealed record AnalysisPlanRequest(
+    Guid RepositoryId,
+    string TargetRevision,
+    string? BaseRevision = null,
+    bool UseLlmGrouping = true,
+    bool EnableThinking = false);
+
+public sealed record ChangeCandidate(
+    string Id,
+    string IdentityId,
+    string QualifiedName,
+    string Kind,
+    SymbolChangeKind ChangeType,
+    string FilePath,
+    int StartLine,
+    int EndLine,
+    string Signature,
+    Confidence Confidence,
+    int CallerCount,
+    int CalleeCount,
+    IReadOnlyList<string> EvidenceIds);
+
+public sealed record AnalysisGroupDraft(
+    string Id,
+    string Title,
+    string Description,
+    IReadOnlyList<string> ChangeIds,
+    string Source,
+    Confidence Confidence,
+    string SuggestedDiagramType);
+
+public sealed record AnalysisPlan(
+    Guid Id,
+    string OwnerUserId,
+    AnalysisPlanRequest Request,
+    AnalysisPlanState State,
+    string? BaseSha,
+    string? TargetSha,
+    int Progress,
+    string StageMessage,
+    GitComparison? Comparison,
+    VersionedGraph? Graph,
+    IReadOnlyList<ChangeCandidate> Candidates,
+    IReadOnlyList<AnalysisGroupDraft> SuggestedGroups,
+    IReadOnlyList<AnalysisGroupSelection> Selections,
+    IReadOnlyList<string> Warnings,
+    string? ErrorCode,
+    string? ErrorMessage,
+    int Revision,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    DateTimeOffset ExpiresAt,
+    DateTimeOffset? LeaseUntil);
+
+public sealed record UpdateAnalysisPlanSelectionRequest(
+    int ExpectedRevision,
+    IReadOnlyList<AnalysisGroupSelection> Groups);
+
+public sealed record GenerateAnalysisPlanRequest(int ExpectedRevision);
+
+public sealed record DiagramPreset(
+    string Id,
+    string Type,
+    string Name,
+    string Description,
+    string ThumbnailDsl,
+    string Direction,
+    string DetailLevel,
+    int CallerDepth,
+    int CalleeDepth,
+    int RelationDepth,
+    int MaximumNodes,
+    int MaximumEdges);
 
 public sealed record NaturalDiagramRequest(
     string Prompt,
     string DiagramType = "auto",
     Guid? ParentDiagramId = null,
     bool EnableThinking = false,
-    bool ForceRegenerate = false);
+    bool ForceRegenerate = false,
+    string PresetId = "balanced",
+    DiagramStyleOverrides? Style = null);
 
 public sealed record NaturalDiagramRecord(
     Guid Id,

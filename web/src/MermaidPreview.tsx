@@ -1,12 +1,26 @@
 import { useEffect, useId, useState } from "react";
 
-type MermaidApi = (typeof import("mermaid"))["default"];
+type MermaidApi = {
+  initialize: (configuration: Record<string, unknown>) => void;
+  render: (id: string, source: string) => Promise<{ svg: string }>;
+};
 let mermaidPromise: Promise<MermaidApi> | undefined;
 
 function loadMermaid(): Promise<MermaidApi> {
-  mermaidPromise ??= import("mermaid").then(({ default: mermaid }) => {
-    mermaid.initialize({ startOnLoad: false, securityLevel: "strict", htmlLabels: false, maxEdges: 500, maxTextSize: 50_000, theme: "base", themeVariables: { primaryColor: "#e7f0ff", primaryTextColor: "#10213a", primaryBorderColor: "#4b72a9", lineColor: "#52709a", fontFamily: "Arial, sans-serif" } });
-    return mermaid;
+  mermaidPromise ??= new Promise<MermaidApi>((resolve, reject) => {
+    const existing = (window as Window & { mermaid?: MermaidApi }).mermaid;
+    if (existing) { resolve(existing); return; }
+    const script = document.createElement("script");
+    script.src = "/vendor/mermaid.min.js";
+    script.async = true;
+    script.onload = () => {
+      const mermaid = (window as Window & { mermaid?: MermaidApi }).mermaid;
+      if (!mermaid) { reject(new Error("Mermaid runtime did not initialize.")); return; }
+      mermaid.initialize({ startOnLoad: false, securityLevel: "strict", htmlLabels: false, maxEdges: 500, maxTextSize: 50_000, theme: "base", themeVariables: { primaryColor: "#e7f0ff", primaryTextColor: "#10213a", primaryBorderColor: "#4b72a9", lineColor: "#52709a", fontFamily: "Arial, sans-serif" } });
+      resolve(mermaid);
+    };
+    script.onerror = () => reject(new Error("Mermaid runtime could not be loaded."));
+    document.head.appendChild(script);
   });
   return mermaidPromise;
 }
@@ -29,10 +43,11 @@ type MermaidPreviewProps = {
   source: string;
   downloadName?: string;
   editable?: boolean;
+  compact?: boolean;
   onSaveRevision?: (source: string) => Promise<void>;
 };
 
-export function MermaidPreview({ source, downloadName = "diagram", editable = false, onSaveRevision }: MermaidPreviewProps) {
+export function MermaidPreview({ source, downloadName = "diagram", editable = false, compact = false, onSaveRevision }: MermaidPreviewProps) {
   const id = useId().replaceAll(":", "_");
   const [draft, setDraft] = useState(source);
   const [svg, setSvg] = useState("");
@@ -81,16 +96,16 @@ export function MermaidPreview({ source, downloadName = "diagram", editable = fa
   }
 
   return <>
-    <div className="diagram-actions">
+    {!compact && <div className="diagram-actions">
       <button type="button" className="secondary" disabled={!svg} onClick={() => downloadSvg(svg, `${downloadName}.svg`)}>SVG 다운로드</button>
       <button type="button" className="secondary" disabled={!svg} onClick={() => void downloadPng(svg, `${downloadName}.png`)}>PNG 다운로드</button>
       {editable && <button type="button" className="secondary" disabled={draft === source || saving} onClick={() => setDraft(source)}>편집 취소</button>}
       {editable && <button type="button" className="primary" disabled={draft === source || Boolean(error) || saving || rendering} onClick={() => void saveRevision()}>{saving ? "저장 중…" : "새 리비전 저장"}</button>}
-    </div>
+    </div>}
     {editable && <label className="mermaid-editor-label">Mermaid DSL 편집<textarea className="mermaid-editor" rows={12} value={draft} spellCheck={false} onChange={(event) => setDraft(event.target.value)} /></label>}
     {rendering && !svg && <div className="empty-state"><p>Mermaid 렌더러를 불러오는 중…</p></div>}
     {error && <div className="error-panel" role="alert">{error}</div>}
-    <div className="diagram-canvas" aria-label="생성된 다이어그램" dangerouslySetInnerHTML={{ __html: svg }} />
+    <div className={`diagram-canvas ${compact ? "compact" : ""}`} aria-label="생성된 다이어그램" dangerouslySetInnerHTML={{ __html: svg }} />
   </>;
 }
 

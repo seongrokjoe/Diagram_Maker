@@ -18,20 +18,23 @@ public sealed partial class SourceGraphAnalyzer
         IReadOnlyList<string> CalledNames,
         IReadOnlyList<string> BaseTypeNames);
 
-    public VersionedGraph Analyze(Guid repositoryId, GitComparison comparison)
+    public VersionedGraph Analyze(Guid repositoryId, GitComparison comparison) => Analyze(repositoryId, comparison, null);
+
+    public VersionedGraph Analyze(Guid repositoryId, GitComparison comparison, CppSourceIndex? cppIndex)
     {
         var before = new List<ParsedSymbol>();
         var after = new List<ParsedSymbol>();
+        var hasCppIndex = cppIndex is { TargetSymbols.Count: > 0 };
 
         foreach (var file in comparison.Files)
         {
             var beforePath = file.PreviousPath ?? file.Path;
-            if (file.BeforeContent is not null && file.BeforeBlobOid is not null)
+            if (file.BeforeContent is not null && file.BeforeBlobOid is not null && !(hasCppIndex && IsCppPath(beforePath)))
             {
                 before.AddRange(Parse(repositoryId, comparison.BaseSha, file.BeforeBlobOid, beforePath, file.BeforeContent));
             }
 
-            if (file.AfterContent is not null && file.AfterBlobOid is not null)
+            if (file.AfterContent is not null && file.AfterBlobOid is not null && !(hasCppIndex && IsCppPath(file.Path)))
             {
                 after.AddRange(Parse(repositoryId, comparison.TargetSha, file.AfterBlobOid, file.Path, file.AfterContent));
             }
@@ -39,6 +42,7 @@ public sealed partial class SourceGraphAnalyzer
 
         foreach (var file in comparison.ContextFiles ?? [])
         {
+            if (hasCppIndex && IsCppPath(file.Path)) continue;
             var parsed = Parse(repositoryId, file.RevisionSha, file.BlobOid, file.Path, file.Content);
             if (file.RevisionSha == comparison.BaseSha) before.AddRange(parsed);
             if (file.RevisionSha == comparison.TargetSha) after.AddRange(parsed);
@@ -46,15 +50,112 @@ public sealed partial class SourceGraphAnalyzer
 
         var beforeByIdentity = before.GroupBy(static symbol => symbol.Identity.Id).ToDictionary(static group => group.Key, static group => group.First());
         var afterByIdentity = after.GroupBy(static symbol => symbol.Identity.Id).ToDictionary(static group => group.Key, static group => group.First());
-        var changes = BuildChanges(beforeByIdentity, afterByIdentity);
-        var edges = BuildEdges(after);
+        var changes = BuildChanges(beforeByIdentity, afterByIdentity).ToList();
+        var edges = BuildEdges(after).ToList();
+        var allSymbols = before.Concat(after).ToList();
+
+        if (hasCppIndex)
+        {
+            var cppBefore = cppIndex!.BeforeChangedSymbols
+                .Select(fact => CreateCppParsedSymbol(repositoryId, comparison.BaseSha, fact, comparison))
+                .ToArray();
+            var cppTarget = cppIndex.TargetSymbols
+                .Select(fact => CreateCppParsedSymbol(repositoryId, comparison.TargetSha, fact, comparison))
+                .ToArray();
+            var changedTargetPaths = comparison.Files.Select(static file => file.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var changedCppTarget = cppTarget.Where(symbol => changedTargetPaths.Contains(symbol.Version.FilePath)).ToArray();
+            var cppBeforeByIdentity = cppBefore.GroupBy(static symbol => symbol.Identity.Id).ToDictionary(static group => group.Key, static group => group.First());
+            var cppTargetByIdentity = changedCppTarget.GroupBy(static symbol => symbol.Identity.Id).ToDictionary(static group => group.Key, static group => group.First());
+            changes.AddRange(BuildChanges(cppBeforeByIdentity, cppTargetByIdentity));
+            edges.AddRange(BuildCppEdges(repositoryId, cppIndex, cppTarget));
+            allSymbols.AddRange(cppBefore);
+            allSymbols.AddRange(cppTarget);
+        }
 
         return new VersionedGraph(
-            before.Concat(after).Select(static symbol => symbol.Identity).DistinctBy(static identity => identity.Id).ToArray(),
-            before.Concat(after).Select(static symbol => symbol.Version).DistinctBy(static version => version.Id).ToArray(),
-            edges,
-            before.Concat(after).Select(static symbol => symbol.Evidence).DistinctBy(static evidence => evidence.Id).ToArray(),
-            changes);
+            allSymbols.Select(static symbol => symbol.Identity).DistinctBy(static identity => identity.Id).ToArray(),
+            allSymbols.Select(static symbol => symbol.Version).DistinctBy(static version => version.Id).ToArray(),
+            edges.DistinctBy(static edge => edge.Id).ToArray(),
+            allSymbols.Select(static symbol => symbol.Evidence).DistinctBy(static evidence => evidence.Id).ToArray(),
+            changes.DistinctBy(static change => change.Id).ToArray());
+    }
+
+    private static bool IsCppPath(string path) => Path.GetExtension(path).ToLowerInvariant() is
+        ".c" or ".cc" or ".cpp" or ".cxx" or ".h" or ".hh" or ".hpp";
+
+    private static ParsedSymbol CreateCppParsedSymbol(
+        Guid repositoryId,
+        string revisionSha,
+        CppSymbolFact fact,
+        GitComparison comparison)
+    {
+        var identityId = StableIds.Create(repositoryId, "cpp", fact.Kind, fact.SemanticKey);
+        var versionId = StableIds.Create(identityId, revisionSha, fact.ContentFingerprint);
+        var blobOid = FindBlobOid(comparison, revisionSha, fact.FilePath) ?? StableIds.Create(revisionSha, fact.FilePath);
+        var evidenceId = StableIds.Create(revisionSha, blobOid, fact.FilePath, fact.StartLine, fact.EndLine, "cpp-tree-sitter");
+        return new ParsedSymbol(
+            new SymbolIdentity(identityId, repositoryId, "cpp", fact.Kind, fact.SemanticKey),
+            new SymbolVersion(versionId, identityId, revisionSha, fact.QualifiedName, fact.Signature, fact.FilePath,
+                fact.StartLine, fact.EndLine, fact.ContentFingerprint),
+            new EvidenceRef(evidenceId, revisionSha, blobOid, fact.FilePath, fact.StartLine, fact.EndLine,
+                "TreeSitterCpp", Confidence.Exact),
+            fact.ContentFingerprint,
+            [],
+            fact.Bases);
+    }
+
+    private static string? FindBlobOid(GitComparison comparison, string revisionSha, string filePath)
+    {
+        var changed = comparison.Files.FirstOrDefault(file =>
+            revisionSha == comparison.TargetSha
+                ? file.Path.Equals(filePath, StringComparison.OrdinalIgnoreCase)
+                : (file.PreviousPath ?? file.Path).Equals(filePath, StringComparison.OrdinalIgnoreCase));
+        if (changed is not null) return revisionSha == comparison.TargetSha ? changed.AfterBlobOid : changed.BeforeBlobOid;
+        return comparison.ContextFiles?.FirstOrDefault(file =>
+            file.RevisionSha == revisionSha && file.Path.Equals(filePath, StringComparison.OrdinalIgnoreCase))?.BlobOid;
+    }
+
+    private static IReadOnlyList<GraphEdge> BuildCppEdges(
+        Guid repositoryId,
+        CppSourceIndex index,
+        IReadOnlyList<ParsedSymbol> targetSymbols)
+    {
+        var identityBySemanticKey = targetSymbols
+            .GroupBy(static symbol => symbol.Identity.SemanticKey)
+            .ToDictionary(static group => group.Key, static group => group.First().Identity.Id, StringComparer.Ordinal);
+        var evidenceByIdentity = targetSymbols.ToDictionary(static symbol => symbol.Identity.Id, static symbol => symbol.Evidence.Id, StringComparer.Ordinal);
+        var edges = new List<GraphEdge>();
+        foreach (var edge in index.TargetEdges)
+        {
+            if (!identityBySemanticKey.TryGetValue(edge.SourceSemanticKey, out var sourceId) ||
+                !identityBySemanticKey.TryGetValue(edge.TargetSemanticKey, out var targetId)) continue;
+            edges.Add(new GraphEdge(
+                StableIds.Create(repositoryId, sourceId, targetId, edge.Type),
+                sourceId,
+                targetId,
+                edge.Type,
+                edge.Label,
+                edge.Confidence,
+                evidenceByIdentity.TryGetValue(sourceId, out var evidenceId) ? [evidenceId] : [],
+                edge.SequenceIndex));
+        }
+
+        var typeFacts = index.TargetSymbols.Where(static fact => fact.Kind is "class" or "type").ToArray();
+        foreach (var source in typeFacts)
+        {
+            foreach (var baseName in source.Bases)
+            {
+                var matches = typeFacts.Where(candidate =>
+                    candidate.QualifiedName.Equals(baseName, StringComparison.Ordinal) ||
+                    candidate.SimpleName.Equals(baseName.Split("::").Last(), StringComparison.Ordinal)).ToArray();
+                if (matches.Length != 1 || !identityBySemanticKey.TryGetValue(source.SemanticKey, out var sourceId) ||
+                    !identityBySemanticKey.TryGetValue(matches[0].SemanticKey, out var targetId)) continue;
+                edges.Add(new GraphEdge(
+                    StableIds.Create(repositoryId, sourceId, targetId, "inherits"), sourceId, targetId, "inherits", "inherits",
+                    Confidence.Inferred, evidenceByIdentity.TryGetValue(sourceId, out var evidenceId) ? [evidenceId] : []));
+            }
+        }
+        return edges;
     }
 
     private static IReadOnlyList<ParsedSymbol> Parse(

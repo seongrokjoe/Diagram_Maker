@@ -4,6 +4,11 @@ namespace DiagramMaker.Services;
 
 public sealed class DiagramValidationException(string message) : Exception(message);
 
+public sealed class DiagramGenerationException(string code, string message) : Exception(message)
+{
+    public string Code { get; } = code;
+}
+
 public sealed class DiagramValidator
 {
     public const int MaximumNodes = 500;

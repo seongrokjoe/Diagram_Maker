@@ -21,7 +21,8 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
 
     private static string CompileFlowchart(DiagramIr diagram)
     {
-        var builder = new StringBuilder("flowchart LR\n");
+        var direction = diagram.Direction?.Equals("TB", StringComparison.OrdinalIgnoreCase) == true ? "TB" : "LR";
+        var builder = new StringBuilder($"flowchart {direction}\n");
         var aliases = diagram.Nodes.ToDictionary(static node => node.Id, static node => Alias(node.Id));
 
         foreach (var node in diagram.Nodes)
@@ -64,7 +65,8 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
 
     private static string CompileClass(DiagramIr diagram)
     {
-        var builder = new StringBuilder("classDiagram\n");
+        var direction = diagram.Direction?.Equals("TB", StringComparison.OrdinalIgnoreCase) == true ? "TB" : "LR";
+        var builder = new StringBuilder($"classDiagram\n    direction {direction}\n");
         var aliases = diagram.Nodes.ToDictionary(static node => node.Id, static node => Alias(node.Id));
         foreach (var node in diagram.Nodes)
         {
@@ -88,7 +90,8 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
 
     private static string CompileState(DiagramIr diagram)
     {
-        var builder = new StringBuilder("stateDiagram-v2\n");
+        var direction = diagram.Direction?.Equals("LR", StringComparison.OrdinalIgnoreCase) == true ? "LR" : "TB";
+        var builder = new StringBuilder($"stateDiagram-v2\n    direction {direction}\n");
         var aliases = diagram.Nodes.ToDictionary(static node => node.Id, static node => Alias(node.Id));
         foreach (var node in diagram.Nodes)
         {

@@ -35,7 +35,7 @@ public sealed partial class MermaidDslRevisionService(
             parent.RootDiagramId ?? parent.Id,
             parent.Id,
             "manualDsl",
-            "natural-v2",
+            NaturalDiagramService.GeneratorVersion,
             false);
         await store.SaveNaturalDiagramAsync(record, cancellationToken);
         return record;
@@ -49,6 +49,7 @@ public sealed partial class MermaidDslRevisionService(
         if (lines.Length is 0 or > 600) throw new ArgumentException("Mermaid DSL has an invalid number of lines.");
 
         var type = ParseHeader(lines[0]);
+        var direction = lines[0].Equals("flowchart TB", StringComparison.Ordinal) ? "TB" : parent.Direction;
         if (!string.Equals(type, parent.Type, StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException($"The diagram type cannot be changed from '{parent.Type}' to '{type}' in a revision.");
 
@@ -61,6 +62,11 @@ public sealed partial class MermaidDslRevisionService(
         {
             var line = lines[index];
             if (type == "flowchart" && (line.StartsWith("classDef ", StringComparison.Ordinal) || FlowStyle().IsMatch(line))) continue;
+            if (type is "class" or "state" && line is "direction LR" or "direction TB")
+            {
+                direction = line.EndsWith("TB", StringComparison.Ordinal) ? "TB" : "LR";
+                continue;
+            }
 
             if (TryParseNode(type, line, out var alias, out var label))
             {
@@ -89,7 +95,8 @@ public sealed partial class MermaidDslRevisionService(
             nodes,
             edges,
             parent.Notes.Concat(["Mermaid DSL에서 수동 편집됨."]).Distinct(StringComparer.Ordinal).ToArray(),
-            parent.Provenance);
+            parent.Provenance,
+            direction);
     }
 
     private static void EnsureSafeSource(string source)
@@ -108,8 +115,8 @@ public sealed partial class MermaidDslRevisionService(
         "sequenceDiagram" => "sequence",
         "classDiagram" => "class",
         "stateDiagram-v2" => "state",
-        "flowchart LR" => "flowchart",
-        _ => throw new ArgumentException("Only flowchart LR, sequenceDiagram, classDiagram, and stateDiagram-v2 are supported.")
+        "flowchart LR" or "flowchart TB" => "flowchart",
+        _ => throw new ArgumentException("Only flowchart LR/TB, sequenceDiagram, classDiagram, and stateDiagram-v2 are supported.")
     };
 
     private static bool TryParseNode(string type, string line, out string alias, out string label)

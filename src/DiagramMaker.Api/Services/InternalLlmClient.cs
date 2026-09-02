@@ -8,8 +8,21 @@ namespace DiagramMaker.Services;
 public interface IInternalLlmClient
 {
     bool IsEnabled { get; }
-    Task<DiagramIr?> GenerateNaturalDiagramAsync(string prompt, string requestedType, bool enableThinking, CancellationToken cancellationToken);
+    Task<DiagramIr?> GenerateNaturalDiagramAsync(
+        string prompt,
+        string requestedType,
+        bool enableThinking,
+        DiagramPreset preset,
+        DiagramStyleOverrides? style,
+        CancellationToken cancellationToken);
     Task<ReviewNarrative?> GenerateReviewAsync(VersionedGraph graph, IReadOnlyList<ChangedFile> files, bool enableThinking, CancellationToken cancellationToken);
+    Task<IReadOnlyList<AnalysisGroupDraft>?> RegroupChangesAsync(
+        IReadOnlyList<ChangeCandidate> candidates,
+        IReadOnlyList<AnalysisGroupDraft> staticGroups,
+        VersionedGraph graph,
+        IReadOnlyList<ChangedFile> files,
+        bool enableThinking,
+        CancellationToken cancellationToken);
     Task<LlmConnectionTestResult> TestConnectionAsync(CancellationToken cancellationToken);
     Task<LlmContractTestResult> TestDiagramContractAsync(CancellationToken cancellationToken);
     Task<LlmThinkingContractTestResult> TestThinkingContractAsync(CancellationToken cancellationToken);
@@ -108,12 +121,40 @@ public sealed class InternalLlmClient(
           "required": ["result"]
         }
         """);
+    private static readonly JsonElement ChangeGroupingSchema = ParseSchema("""
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "groups": {
+              "type": "array", "minItems": 1, "maxItems": 50,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+                  "description": { "type": "string", "minLength": 1, "maxLength": 300 },
+                  "changeIds": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "type": "string" } },
+                  "suggestedDiagramType": { "type": "string", "enum": ["flowchart", "sequence", "class", "state"] }
+                },
+                "required": ["title", "description", "changeIds", "suggestedDiagramType"]
+              }
+            }
+          },
+          "required": ["groups"]
+        }
+        """);
     private readonly LlmOptions _options = options.Value;
 
     public bool IsEnabled => transport.IsEnabled;
 
     public async Task<DiagramIr?> GenerateNaturalDiagramAsync(
-        string prompt, string requestedType, bool enableThinking, CancellationToken cancellationToken)
+        string prompt,
+        string requestedType,
+        bool enableThinking,
+        DiagramPreset preset,
+        DiagramStyleOverrides? style,
+        CancellationToken cancellationToken)
     {
         if (!IsEnabled) return null;
         var safePrompt = Limit(masker.Mask(prompt), _options.MaxInputCharacters);
@@ -124,7 +165,14 @@ public sealed class InternalLlmClient(
             Use concise labels in the same language as the request. Relation endpoints must exactly match names in the returned node list.
             Preserve the intended message or transition order. Do not add unrelated actors, components, classes, states, or behavior.
             """;
-        var user = $"Required diagram type: {type}\nRequest: {safePrompt}";
+        var direction = style?.Direction ?? preset.Direction;
+        var detail = style?.DetailLevel ?? preset.DetailLevel;
+        var user = $"""
+            Required diagram type: {type}
+            Layout sample: {preset.Name} - {preset.Description}
+            Structural constraints: direction={direction}, detail={detail}, maximumNodes={preset.MaximumNodes}, maximumEdges={preset.MaximumEdges}.
+            Request: {safePrompt}
+            """;
         var outputTokens = GetOutputTokens(_options.DiagramOutputTokens, enableThinking);
         DiagramIr diagram;
         if (type == "sequence")
@@ -193,6 +241,75 @@ public sealed class InternalLlmClient(
             value => GetReviewFailure(value, allowedEvidence),
             cancellationToken);
         return result.Value;
+    }
+
+    public async Task<IReadOnlyList<AnalysisGroupDraft>?> RegroupChangesAsync(
+        IReadOnlyList<ChangeCandidate> candidates,
+        IReadOnlyList<AnalysisGroupDraft> staticGroups,
+        VersionedGraph graph,
+        IReadOnlyList<ChangedFile> files,
+        bool enableThinking,
+        CancellationToken cancellationToken)
+    {
+        if (!IsEnabled || candidates.Count == 0 || candidates.Count > 5_000) return null;
+        var allowedIds = candidates.Select(static candidate => candidate.Id).ToHashSet(StringComparer.Ordinal);
+        var candidateIdentityIds = candidates.Select(static candidate => candidate.IdentityId).ToHashSet(StringComparer.Ordinal);
+        var context = JsonSerializer.Serialize(new
+        {
+            candidates = candidates.Select(static candidate => new
+            {
+                candidate.Id,
+                candidate.QualifiedName,
+                candidate.Kind,
+                candidate.ChangeType,
+                candidate.FilePath,
+                candidate.Signature,
+                candidate.CallerCount,
+                candidate.CalleeCount
+            }),
+            staticGroups = staticGroups.Select(static group => new { group.Title, group.Description, group.ChangeIds }),
+            edges = graph.Edges.Where(edge => candidateIdentityIds.Contains(edge.FromIdentityId) || candidateIdentityIds.Contains(edge.ToIdentityId))
+                .Select(static edge => new { edge.FromIdentityId, edge.ToIdentityId, edge.Type, edge.Confidence }),
+            diff = BuildBoundedDiff(files)
+        }, JsonOptions);
+        context = masker.Mask(context);
+        if (context.Length > _options.MaxInputCharacters)
+        {
+            return null;
+        }
+        const string system = """
+            Regroup an evidence-bound list of source changes into small coherent diagram topics.
+            Return JSON only. Write title and description in Korean.
+            Every supplied change ID must appear exactly once. Never invent, alter, omit, or duplicate an ID.
+            Prefer call-connected changes, then the same class, file, or project. Do not invent calls or runtime behavior.
+            Suggest exactly one diagram type for each group.
+            """;
+        var result = await structured.CompleteAsync<ChangeGroupingResponse>(
+            system,
+            context,
+            ChangeGroupingSchema,
+            GetOutputTokens(_options.ReviewOutputTokens, enableThinking),
+            enableThinking,
+            value => ValidateGrouping(value, allowedIds),
+            cancellationToken);
+        return result.Value.Groups.Select(group => new AnalysisGroupDraft(
+            StableIds.Create("llm-group", string.Join('|', group.ChangeIds.Order(StringComparer.Ordinal))),
+            group.Title.Trim(),
+            group.Description.Trim(),
+            group.ChangeIds,
+            "llm",
+            Confidence.Inferred,
+            group.SuggestedDiagramType)).ToArray();
+    }
+
+    private static string? ValidateGrouping(ChangeGroupingResponse response, IReadOnlySet<string> allowedIds)
+    {
+        if (response.Groups.Count is < 1 or > 50) return "InvalidGroupCount";
+        var ids = response.Groups.SelectMany(static group => group.ChangeIds).ToArray();
+        if (ids.Any(id => !allowedIds.Contains(id))) return "UnknownChangeId";
+        if (ids.Distinct(StringComparer.Ordinal).Count() != ids.Length) return "DuplicateChangeId";
+        if (!allowedIds.SetEquals(ids)) return "MissingChangeId";
+        return null;
     }
 
     public async Task<LlmConnectionTestResult> TestConnectionAsync(CancellationToken cancellationToken)
@@ -357,4 +474,10 @@ public sealed class InternalLlmClient(
     }
 
     private sealed record ThinkingContractPayload(string Result);
+    private sealed record ChangeGroupingResponse(IReadOnlyList<ChangeGroupingItem> Groups);
+    private sealed record ChangeGroupingItem(
+        string Title,
+        string Description,
+        IReadOnlyList<string> ChangeIds,
+        string SuggestedDiagramType);
 }

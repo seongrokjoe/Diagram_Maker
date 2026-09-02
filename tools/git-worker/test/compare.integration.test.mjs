@@ -6,7 +6,7 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import git from "isomorphic-git";
-import { compare, inspectRepository } from "../index.mjs";
+import { compare, inspectRepository, listCommits, prepare, readEvidence } from "../index.mjs";
 
 const author = { name: "Test", email: "test@internal" };
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -126,4 +126,106 @@ test("native Git reads repositories split across multiple packfiles", async (t) 
   assert.equal(result.files.length, 1);
   assert.equal(result.files[0].path, "Source.cs");
   assert.match(result.files[0].afterContent, /After/);
+});
+
+test("prepares a Visual Studio C++ project with resolved calls and commit metadata", async (t) => {
+  const dir = await createRepository(t, "cpp-plan");
+  const project = `<Project><ItemGroup><ClCompile Include="src\\Service.cpp" /></ItemGroup></Project>`;
+  fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "Demo.vcxproj"), project);
+  fs.writeFileSync(path.join(dir, "src", "Service.cpp"), `
+    namespace Demo {
+      class Service { public: void Run(); void Save(); };
+      void Service::Run() { }
+      void Service::Save() { }
+    }
+  `);
+  await git.add({ fs, dir, filepath: "Demo.vcxproj" });
+  await git.add({ fs, dir, filepath: "src/Service.cpp" });
+  const base = await git.commit({ fs, dir, message: "base C++ project", author });
+  fs.writeFileSync(path.join(dir, "src", "Service.cpp"), `
+    namespace Demo {
+      class Service { public: void Run(); void Save(); };
+      void Service::Run() { Save(); }
+      void Service::Save() { }
+    }
+  `);
+  await git.add({ fs, dir, filepath: "src/Service.cpp" });
+  const target = await git.commit({ fs, dir, message: "call Save", author });
+
+  const result = await prepare({
+    repositoryPath: dir,
+    baseRevision: base,
+    targetRevision: target,
+    backend: "native",
+    maxChangedFiles: 10,
+    maxTextFileBytes: 100_000,
+    maxContextFiles: 10,
+    maxContextFileBytes: 100_000,
+    maxIndexedFiles: 100,
+    maxIndexedBytes: 10_000_000,
+    maxSourceFileBytes: 1_000_000,
+  });
+  assert.deepEqual(result.cppIndex.projectPaths, ["Demo.vcxproj"]);
+  assert.ok(result.cppIndex.targetSymbols.some((symbol) => symbol.qualifiedName.endsWith("Service::Run")));
+  assert.ok(result.cppIndex.targetEdges.some((edge) => edge.type === "calls"));
+  assert.equal(result.cppIndex.ambiguousCallCount, 0);
+
+  const commits = await listCommits({ repositoryPath: dir, backend: "native", limit: 2 });
+  assert.equal(commits[0].sha, target);
+  assert.deepEqual(commits[0].parentShas, [base]);
+  assert.equal(commits[0].message, "call Save");
+
+  const evidence = await readEvidence({
+    repositoryPath: dir,
+    backend: "native",
+    revision: target,
+    filePath: "src/Service.cpp",
+    startLine: 3,
+    endLine: 5,
+    maxTextFileBytes: 100_000,
+  });
+  assert.equal(evidence.revisionSha, target);
+  assert.match(evidence.content, /Service/);
+  await assert.rejects(
+    readEvidence({ repositoryPath: dir, backend: "native", revision: target, filePath: "../secret.txt" }),
+    (error) => error?.errorCode === "GIT_OBJECT_UNREADABLE",
+  );
+});
+
+test("does not index unrelated C++ projects for a non-C++ change", async (t) => {
+  const dir = await createRepository(t, "non-cpp-plan");
+  fs.mkdirSync(path.join(dir, "native"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "Demo.vcxproj"),
+    '<Project><ItemGroup><ClCompile Include="native\\Service.cpp" /></ItemGroup></Project>',
+  );
+  fs.writeFileSync(path.join(dir, "native", "Service.cpp"), "void Unrelated() {}\n");
+  fs.writeFileSync(path.join(dir, "Service.cs"), "class Service { void Before() {} }\n");
+  await git.add({ fs, dir, filepath: "Demo.vcxproj" });
+  await git.add({ fs, dir, filepath: "native/Service.cpp" });
+  await git.add({ fs, dir, filepath: "Service.cs" });
+  const base = await git.commit({ fs, dir, message: "mixed project", author });
+
+  fs.writeFileSync(path.join(dir, "Service.cs"), "class Service { void After() {} }\n");
+  await git.add({ fs, dir, filepath: "Service.cs" });
+  const target = await git.commit({ fs, dir, message: "C# only change", author });
+
+  const result = await prepare({
+    repositoryPath: dir,
+    baseRevision: base,
+    targetRevision: target,
+    backend: "native",
+    maxChangedFiles: 10,
+    maxTextFileBytes: 100_000,
+    maxContextFiles: 10,
+    maxContextFileBytes: 100_000,
+    maxIndexedFiles: 100,
+    maxIndexedBytes: 10_000_000,
+    maxSourceFileBytes: 1_000_000,
+  });
+
+  assert.equal(result.cppIndex.indexedFileCount, 0);
+  assert.deepEqual(result.cppIndex.targetSymbols, []);
+  assert.deepEqual(result.cppIndex.projectPaths, []);
 });

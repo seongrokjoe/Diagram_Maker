@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import git from "isomorphic-git";
 import { structuredPatch } from "diff";
+import { parseCppFile, resolveCppCalls } from "./cpp-indexer.mjs";
 
 const MAX_STDERR = 8_000;
 const MAX_GIT_STDERR = 64_000;
@@ -172,7 +173,7 @@ async function listTreeNative(input, dir, revisionSha) {
   const result = await runGit(
     input,
     dir,
-    ["ls-tree", "-r", "-z", "--full-tree", revisionSha],
+    ["ls-tree", "-r", "-l", "-z", "--full-tree", revisionSha],
     { errorCode: "GIT_OBJECT_UNREADABLE" },
   );
   const entries = new Map();
@@ -182,9 +183,13 @@ async function listTreeNative(input, dir, revisionSha) {
     if (separator < 0) {
       throw new WorkerError("GIT_OBJECT_UNREADABLE", "Git returned an invalid tree record.", "native");
     }
-    const [mode, type, oid] = record.slice(0, separator).split(" ");
+    const [mode, type, oid, rawSize] = record.slice(0, separator).split(/\s+/);
     if (type !== "blob") continue;
-    entries.set(record.slice(separator + 1).replaceAll("\\", "/"), { oid, mode });
+    entries.set(record.slice(separator + 1).replaceAll("\\", "/"), {
+      oid,
+      mode,
+      size: /^\d+$/.test(rawSize) ? Number(rawSize) : null,
+    });
   }
   return entries;
 }
@@ -196,6 +201,35 @@ function isText(buffer) {
 
 function isSourceFile(filepath) {
   return /\.(cs|c|cc|cpp|cxx|h|hh|hpp)$/i.test(filepath);
+}
+
+function isCppSourceFile(filepath) {
+  return /\.(c|cc|cpp|cxx|h|hh|hpp)$/i.test(filepath);
+}
+
+function normalizeRequestedTreePath(value) {
+  if (typeof value !== "string" || value.length === 0 || value.length > 4_096) {
+    throw new WorkerError("GIT_OBJECT_UNREADABLE", "A valid repository file path is required.");
+  }
+  const normalized = path.posix.normalize(value.replaceAll("\\", "/"));
+  if (normalized === "." || normalized.startsWith("../") || path.posix.isAbsolute(normalized)) {
+    throw new WorkerError("GIT_OBJECT_UNREADABLE", "The repository file path is outside the immutable tree.");
+  }
+  return normalized;
+}
+
+function createEvidenceSnippet(revisionSha, filepath, oid, content, requestedStart, requestedEnd) {
+  const lines = content.replaceAll("\r", "").split("\n");
+  const startLine = Math.min(lines.length, Math.max(1, Number(requestedStart) || 1));
+  const endLine = Math.min(lines.length, Math.max(startLine, Number(requestedEnd) || startLine), startLine + 199);
+  return {
+    revisionSha,
+    blobOid: oid,
+    filePath: filepath,
+    startLine,
+    endLine,
+    content: lines.slice(startLine - 1, endLine).join("\n"),
+  };
 }
 
 function createHunks(pathname, before, after) {
@@ -414,6 +448,166 @@ async function compareNative(input) {
   };
 }
 
+function normalizedTreePath(basePath, value) {
+  const normalized = path.posix.normalize(path.posix.join(
+    path.posix.dirname(basePath),
+    value.replaceAll("\\", "/"),
+  ));
+  return normalized.startsWith("../") || path.posix.isAbsolute(normalized) ? null : normalized;
+}
+
+function parseVcxProject(projectPath, content) {
+  const members = [];
+  const references = [];
+  for (const match of content.matchAll(/<(ClCompile|ClInclude)\b[^>]*\bInclude\s*=\s*["']([^"']+)["']/gi)) {
+    const member = normalizedTreePath(projectPath, match[2]);
+    if (member) members.push(member);
+  }
+  for (const match of content.matchAll(/<ProjectReference\b[^>]*\bInclude\s*=\s*["']([^"']+)["']/gi)) {
+    const reference = normalizedTreePath(projectPath, match[1]);
+    if (reference) references.push(reference);
+  }
+  return { projectPath, members: [...new Set(members)], references: [...new Set(references)] };
+}
+
+async function readSelectedNativeFiles(input, dir, entries, paths, maxFileBytes) {
+  const requests = paths
+    .map((filepath) => [filepath, entries.get(filepath)])
+    .filter(([, entry]) => entry && (entry.size === null || entry.size <= maxFileBytes));
+  const blobs = await readNativeBlobs(input, dir, requests.map(([, entry]) => [entry.oid, maxFileBytes]));
+  return requests.map(([filepath, entry]) => ({
+    filepath,
+    entry,
+    content: nativeText(blobs, entry.oid, maxFileBytes),
+  })).filter((item) => item.content !== null);
+}
+
+async function buildCppIndexNative(input, dir, comparison) {
+  const changedCppPaths = comparison.files
+    .flatMap((file) => [file.path, file.previousPath].filter(Boolean))
+    .filter(isCppSourceFile);
+  if (changedCppPaths.length === 0) {
+    return {
+      parserVersion: "tree-sitter-cpp-0.23.4/index-v1",
+      targetSymbols: [],
+      targetEdges: [],
+      beforeChangedSymbols: [],
+      diagnostics: [],
+      ambiguousCallCount: 0,
+      indexedFileCount: 0,
+      indexedBytes: 0,
+      truncated: false,
+      projectPaths: [],
+    };
+  }
+
+  const targetEntries = await listTreeNative(input, dir, comparison.targetSha);
+  const projectPaths = [...targetEntries.keys()].filter((filepath) => filepath.toLowerCase().endsWith(".vcxproj"));
+  const projectFiles = await readSelectedNativeFiles(input, dir, targetEntries, projectPaths, 2_000_000);
+  const projects = projectFiles.map((item) => parseVcxProject(item.filepath, item.content));
+  const projectByPath = new Map(projects.map((project) => [project.projectPath, project]));
+  const activeProjects = new Set(projects
+    .filter((project) => project.members.some((member) => changedCppPaths.includes(member)))
+    .map((project) => project.projectPath));
+  const queue = [...activeProjects];
+  while (queue.length > 0) {
+    const project = projectByPath.get(queue.shift());
+    for (const reference of project?.references ?? []) {
+      if (projectByPath.has(reference) && !activeProjects.has(reference)) {
+        activeProjects.add(reference);
+        queue.push(reference);
+      }
+    }
+  }
+
+  const projectForFile = new Map();
+  for (const project of projects) {
+    if (activeProjects.size > 0 && !activeProjects.has(project.projectPath)) continue;
+    for (const member of project.members) projectForFile.set(member, project.projectPath);
+  }
+  let candidates = [...projectForFile.keys()].filter((filepath) => isCppSourceFile(filepath) && targetEntries.has(filepath));
+  if (candidates.length === 0 && changedCppPaths.length > 0) {
+    const roots = new Set(changedCppPaths.map((filepath) => filepath.split("/", 1)[0]));
+    candidates = [...targetEntries.keys()].filter((filepath) =>
+      isCppSourceFile(filepath) && roots.has(filepath.split("/", 1)[0]));
+  }
+  candidates.sort((left, right) => left.localeCompare(right));
+
+  const maxFiles = Math.max(1, Math.min(Number(input.maxIndexedFiles ?? 10_000), 10_000));
+  const maxBytes = Math.max(1_000_000, Math.min(Number(input.maxIndexedBytes ?? 268_435_456), 268_435_456));
+  const maxFileBytes = Math.max(1_024, Math.min(Number(input.maxSourceFileBytes ?? 1_000_000), 1_000_000));
+  let selectedBytes = 0;
+  const selected = [];
+  for (const filepath of candidates) {
+    const size = targetEntries.get(filepath)?.size;
+    if (size === null || size === undefined || size > maxFileBytes || selectedBytes + size > maxBytes) continue;
+    selected.push(filepath);
+    selectedBytes += size;
+    if (selected.length >= maxFiles) break;
+  }
+
+  const selectedFiles = await readSelectedNativeFiles(input, dir, targetEntries, selected, maxFileBytes);
+  const parsedTarget = [];
+  for (const file of selectedFiles) {
+    parsedTarget.push(await parseCppFile(file.filepath, file.content, projectForFile.get(file.filepath) ?? null));
+  }
+  const target = resolveCppCalls(parsedTarget);
+  const parsedBefore = [];
+  for (const file of comparison.files) {
+    const beforePath = file.previousPath ?? file.path;
+    if (!isCppSourceFile(beforePath) || file.beforeContent === null) continue;
+    parsedBefore.push(await parseCppFile(beforePath, file.beforeContent, projectForFile.get(file.path) ?? null));
+  }
+
+  return {
+    parserVersion: "tree-sitter-cpp-0.23.4/index-v1",
+    targetSymbols: target.symbols,
+    targetEdges: target.edges,
+    beforeChangedSymbols: parsedBefore.flatMap((file) => file.symbols),
+    diagnostics: target.diagnostics,
+    ambiguousCallCount: target.ambiguousCallCount,
+    indexedFileCount: selected.length,
+    indexedBytes: selectedBytes,
+    truncated: selected.length < candidates.length,
+    projectPaths: [...activeProjects].sort(),
+  };
+}
+
+async function prepareNative(input) {
+  const dir = validateRepositoryDirectory(input.repositoryPath);
+  const comparison = await compareNative(input);
+  const cppIndex = await buildCppIndexNative(input, dir, comparison);
+  return { comparison, cppIndex };
+}
+
+async function listCommitsNative(input) {
+  const dir = validateRepositoryDirectory(input.repositoryPath);
+  const limit = Math.max(1, Math.min(Number(input.limit ?? 50), 100));
+  const skip = Math.max(0, Number(input.skip ?? 0));
+  const args = ["log", `--max-count=${limit}`, `--skip=${skip}`, "--date=iso-strict", "--format=%H%x1f%P%x1f%aI%x1f%s%x1e"];
+  if (input.query) args.splice(1, 0, "--regexp-ignore-case", `--grep=${String(input.query).slice(0, 200)}`);
+  args.push(input.revision || "HEAD");
+  const result = await runGit(input, dir, args, { errorCode: "GIT_REVISION_NOT_FOUND", maxOutputBytes: 2_000_000 });
+  return result.stdout.toString("utf8").split("\x1e").map((record) => record.trim()).filter(Boolean).map((record) => {
+    const [sha, parents, authoredAt, message] = record.split("\x1f");
+    return { sha, parentShas: parents ? parents.split(" ").filter(Boolean) : [], authoredAt, message };
+  });
+}
+
+async function readEvidenceNative(input) {
+  const dir = validateRepositoryDirectory(input.repositoryPath);
+  const revisionSha = await resolveRevisionNative(input, dir, input.revision);
+  const filepath = normalizeRequestedTreePath(input.filePath);
+  const entries = await listTreeNative(input, dir, revisionSha);
+  const entry = entries.get(filepath);
+  if (!entry) throw new WorkerError("GIT_OBJECT_UNREADABLE", "The evidence file does not exist in the selected revision.", "native");
+  const maxBytes = Math.max(1_024, Math.min(Number(input.maxTextFileBytes ?? 1_000_000), 2_000_000));
+  const blobs = await readNativeBlobs(input, dir, [[entry.oid, maxBytes]]);
+  const content = nativeText(blobs, entry.oid, maxBytes);
+  if (content === null) throw new WorkerError("GIT_OBJECT_UNREADABLE", "The evidence file is binary or exceeds the text limit.", "native");
+  return createEvidenceSnippet(revisionSha, filepath, entry.oid, content, input.startLine, input.endLine);
+}
+
 async function inspectRepositoryNative(input) {
   const dir = validateRepositoryDirectory(input.repositoryPath);
   const bareResult = await runGit(
@@ -603,6 +797,20 @@ async function inspectRepositoryIsomorphic(input) {
   };
 }
 
+async function readEvidenceIsomorphic(input) {
+  const dir = validateRepositoryDirectory(input.repositoryPath);
+  const gitdir = resolveGitdir(dir);
+  const revisionSha = await resolveRevisionIsomorphic(dir, gitdir, input.revision);
+  const filepath = normalizeRequestedTreePath(input.filePath);
+  const entries = await listTreeIsomorphic(dir, gitdir, revisionSha);
+  const entry = entries.get(filepath);
+  if (!entry) throw new WorkerError("GIT_OBJECT_UNREADABLE", "The evidence file does not exist in the selected revision.", "isomorphic");
+  const maxBytes = Math.max(1_024, Math.min(Number(input.maxTextFileBytes ?? 1_000_000), 2_000_000));
+  const content = await readTextIsomorphic(dir, gitdir, revisionSha, filepath, maxBytes);
+  if (content === null) throw new WorkerError("GIT_OBJECT_UNREADABLE", "The evidence file is binary or exceeds the text limit.", "isomorphic");
+  return createEvidenceSnippet(revisionSha, filepath, entry.oid, content, input.startLine, input.endLine);
+}
+
 function normalizeIsomorphicError(error) {
   if (error instanceof WorkerError) return error;
   const message = error instanceof Error ? error.message : String(error);
@@ -646,6 +854,35 @@ export async function inspectRepository(input) {
   return executeWithBackend(input, inspectRepositoryNative, inspectRepositoryIsomorphic);
 }
 
+export async function prepare(input) {
+  return executeWithBackend(input, prepareNative, async (fallbackInput) => ({
+    comparison: await compareIsomorphic(fallbackInput),
+    cppIndex: {
+      parserVersion: "fallback-none",
+      targetSymbols: [], targetEdges: [], beforeChangedSymbols: [], diagnostics: ["C++ project indexing requires native Git."],
+      ambiguousCallCount: 0, indexedFileCount: 0, indexedBytes: 0, truncated: true, projectPaths: [],
+    },
+  }));
+}
+
+export async function listCommits(input) {
+  return executeWithBackend(input, listCommitsNative, async (fallbackInput) => {
+    const dir = validateRepositoryDirectory(fallbackInput.repositoryPath);
+    const gitdir = resolveGitdir(dir);
+    const values = await git.log({ fs, dir, gitdir, ref: fallbackInput.revision || "HEAD", depth: Math.max(1, Math.min(Number(fallbackInput.limit ?? 50), 100)) });
+    return values.map((item) => ({
+      sha: item.oid,
+      parentShas: item.commit.parent,
+      authoredAt: new Date(item.commit.author.timestamp * 1000).toISOString(),
+      message: item.commit.message.trim().split(/\r?\n/, 1)[0] ?? "",
+    }));
+  });
+}
+
+export async function readEvidence(input) {
+  return executeWithBackend(input, readEvidenceNative, readEvidenceIsomorphic);
+}
+
 function serializeError(error) {
   const normalized = error instanceof WorkerError
     ? error
@@ -664,7 +901,13 @@ async function main() {
       ? await compare(input)
       : input.command === "inspect"
         ? await inspectRepository(input)
-        : (() => { throw new WorkerError("GIT_WORKER_FAILED", "Unsupported command"); })();
+        : input.command === "prepare"
+          ? await prepare(input)
+          : input.command === "commits"
+            ? await listCommits(input)
+            : input.command === "evidence"
+              ? await readEvidence(input)
+            : (() => { throw new WorkerError("GIT_WORKER_FAILED", "Unsupported command"); })();
     process.stdout.write(JSON.stringify(result));
   } catch (error) {
     process.stderr.write(serializeError(error));

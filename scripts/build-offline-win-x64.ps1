@@ -1,5 +1,5 @@
 param(
-    [string]$Version = '0.1.0-offline.6',
+    [string]$Version = '0.1.0-offline.9',
     [string]$NodeVersion = '24.12.0',
     [switch]$SkipTests
 )
@@ -37,11 +37,11 @@ if (Test-Path -LiteralPath $stageRoot) { Remove-Item -LiteralPath $stageRoot -Re
 if (Test-Path -LiteralPath $buildRoot) { Remove-Item -LiteralPath $buildRoot -Recurse -Force }
 New-Item -ItemType Directory -Path $stageRoot, $releaseRoot, $cacheRoot, $webRoot, $workerRoot -Force | Out-Null
 
-foreach ($name in @('package.json', 'package-lock.json', 'index.html', 'tsconfig.json', 'tsconfig.app.json', 'tsconfig.node.json', 'vite.config.ts')) {
+foreach ($name in @('package.json', 'package-lock.json', 'index.html', 'tsconfig.json', 'tsconfig.app.json', 'tsconfig.node.json', 'vite.config.mjs', 'build.mjs')) {
     Copy-Item -LiteralPath (Join-Path $sourceWebRoot $name) -Destination $webRoot
 }
 Copy-Item -LiteralPath (Join-Path $sourceWebRoot 'src') -Destination $webRoot -Recurse
-foreach ($name in @('package.json', 'package-lock.json', 'index.mjs')) {
+foreach ($name in @('package.json', 'package-lock.json', 'index.mjs', 'cpp-indexer.mjs')) {
     Copy-Item -LiteralPath (Join-Path $sourceWorkerRoot $name) -Destination $workerRoot
 }
 $workerTestRoot = Join-Path $workerRoot 'test'
@@ -93,11 +93,9 @@ Assert-LastExitCode 'git worker audit'
 
 & $targetNode $targetNpmCli ci --prefix $webRoot
 Assert-LastExitCode 'web npm ci'
-& $targetNode (Join-Path $webRoot 'node_modules\typescript\bin\tsc') -b (Join-Path $webRoot 'tsconfig.json')
-Assert-LastExitCode 'web TypeScript build'
 Push-Location $webRoot
 try {
-    & $targetNode (Join-Path $webRoot 'node_modules\vite\bin\vite.js') build
+    & $targetNode $targetNpmCli run build
 }
 finally {
     Pop-Location
@@ -107,6 +105,16 @@ Assert-LastExitCode 'web build'
 Assert-LastExitCode 'web audit'
 & $targetNode (Join-Path $projectRoot 'scripts\check-npm-licenses.mjs') (Join-Path $webRoot 'node_modules') (Join-Path $workerRoot 'node_modules')
 Assert-LastExitCode 'npm license policy check'
+
+foreach ($nativePrebuildRoot in @(
+    (Join-Path $workerRoot 'node_modules\tree-sitter-cpp\prebuilds'),
+    (Join-Path $workerRoot 'node_modules\tree-sitter-c\prebuilds')
+)) {
+    Assert-ChildPath (Join-Path $workerRoot 'node_modules') $nativePrebuildRoot
+    if (Test-Path -LiteralPath $nativePrebuildRoot) {
+        Remove-Item -LiteralPath $nativePrebuildRoot -Recurse -Force
+    }
+}
 
 dotnet publish $apiProject -c Release -r win-x64 --self-contained true -o $stageRoot
 Assert-LastExitCode 'win-x64 self-contained publish'
@@ -120,6 +128,7 @@ Copy-Item -Path (Join-Path $webRoot 'dist\*') -Destination $wwwroot -Recurse -Fo
 $packagedWorker = Join-Path $stageRoot 'tools\git-worker'
 New-Item -ItemType Directory -Path $packagedWorker -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $workerRoot 'index.mjs') -Destination $packagedWorker
+Copy-Item -LiteralPath (Join-Path $workerRoot 'cpp-indexer.mjs') -Destination $packagedWorker
 Copy-Item -LiteralPath (Join-Path $workerRoot 'package.json') -Destination $packagedWorker
 Copy-Item -LiteralPath (Join-Path $workerRoot 'package-lock.json') -Destination $packagedWorker
 Copy-Item -LiteralPath (Join-Path $workerRoot 'node_modules') -Destination $packagedWorker -Recurse

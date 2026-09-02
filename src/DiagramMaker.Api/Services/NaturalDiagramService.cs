@@ -13,10 +13,11 @@ public sealed class NaturalDiagramService(
     MermaidCompiler compiler,
     IAppStore store,
     NaturalDiagramSessionCache cache,
+    DiagramPresetCatalog presets,
     IOptions<LlmOptions> options,
     IWebHostEnvironment environment)
 {
-    public const string GeneratorVersion = "natural-v2";
+    public const string GeneratorVersion = "natural-v3";
     private readonly LlmOptions _options = options.Value;
 
     public async Task<NaturalDiagramRecord> GenerateAsync(NaturalDiagramRequest request, string ownerUserId, CancellationToken cancellationToken)
@@ -27,7 +28,12 @@ public sealed class NaturalDiagramService(
         }
 
         var resolvedType = NaturalDiagramTypeResolver.Resolve(request.DiagramType, request.Prompt);
-        var normalizedRequest = request with { DiagramType = resolvedType };
+        if (!DiagramProjectionService.IsSupported(resolvedType))
+            throw new ArgumentException("DiagramType must be flowchart, sequence, class, or state.");
+        if (!presets.Contains(resolvedType, request.PresetId))
+            throw new ArgumentException($"Preset '{request.PresetId}' does not support {resolvedType}.");
+        var preset = presets.Resolve(resolvedType, request.PresetId);
+        var normalizedRequest = request with { DiagramType = resolvedType, PresetId = preset.Id };
         var cacheKey = CreateCacheKey(normalizedRequest, ownerUserId);
         if (!request.ForceRegenerate && cache.TryGet(cacheKey, out var cachedId))
         {
@@ -47,9 +53,16 @@ public sealed class NaturalDiagramService(
 
             DiagramIr? ir = null;
             if (llm.IsEnabled)
-                ir = await llm.GenerateNaturalDiagramAsync(normalizedRequest.Prompt, resolvedType, normalizedRequest.EnableThinking, cancellationToken);
+                ir = await llm.GenerateNaturalDiagramAsync(
+                    normalizedRequest.Prompt,
+                    resolvedType,
+                    normalizedRequest.EnableThinking,
+                    preset,
+                    normalizedRequest.Style,
+                    cancellationToken);
             if (ir is null && _options.AllowDevelopmentStub && environment.IsDevelopment()) ir = CreateDeterministicDiagram(normalizedRequest);
             if (ir is null) throw new InvalidOperationException("The internal LLM is unavailable and no external fallback is permitted.");
+            ir = ApplyPreset(ir, preset, normalizedRequest.Style);
 
             NaturalDiagramRecord? parent = null;
             if (normalizedRequest.ParentDiagramId is { } parentId)
@@ -79,8 +92,37 @@ public sealed class NaturalDiagramService(
     {
         var normalizedPrompt = string.Join(' ', request.Prompt.Normalize(NormalizationForm.FormKC)
             .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-        var value = $"{ownerUserId}\n{normalizedPrompt}\n{request.DiagramType}\n{request.EnableThinking}\n{request.ParentDiagramId}\n{_options.Model}\n{GeneratorVersion}";
+        var value = $"{ownerUserId}\n{normalizedPrompt}\n{request.DiagramType}\n{request.PresetId}\n{request.Style?.Direction}\n{request.Style?.DetailLevel}\n{request.Style?.CallerDepth}\n{request.Style?.CalleeDepth}\n{request.Style?.RelationDepth}\n{request.EnableThinking}\n{request.ParentDiagramId}\n{_options.Model}\n{GeneratorVersion}";
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+    }
+
+    private static DiagramIr ApplyPreset(DiagramIr ir, DiagramPreset preset, DiagramStyleOverrides? style)
+    {
+        var direction = style?.Direction?.Equals("TB", StringComparison.OrdinalIgnoreCase) == true
+            ? "TB"
+            : style?.Direction?.Equals("LR", StringComparison.OrdinalIgnoreCase) == true
+                ? "LR"
+                : preset.Direction;
+        var detail = style?.DetailLevel?.ToLowerInvariant() ?? preset.DetailLevel;
+        var maximumNodes = detail switch
+        {
+            "compact" => Math.Min(preset.MaximumNodes, 20),
+            "detailed" => Math.Max(preset.MaximumNodes, 40),
+            _ => preset.MaximumNodes
+        };
+        var maximumEdges = detail switch
+        {
+            "compact" => Math.Min(preset.MaximumEdges, 30),
+            "detailed" => Math.Max(preset.MaximumEdges, 60),
+            _ => preset.MaximumEdges
+        };
+        var nodes = ir.Nodes.Take(maximumNodes).ToArray();
+        var nodeIds = nodes.Select(static node => node.Id).ToHashSet(StringComparer.Ordinal);
+        var edges = ir.Edges
+            .Where(edge => nodeIds.Contains(edge.SourceId) && nodeIds.Contains(edge.TargetId))
+            .Take(maximumEdges)
+            .ToArray();
+        return ir with { Direction = direction, Nodes = nodes, Edges = edges };
     }
 
     private static DiagramIr CreateDeterministicDiagram(NaturalDiagramRequest request)

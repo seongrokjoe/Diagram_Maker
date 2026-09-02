@@ -43,4 +43,75 @@ public sealed class DiagramProjectionServiceTests
         Assert.False(availability.Available);
         Assert.Contains("상태 전이", availability.Reason, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Build_LargeImpactScope_NeverCreatesEdgesToTrimmedNodes()
+    {
+        var repositoryId = Guid.NewGuid();
+        var identities = Enumerable.Range(0, 100)
+            .Select(index => new SymbolIdentity($"n{index:D3}", repositoryId, "csharp", "method", $"method:N.C.M{index}/0"))
+            .ToArray();
+        var versions = identities.Select((identity, index) => new SymbolVersion(
+            $"v{index:D3}", identity.Id, new string('b', 40), $"N.C.M{index}", $"void M{index}()", "C.cs", index + 1, index + 1, $"h{index}"))
+            .ToArray();
+        var edges = Enumerable.Range(0, 99).Select(index => new GraphEdge(
+            $"e{index:D3}", identities[index].Id, identities[index + 1].Id, "calls", "calls", Confidence.Exact, []))
+            .ToArray();
+        var changes = identities.Select((identity, index) => new SymbolChange(
+            $"c{index:D3}", SymbolChangeKind.ModifyBody, versions[index].Id, versions[index].Id, Confidence.Exact, []))
+            .ToArray();
+        var graph = new VersionedGraph(identities, versions, edges, [], changes);
+        var comparison = new GitComparison(new string('a', 40), new string('b', 40), []);
+
+        var result = new DiagramProjectionService().Build("large", graph, comparison, ["flowchart"], 3, 2, false);
+        var diagram = Assert.Single(result.Artifacts).Ir;
+        var nodeIds = diagram.Nodes.Select(static node => node.Id).ToHashSet(StringComparer.Ordinal);
+
+        Assert.Equal(80, diagram.Nodes.Count);
+        Assert.All(diagram.Edges, edge =>
+        {
+            Assert.Contains(edge.SourceId, nodeIds);
+            Assert.Contains(edge.TargetId, nodeIds);
+        });
+        _ = new MermaidCompiler(new DiagramValidator()).Compile(diagram);
+    }
+
+    [Fact]
+    public void Build_SelectedChangeAndPreset_ExcludeOtherChangedRootsAndApplyDirection()
+    {
+        var repositoryId = Guid.NewGuid();
+        var identities = new[]
+        {
+            new SymbolIdentity("a", repositoryId, "cpp", "function", "A"),
+            new SymbolIdentity("b", repositoryId, "cpp", "function", "B")
+        };
+        var versions = new[]
+        {
+            new SymbolVersion("va", "a", new string('b', 40), "A", "void A()", "A.cpp", 1, 2, "ha"),
+            new SymbolVersion("vb", "b", new string('b', 40), "B", "void B()", "B.cpp", 1, 2, "hb")
+        };
+        var graph = new VersionedGraph(
+            identities,
+            versions,
+            [new GraphEdge("edge", "a", "b", "calls", "B", Confidence.Exact, [])],
+            [],
+            [
+                new SymbolChange("ca", SymbolChangeKind.ModifyBody, "va", "va", Confidence.Exact, []),
+                new SymbolChange("cb", SymbolChangeKind.ModifyBody, "vb", "vb", Confidence.Exact, [])
+            ]);
+        var comparison = new GitComparison(new string('a', 40), new string('b', 40), []);
+        var preset = new DiagramPresetCatalog().Resolve("flowchart", "flow-vertical-overview");
+
+        var result = new DiagramProjectionService().Build(
+            "sample", graph, comparison, ["flowchart"], 0, 0, false,
+            new HashSet<string>(["ca"], StringComparer.Ordinal), preset,
+            new DiagramStyleOverrides(CallerDepth: 0, CalleeDepth: 0));
+        var diagram = Assert.Single(result.Artifacts).Ir;
+
+        Assert.Equal("TB", diagram.Direction);
+        Assert.Single(diagram.Nodes);
+        Assert.Equal("A", diagram.Nodes[0].Label);
+        Assert.Empty(diagram.Edges);
+        _ = new MermaidCompiler(new DiagramValidator()).Compile(diagram);
+    }
 }

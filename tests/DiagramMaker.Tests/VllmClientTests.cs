@@ -250,7 +250,8 @@ public sealed class VllmClientTests
         var llm = CreateInternalClient(options, transport);
 
         var diagram = await llm.GenerateNaturalDiagramAsync(
-            "synthetic request", "flowchart", enableThinking: true, CancellationToken.None);
+            "synthetic request", "flowchart", enableThinking: true,
+            new DiagramPresetCatalog().Resolve("flowchart", "balanced"), null, CancellationToken.None);
 
         Assert.NotNull(diagram);
         using var payload = JsonDocument.Parse(Assert.Single(handler.Requests).Body);
@@ -272,7 +273,8 @@ public sealed class VllmClientTests
         var llm = CreateInternalClient(options, transport);
 
         var error = await Assert.ThrowsAsync<LlmClientException>(() => llm.GenerateNaturalDiagramAsync(
-            "synthetic request", "flowchart", enableThinking: false, CancellationToken.None));
+            "synthetic request", "flowchart", enableThinking: false,
+            new DiagramPresetCatalog().Resolve("flowchart", "balanced"), null, CancellationToken.None));
 
         Assert.Equal("LLM_SCHEMA_INVALID", error.Code);
         Assert.False(error.RepairAttempted);

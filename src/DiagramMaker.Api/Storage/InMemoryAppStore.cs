@@ -7,9 +7,11 @@ public sealed class InMemoryAppStore : IAppStore
 {
     private readonly ConcurrentDictionary<Guid, RepositoryDefinition> _repositories = new();
     private readonly ConcurrentDictionary<Guid, AnalysisJob> _analyses = new();
+    private readonly ConcurrentDictionary<Guid, AnalysisPlan> _analysisPlans = new();
     private readonly ConcurrentDictionary<Guid, NaturalDiagramRecord> _diagrams = new();
     private readonly ConcurrentQueue<AuditEvent> _audit = new();
     private readonly SemaphoreSlim _leaseLock = new(1, 1);
+    private readonly SemaphoreSlim _planLeaseLock = new(1, 1);
 
     public Task InitializeAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
@@ -75,6 +77,61 @@ public sealed class InMemoryAppStore : IAppStore
         }
     }
 
+    public Task SaveAnalysisPlanAsync(AnalysisPlan plan, CancellationToken cancellationToken)
+    {
+        _analysisPlans[plan.Id] = plan with { UpdatedAt = DateTimeOffset.UtcNow };
+        return Task.CompletedTask;
+    }
+
+    public Task<AnalysisPlan?> GetAnalysisPlanAsync(Guid id, CancellationToken cancellationToken)
+    {
+        _analysisPlans.TryGetValue(id, out var plan);
+        return Task.FromResult(plan);
+    }
+
+    public Task<IReadOnlyList<AnalysisPlan>> ListAnalysisPlansAsync(string ownerUserId, int limit, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<AnalysisPlan>>(_analysisPlans.Values
+            .Where(plan => plan.OwnerUserId.Equals(ownerUserId, StringComparison.Ordinal) && plan.ExpiresAt > DateTimeOffset.UtcNow)
+            .OrderByDescending(static plan => plan.CreatedAt)
+            .Take(limit)
+            .ToArray());
+
+    public async Task<AnalysisPlan?> TryLeaseAnalysisPlanAsync(TimeSpan leaseDuration, CancellationToken cancellationToken)
+    {
+        await _planLeaseLock.WaitAsync(cancellationToken);
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            var plan = _analysisPlans.Values
+                .Where(candidate => candidate.ExpiresAt > now &&
+                    (candidate.State == AnalysisPlanState.Queued ||
+                     candidate.LeaseUntil < now && candidate.State is AnalysisPlanState.Indexing or AnalysisPlanState.Grouping))
+                .OrderBy(static candidate => candidate.CreatedAt)
+                .FirstOrDefault();
+            if (plan is null) return null;
+            var leased = plan with
+            {
+                State = AnalysisPlanState.Indexing,
+                Progress = 5,
+                StageMessage = "Resolving immutable revisions",
+                LeaseUntil = now.Add(leaseDuration),
+                UpdatedAt = now
+            };
+            _analysisPlans[leased.Id] = leased;
+            return leased;
+        }
+        finally
+        {
+            _planLeaseLock.Release();
+        }
+    }
+
+    public Task<IReadOnlyList<AnalysisJob>> ListAllAnalysesAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<AnalysisJob>>(_analyses.Values.ToArray());
+
+    public Task<IReadOnlyList<AnalysisPlan>> ListAllAnalysisPlansAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<AnalysisPlan>>(_analysisPlans.Values.ToArray());
+
     public Task SaveNaturalDiagramAsync(NaturalDiagramRecord record, CancellationToken cancellationToken)
     {
         _diagrams[record.Id] = record;
@@ -112,6 +169,7 @@ public sealed class InMemoryAppStore : IAppStore
     public ValueTask DisposeAsync()
     {
         _leaseLock.Dispose();
+        _planLeaseLock.Dispose();
         return ValueTask.CompletedTask;
     }
 }

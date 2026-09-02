@@ -12,6 +12,16 @@ public interface IGitWorkerClient
 {
     Task<GitRepositoryInspection> InspectAsync(string localPath, CancellationToken cancellationToken);
     Task<GitComparison> CompareAsync(RepositoryDefinition repository, AnalyzeRequest request, CancellationToken cancellationToken);
+    Task<IReadOnlyList<GitCommitSummary>> ListCommitsAsync(RepositoryDefinition repository, string? query, int skip, int limit, CancellationToken cancellationToken);
+    Task<GitCommitSummary> GetCommitAsync(RepositoryDefinition repository, string revision, CancellationToken cancellationToken);
+    Task<PreparedRepositoryAnalysis> PrepareAsync(RepositoryDefinition repository, string baseRevision, string targetRevision, CancellationToken cancellationToken);
+    Task<EvidenceSnippet> ReadEvidenceAsync(
+        RepositoryDefinition repository,
+        string revisionSha,
+        string filePath,
+        int startLine,
+        int endLine,
+        CancellationToken cancellationToken);
 }
 
 public sealed class GitWorkerException(
@@ -94,7 +104,95 @@ public sealed class GitWorkerClient : IGitWorkerClient
         }, cancellationToken);
     }
 
-    private async Task<T> RunWorkerAsync<T>(object payloadValue, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<GitCommitSummary>> ListCommitsAsync(
+        RepositoryDefinition repository,
+        string? query,
+        int skip,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var repositoryPath = LocalRepositoryPath.NormalizeAndValidate(repository.LocalPath);
+        return await RunWorkerAsync<GitCommitSummary[]>(new
+        {
+            command = "commits",
+            repositoryPath,
+            backend = _options.Backend,
+            gitExecutable = _options.GitExecutable,
+            query,
+            skip,
+            limit
+        }, cancellationToken);
+    }
+
+    public async Task<GitCommitSummary> GetCommitAsync(
+        RepositoryDefinition repository,
+        string revision,
+        CancellationToken cancellationToken)
+    {
+        var repositoryPath = LocalRepositoryPath.NormalizeAndValidate(repository.LocalPath);
+        var commits = await RunWorkerAsync<GitCommitSummary[]>(new
+        {
+            command = "commits",
+            repositoryPath,
+            backend = _options.Backend,
+            gitExecutable = _options.GitExecutable,
+            revision,
+            limit = 1,
+            skip = 0
+        }, cancellationToken);
+        return commits.FirstOrDefault()
+               ?? throw new GitWorkerException("GIT_REVISION_NOT_FOUND", $"Revision was not found: {revision}");
+    }
+
+    public async Task<PreparedRepositoryAnalysis> PrepareAsync(
+        RepositoryDefinition repository,
+        string baseRevision,
+        string targetRevision,
+        CancellationToken cancellationToken)
+    {
+        var repositoryPath = LocalRepositoryPath.NormalizeAndValidate(repository.LocalPath);
+        return await RunWorkerAsync<PreparedRepositoryAnalysis>(new
+        {
+            command = "prepare",
+            repositoryPath,
+            backend = _options.Backend,
+            gitExecutable = _options.GitExecutable,
+            baseRevision,
+            targetRevision,
+            maxChangedFiles = _options.MaxChangedFiles,
+            maxTextFileBytes = _options.MaxTextFileBytes,
+            maxContextFiles = _options.MaxContextFiles,
+            maxContextFileBytes = _options.MaxContextFileBytes,
+            maxIndexedFiles = _options.MaxIndexedFiles,
+            maxIndexedBytes = _options.MaxIndexedBytes,
+            maxSourceFileBytes = _options.MaxIndexedFileBytes
+        }, cancellationToken, _options.IndexTimeoutSeconds);
+    }
+
+    public async Task<EvidenceSnippet> ReadEvidenceAsync(
+        RepositoryDefinition repository,
+        string revisionSha,
+        string filePath,
+        int startLine,
+        int endLine,
+        CancellationToken cancellationToken)
+    {
+        var repositoryPath = LocalRepositoryPath.NormalizeAndValidate(repository.LocalPath);
+        return await RunWorkerAsync<EvidenceSnippet>(new
+        {
+            command = "evidence",
+            repositoryPath,
+            backend = _options.Backend,
+            gitExecutable = _options.GitExecutable,
+            revision = revisionSha,
+            filePath,
+            startLine,
+            endLine,
+            maxTextFileBytes = _options.MaxTextFileBytes
+        }, cancellationToken);
+    }
+
+    private async Task<T> RunWorkerAsync<T>(object payloadValue, CancellationToken cancellationToken, int? timeoutSeconds = null)
     {
         if (!File.Exists(_scriptPath))
         {
@@ -102,7 +200,8 @@ public sealed class GitWorkerClient : IGitWorkerClient
         }
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(_options.TimeoutSeconds));
+        var effectiveTimeoutSeconds = timeoutSeconds ?? _options.TimeoutSeconds;
+        timeout.CancelAfter(TimeSpan.FromSeconds(effectiveTimeoutSeconds));
         var startInfo = new ProcessStartInfo
         {
             FileName = _options.NodeExecutable,
@@ -148,7 +247,7 @@ public sealed class GitWorkerClient : IGitWorkerClient
             TryKillProcessTree(process);
             throw new GitWorkerException(
                 "GIT_WORKER_TIMEOUT",
-                $"Git worker exceeded the {_options.TimeoutSeconds} second timeout.");
+                $"Git worker exceeded the {effectiveTimeoutSeconds} second timeout.");
         }
         catch
         {

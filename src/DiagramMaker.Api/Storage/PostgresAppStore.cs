@@ -33,6 +33,18 @@ public sealed class PostgresAppStore : IAppStore
             );
             CREATE INDEX IF NOT EXISTS ix_analysis_jobs_queue
                 ON analysis_jobs (state, created_at);
+            CREATE TABLE IF NOT EXISTS analysis_plans (
+                id uuid PRIMARY KEY,
+                state text NOT NULL,
+                payload jsonb NOT NULL,
+                owner_user_id text NOT NULL,
+                created_at timestamptz NOT NULL,
+                updated_at timestamptz NOT NULL,
+                expires_at timestamptz NOT NULL,
+                lease_until timestamptz NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_analysis_plans_queue ON analysis_plans (state, created_at);
+            CREATE INDEX IF NOT EXISTS ix_analysis_plans_owner ON analysis_plans (owner_user_id, created_at DESC);
             CREATE TABLE IF NOT EXISTS natural_diagrams (
                 id uuid PRIMARY KEY,
                 payload jsonb NOT NULL,
@@ -157,6 +169,75 @@ public sealed class PostgresAppStore : IAppStore
         return leased;
     }
 
+    public async Task SaveAnalysisPlanAsync(AnalysisPlan plan, CancellationToken cancellationToken)
+    {
+        const string sql = """
+            INSERT INTO analysis_plans (id, state, payload, owner_user_id, created_at, updated_at, expires_at, lease_until)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (id) DO UPDATE SET state=EXCLUDED.state, payload=EXCLUDED.payload,
+                owner_user_id=EXCLUDED.owner_user_id, updated_at=EXCLUDED.updated_at,
+                expires_at=EXCLUDED.expires_at, lease_until=EXCLUDED.lease_until
+            """;
+        await using var command = _dataSource.CreateCommand(sql);
+        command.Parameters.AddWithValue(plan.Id);
+        command.Parameters.AddWithValue(plan.State.ToString());
+        command.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(plan, JsonOptions));
+        command.Parameters.AddWithValue(plan.OwnerUserId);
+        command.Parameters.AddWithValue(plan.CreatedAt);
+        command.Parameters.AddWithValue(plan.UpdatedAt);
+        command.Parameters.AddWithValue(plan.ExpiresAt);
+        command.Parameters.AddWithValue((object?)plan.LeaseUntil ?? DBNull.Value);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public Task<AnalysisPlan?> GetAnalysisPlanAsync(Guid id, CancellationToken cancellationToken) =>
+        GetByIdAsync<AnalysisPlan>("analysis_plans", "payload", id, cancellationToken);
+
+    public async Task<IReadOnlyList<AnalysisPlan>> ListAnalysisPlansAsync(string ownerUserId, int limit, CancellationToken cancellationToken)
+    {
+        const string sql = "SELECT payload::text FROM analysis_plans WHERE owner_user_id=$1 AND expires_at > now() ORDER BY created_at DESC LIMIT $2";
+        var values = new List<AnalysisPlan>();
+        await using var command = _dataSource.CreateCommand(sql);
+        command.Parameters.AddWithValue(ownerUserId);
+        command.Parameters.AddWithValue(limit);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) values.Add(Deserialize<AnalysisPlan>(reader.GetString(0)));
+        return values;
+    }
+
+    public async Task<AnalysisPlan?> TryLeaseAnalysisPlanAsync(TimeSpan leaseDuration, CancellationToken cancellationToken)
+    {
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        const string selectSql = """
+            SELECT id, payload::text FROM analysis_plans
+            WHERE expires_at > now() AND (state='Queued' OR (lease_until < now() AND state IN ('Indexing','Grouping')))
+            ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1
+            """;
+        await using var select = new NpgsqlCommand(selectSql, connection, transaction);
+        await using var reader = await select.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return null;
+        }
+        var id = reader.GetGuid(0);
+        var plan = Deserialize<AnalysisPlan>(reader.GetString(1));
+        await reader.CloseAsync();
+        var now = DateTimeOffset.UtcNow;
+        var leased = plan with { State = AnalysisPlanState.Indexing, Progress = 5, StageMessage = "Resolving immutable revisions", LeaseUntil = now.Add(leaseDuration), UpdatedAt = now };
+        const string updateSql = "UPDATE analysis_plans SET state=$2, payload=$3, updated_at=$4, lease_until=$5 WHERE id=$1";
+        await using var update = new NpgsqlCommand(updateSql, connection, transaction);
+        update.Parameters.AddWithValue(id);
+        update.Parameters.AddWithValue(leased.State.ToString());
+        update.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(leased, JsonOptions));
+        update.Parameters.AddWithValue(now);
+        update.Parameters.AddWithValue(leased.LeaseUntil!.Value);
+        await update.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return leased;
+    }
+
     public async Task SaveNaturalDiagramAsync(NaturalDiagramRecord record, CancellationToken cancellationToken)
     {
         const string sql = """
@@ -220,6 +301,7 @@ public sealed class PostgresAppStore : IAppStore
         {
             "repositories" when column == "definition" => true,
             "analysis_jobs" when column == "payload" => true,
+            "analysis_plans" when column == "payload" => true,
             "natural_diagrams" when column == "payload" => true,
             _ => false
         };

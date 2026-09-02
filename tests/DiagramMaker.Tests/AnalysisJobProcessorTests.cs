@@ -40,6 +40,7 @@ public sealed class AnalysisJobProcessorTests
             new DisabledLlmClient(),
             new MermaidCompiler(new DiagramValidator()),
             new DiagramProjectionService(),
+            new DiagramPresetCatalog(),
             NullLogger<AnalysisJobProcessor>.Instance);
 
         await processor.ProcessAsync(job, CancellationToken.None);
@@ -65,6 +66,23 @@ public sealed class AnalysisJobProcessorTests
                 "GIT_PACK_UNREADABLE",
                 "Git worker failed (isomorphic): Could not read packfile at an internal path.",
                 "isomorphic");
+
+        public Task<IReadOnlyList<GitCommitSummary>> ListCommitsAsync(
+            RepositoryDefinition repository, string? query, int skip, int limit, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<GitCommitSummary> GetCommitAsync(
+            RepositoryDefinition repository, string revision, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<PreparedRepositoryAnalysis> PrepareAsync(
+            RepositoryDefinition repository, string baseRevision, string targetRevision, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<EvidenceSnippet> ReadEvidenceAsync(
+            RepositoryDefinition repository, string revisionSha, string filePath,
+            int startLine, int endLine, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class DisabledLlmClient : IInternalLlmClient
@@ -75,9 +93,19 @@ public sealed class AnalysisJobProcessorTests
             string prompt,
             string requestedType,
             bool enableThinking,
+            DiagramPreset preset,
+            DiagramStyleOverrides? style,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<ReviewNarrative?> GenerateReviewAsync(
+            VersionedGraph graph,
+            IReadOnlyList<ChangedFile> files,
+            bool enableThinking,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<AnalysisGroupDraft>?> RegroupChangesAsync(
+            IReadOnlyList<ChangeCandidate> candidates,
+            IReadOnlyList<AnalysisGroupDraft> staticGroups,
             VersionedGraph graph,
             IReadOnlyList<ChangedFile> files,
             bool enableThinking,

@@ -58,6 +58,7 @@ builder.Services.AddSingleton<SecretMasker>();
 builder.Services.AddSingleton<DiagramValidator>();
 builder.Services.AddSingleton<MermaidCompiler>();
 builder.Services.AddSingleton<DiagramProjectionService>();
+builder.Services.AddSingleton<DiagramPresetCatalog>();
 builder.Services.AddSingleton<SourceGraphAnalyzer>();
 builder.Services.AddSingleton<NaturalDiagramSessionCache>();
 builder.Services.AddScoped<MermaidDslRevisionService>();
@@ -69,7 +70,9 @@ builder.Services.AddSingleton<IInternalLlmClient, InternalLlmClient>();
 builder.Services.AddSingleton<IGitWorkerClient, GitWorkerClient>();
 builder.Services.AddScoped<NaturalDiagramService>();
 builder.Services.AddScoped<AnalysisJobProcessor>();
+builder.Services.AddScoped<AnalysisPlanProcessor>();
 builder.Services.AddHostedService<AnalysisWorker>();
+builder.Services.AddHostedService<AnalysisPlanWorker>();
 
 var app = builder.Build();
 app.UseExceptionHandler();
@@ -215,6 +218,189 @@ api.MapPost("/repositories", async (
         repository.AllowedRoles,
         repository.CreatedAt
     });
+});
+
+api.MapGet("/repositories/{id:guid}/commits", async (
+    Guid id,
+    string? query,
+    int? skip,
+    int? limit,
+    HttpContext context,
+    IAppStore store,
+    IGitWorkerClient gitWorker,
+    CancellationToken cancellationToken) =>
+{
+    var repository = await store.GetRepositoryAsync(id, cancellationToken);
+    if (repository is null) return Results.NotFound();
+    if (!context.GetInternalIdentity().CanAccess(repository)) return Results.Forbid();
+    try
+    {
+        return Results.Ok(await gitWorker.ListCommitsAsync(
+            repository,
+            query,
+            Math.Clamp(skip ?? 0, 0, 10_000),
+            Math.Clamp(limit ?? 50, 1, 100),
+            cancellationToken));
+    }
+    catch (GitWorkerException exception)
+    {
+        return Results.BadRequest(new { errorCode = exception.ErrorCode, error = exception.UserMessage });
+    }
+});
+
+api.MapGet("/diagram-presets", (string? type, DiagramPresetCatalog catalog) =>
+{
+    if (!string.IsNullOrWhiteSpace(type) && !DiagramProjectionService.IsSupported(type))
+        return Results.BadRequest(new { error = "Type must be flowchart, class, sequence, or state." });
+    return Results.Ok(catalog.List(type));
+});
+
+api.MapPost("/analysis-plans", async (
+    AnalysisPlanRequest request,
+    HttpContext context,
+    IAppStore store,
+    CancellationToken cancellationToken) =>
+{
+    var repository = await store.GetRepositoryAsync(request.RepositoryId, cancellationToken);
+    if (repository is null) return Results.NotFound(new { error = "Repository is not registered." });
+    var identity = context.GetInternalIdentity();
+    if (!identity.CanAccess(repository)) return Results.Forbid();
+    if (string.IsNullOrWhiteSpace(request.TargetRevision))
+        return Results.BadRequest(new { error = "Target revision is required." });
+
+    var now = DateTimeOffset.UtcNow;
+    var normalized = request with
+    {
+        TargetRevision = request.TargetRevision.Trim(),
+        BaseRevision = string.IsNullOrWhiteSpace(request.BaseRevision) ? null : request.BaseRevision.Trim()
+    };
+    var plan = new AnalysisPlan(
+        Guid.NewGuid(), identity.UserId, normalized, AnalysisPlanState.Queued,
+        null, null, 0, "Queued", null, null, [], [], [], [], null, null, 0,
+        now, now, now.AddDays(30), null);
+    await store.SaveAnalysisPlanAsync(plan, cancellationToken);
+    await store.SaveAuditAsync(new AuditEvent(Guid.NewGuid(), identity.UserId, "analysis-plan.create", repository.Id, "allowed", now), cancellationToken);
+    return Results.Accepted($"/api/v1/analysis-plans/{plan.Id}", ToAnalysisPlanResponse(plan));
+});
+
+api.MapGet("/analysis-plans", async (int? limit, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
+{
+    var identity = context.GetInternalIdentity();
+    var plans = await store.ListAnalysisPlansAsync(identity.UserId, Math.Clamp(limit ?? 20, 1, 50), cancellationToken);
+    return Results.Ok(plans.Select(ToAnalysisPlanResponse));
+});
+
+api.MapGet("/analysis-plans/{id:guid}", async (
+    Guid id,
+    HttpContext context,
+    IAppStore store,
+    CancellationToken cancellationToken) =>
+{
+    var plan = await AuthorizedPlan(id, context, store, cancellationToken);
+    if (plan is null) return Results.NotFound();
+    if (plan.ExpiresAt <= DateTimeOffset.UtcNow) return Results.StatusCode(StatusCodes.Status410Gone);
+    return Results.Ok(ToAnalysisPlanResponse(plan));
+});
+
+api.MapGet("/analysis-plans/{id:guid}/evidence/{changeId}", async (
+    Guid id,
+    string changeId,
+    HttpContext context,
+    IAppStore store,
+    IGitWorkerClient gitWorker,
+    CancellationToken cancellationToken) =>
+{
+    var plan = await AuthorizedPlan(id, context, store, cancellationToken);
+    if (plan is null) return Results.NotFound();
+    if (plan.ExpiresAt <= DateTimeOffset.UtcNow || plan.Graph is null)
+        return Results.StatusCode(StatusCodes.Status410Gone);
+    var candidate = plan.Candidates.FirstOrDefault(item => item.Id.Equals(changeId, StringComparison.Ordinal));
+    if (candidate is null) return Results.NotFound();
+    var evidence = candidate.EvidenceIds
+        .Select(evidenceId => plan.Graph.Evidence.FirstOrDefault(item => item.Id.Equals(evidenceId, StringComparison.Ordinal)))
+        .Where(static item => item is not null)
+        .OrderByDescending(item => item!.RevisionSha == plan.TargetSha)
+        .FirstOrDefault();
+    if (evidence is null) return Results.NotFound(new { error = "No source evidence is available for this change." });
+    var repository = await store.GetRepositoryAsync(plan.Request.RepositoryId, cancellationToken);
+    if (repository is null) return Results.NotFound();
+    try
+    {
+        return Results.Ok(await gitWorker.ReadEvidenceAsync(
+            repository, evidence.RevisionSha, evidence.FilePath,
+            evidence.StartLine, evidence.EndLine, cancellationToken));
+    }
+    catch (GitWorkerException exception)
+    {
+        return Results.BadRequest(new { errorCode = exception.ErrorCode, error = exception.UserMessage });
+    }
+});
+
+api.MapPut("/analysis-plans/{id:guid}/selection", async (
+    Guid id,
+    UpdateAnalysisPlanSelectionRequest request,
+    HttpContext context,
+    IAppStore store,
+    DiagramPresetCatalog catalog,
+    CancellationToken cancellationToken) =>
+{
+    var plan = await AuthorizedPlan(id, context, store, cancellationToken);
+    if (plan is null) return Results.NotFound();
+    if (plan.State != AnalysisPlanState.Ready) return Results.Conflict(new { error = "The pre-analysis is not ready." });
+    if (plan.Revision != request.ExpectedRevision)
+        return Results.Conflict(new { errorCode = "ANALYSIS_PLAN_REVISION_CONFLICT", error = "The plan was changed in another request. Reload it and try again.", currentRevision = plan.Revision });
+    var selectionError = ValidatePlanSelections(request.Groups, plan.Candidates, catalog);
+    if (selectionError is not null) return Results.BadRequest(new { error = selectionError });
+
+    var updated = plan with
+    {
+        Selections = request.Groups.Select(group => group with
+        {
+            Id = group.Id.Trim(),
+            Title = group.Title.Trim(),
+            DiagramType = group.DiagramType.ToLowerInvariant(),
+            PresetId = group.PresetId.Trim()
+        }).ToArray(),
+        Revision = plan.Revision + 1,
+        UpdatedAt = DateTimeOffset.UtcNow
+    };
+    await store.SaveAnalysisPlanAsync(updated, cancellationToken);
+    return Results.Ok(ToAnalysisPlanResponse(updated));
+});
+
+api.MapPost("/analysis-plans/{id:guid}/generate", async (
+    Guid id,
+    GenerateAnalysisPlanRequest request,
+    HttpContext context,
+    IAppStore store,
+    CancellationToken cancellationToken) =>
+{
+    var plan = await AuthorizedPlan(id, context, store, cancellationToken);
+    if (plan is null) return Results.NotFound();
+    if (plan.State != AnalysisPlanState.Ready || plan.BaseSha is null || plan.TargetSha is null)
+        return Results.Conflict(new { error = "The pre-analysis is not ready." });
+    if (plan.Revision != request.ExpectedRevision)
+        return Results.Conflict(new { errorCode = "ANALYSIS_PLAN_REVISION_CONFLICT", error = "Reload the plan before generating diagrams.", currentRevision = plan.Revision });
+    if (plan.Selections.Count == 0)
+        return Results.BadRequest(new { error = "Select at least one change group." });
+
+    var now = DateTimeOffset.UtcNow;
+    var analyzeRequest = new AnalyzeRequest(
+        plan.Request.RepositoryId,
+        plan.BaseSha,
+        plan.TargetSha,
+        "direct",
+        plan.Selections.Select(static group => group.DiagramType).Distinct(StringComparer.Ordinal).ToArray(),
+        1,
+        1,
+        true,
+        plan.Request.EnableThinking,
+        plan.Id,
+        plan.Selections);
+    var job = new AnalysisJob(Guid.NewGuid(), analyzeRequest, AnalysisState.Queued, plan.BaseSha, plan.TargetSha, 0, "Queued", null, null, null, now, now, null);
+    await store.SaveAnalysisAsync(job, cancellationToken);
+    await store.SaveAuditAsync(new AuditEvent(Guid.NewGuid(), context.GetInternalIdentity().UserId, "analysis-plan.generate", plan.Request.RepositoryId, "allowed", now), cancellationToken);
+    return Results.Accepted($"/api/v1/analyses/{job.Id}", ToAnalysisResponse(job));
 });
 
 api.MapPost("/analyses", async (
@@ -520,6 +706,65 @@ static object ToAnalysisResponse(AnalysisJob job) => new
     job.UpdatedAt
 };
 
+static object ToAnalysisPlanResponse(AnalysisPlan plan) => new
+{
+    plan.Id,
+    plan.Request,
+    plan.State,
+    plan.BaseSha,
+    plan.TargetSha,
+    plan.Progress,
+    plan.StageMessage,
+    ChangedFiles = plan.Comparison?.Files.Select(static file => new
+    {
+        file.Path,
+        file.PreviousPath,
+        file.ChangeKind,
+        file.BeforeBlobOid,
+        file.AfterBlobOid,
+        file.Hunks
+    }),
+    plan.Candidates,
+    plan.SuggestedGroups,
+    plan.Selections,
+    plan.Warnings,
+    plan.ErrorCode,
+    plan.ErrorMessage,
+    plan.Revision,
+    plan.CreatedAt,
+    plan.UpdatedAt,
+    plan.ExpiresAt
+};
+
+static string? ValidatePlanSelections(
+    IReadOnlyList<AnalysisGroupSelection>? groups,
+    IReadOnlyList<ChangeCandidate> candidates,
+    DiagramPresetCatalog catalog)
+{
+    if (groups is null || groups.Count is < 1 or > 50) return "One to fifty groups are required.";
+    var candidateIds = candidates.Select(static candidate => candidate.Id).ToHashSet(StringComparer.Ordinal);
+    var usedChanges = new HashSet<string>(StringComparer.Ordinal);
+    var usedGroups = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var group in groups)
+    {
+        if (string.IsNullOrWhiteSpace(group.Id) || !usedGroups.Add(group.Id.Trim())) return "Every group must have a unique ID.";
+        if (string.IsNullOrWhiteSpace(group.Title) || group.Title.Trim().Length > 120) return "Group titles must contain 1-120 characters.";
+        if (group.ChangeIds is null || group.ChangeIds.Count == 0) return "Every group must contain at least one change.";
+        if (!DiagramProjectionService.IsSupported(group.DiagramType)) return $"Unsupported diagram type: {group.DiagramType}";
+        if (!catalog.Contains(group.DiagramType, group.PresetId)) return $"The preset '{group.PresetId}' does not support {group.DiagramType}.";
+        foreach (var changeId in group.ChangeIds)
+        {
+            if (!candidateIds.Contains(changeId)) return $"Unknown change ID: {changeId}";
+            if (!usedChanges.Add(changeId)) return $"Change '{changeId}' is assigned to more than one group.";
+        }
+        if (group.Overrides?.CallerDepth is < 0 or > 3 || group.Overrides?.CalleeDepth is < 0 or > 3 || group.Overrides?.RelationDepth is < 0 or > 3)
+            return "Depth overrides must be between 0 and 3.";
+        if (group.Overrides?.Direction is { } direction && direction is not ("LR" or "TB"))
+            return "Direction must be LR or TB.";
+    }
+    return null;
+}
+
 static IResult LlmFailure(LlmClientException exception) => Results.Json(new
 {
     errorCode = exception.Code,
@@ -539,6 +784,14 @@ static async Task<AnalysisJob?> AuthorizedJob(Guid id, HttpContext context, IApp
     if (job is null) return null;
     var repository = await store.GetRepositoryAsync(job.Request.RepositoryId, cancellationToken);
     return repository is not null && context.GetInternalIdentity().CanAccess(repository) ? job : null;
+}
+
+static async Task<AnalysisPlan?> AuthorizedPlan(Guid id, HttpContext context, IAppStore store, CancellationToken cancellationToken)
+{
+    var plan = await store.GetAnalysisPlanAsync(id, cancellationToken);
+    if (plan is null || !plan.OwnerUserId.Equals(context.GetInternalIdentity().UserId, StringComparison.Ordinal)) return null;
+    var repository = await store.GetRepositoryAsync(plan.Request.RepositoryId, cancellationToken);
+    return repository is not null && context.GetInternalIdentity().CanAccess(repository) ? plan : null;
 }
 
 public partial class Program;

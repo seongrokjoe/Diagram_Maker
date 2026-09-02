@@ -11,6 +11,10 @@ public interface IAppStore : IAsyncDisposable
     Task SaveAnalysisAsync(AnalysisJob job, CancellationToken cancellationToken);
     Task<AnalysisJob?> GetAnalysisAsync(Guid id, CancellationToken cancellationToken);
     Task<AnalysisJob?> TryLeaseAnalysisAsync(TimeSpan leaseDuration, CancellationToken cancellationToken);
+    Task SaveAnalysisPlanAsync(AnalysisPlan plan, CancellationToken cancellationToken);
+    Task<AnalysisPlan?> GetAnalysisPlanAsync(Guid id, CancellationToken cancellationToken);
+    Task<IReadOnlyList<AnalysisPlan>> ListAnalysisPlansAsync(string ownerUserId, int limit, CancellationToken cancellationToken);
+    Task<AnalysisPlan?> TryLeaseAnalysisPlanAsync(TimeSpan leaseDuration, CancellationToken cancellationToken);
     Task SaveNaturalDiagramAsync(NaturalDiagramRecord record, CancellationToken cancellationToken);
     Task<NaturalDiagramRecord?> GetNaturalDiagramAsync(Guid id, CancellationToken cancellationToken);
     Task<IReadOnlyList<NaturalDiagramRecord>> ListNaturalDiagramsAsync(string ownerUserId, int limit, CancellationToken cancellationToken);

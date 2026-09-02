@@ -1,94 +1,81 @@
 # AI Git Architecture Reviewer
 
-사내 Git commit과 사내 LLM만 사용하여 구조 변경을 분석하고 Mermaid 다이어그램을 생성하는 내부 웹 애플리케이션입니다. 외부 LLM fallback, CDN, telemetry, 임의 Git URL, repository build 실행을 지원하지 않습니다.
+사내 Git 커밋의 변경 심볼과 중요한 호출 관계만 선별해 Mermaid 다이어그램으로 만드는 내부용 애플리케이션입니다. 외부 LLM fallback, CDN, telemetry, 임의 Git URL, 저장소 build·hook 실행은 지원하지 않습니다.
 
-## 구현된 기능
+## 주요 기능
 
-- 자연어 요청 → 형식별 의미 계약 → 결정론적 DiagramIR 정규화 → 안전한 Mermaid 렌더링
-- 같은 자연어 요청의 세션 내 결과 재사용, 명시적 LLM 재생성, 영속 리비전 이력
-- Mermaid 지연 로딩, 제한형 DSL 편집과 검증, SVG/PNG 다운로드
-- 인증 없는 사내 vLLM 전용 Adapter, 구조화 출력 fallback, Thinking 요청 선택
-- 내 PC의 로컬 Git 절대 경로 또는 `.git` 경로를 연결해 Base/Target SHA 비교
-- 설치된 네이티브 Git 우선 처리와 `isomorphic-git` 자동 fallback
-- Add/Delete/Modify 및 동일 blob rename 식별
-- C# Roslyn syntax 분석과 C++ low-confidence fallback 분석
-- commit 독립 `SymbolIdentity`, revision별 `SymbolVersion`, blob 기반 Evidence
-- LLM 장애 시 정적 분석 결과를 유지하는 `Partial` 완료
-- 재시작 후에도 등록 목록을 유지하는 로컬 JSON 저장소와 PostgreSQL lease queue
-- reverse-proxy identity, repository role ACL, source-free audit metadata
-- React 기반 자연어 생성, Git 분석, 저장소 관리, 합성 LLM 연결 점검 화면
+- Git 변경 분석을 `커밋 선택 → 변경 심볼 선택·그룹화 → 그룹별 다이어그램`의 3단계로 수행
+- Target 커밋의 첫 번째 부모를 Base로 자동 선택하며 고급 옵션에서 직접 변경 가능
+- Visual Studio `.sln`/`.vcxproj` 범위를 따라 C++를 Tree-sitter로 인덱싱하고, C#은 Roslyn으로 분석
+- 대상이 모호한 C++ 호출은 임의 연결하지 않고 제외
+- 정적 호출 근거를 우선 사용하고, 선택 시에만 내부 LLM이 그룹 제안과 한국어 요약을 생성
+- 그룹마다 Flow, Sequence, Class, State 형식과 내장 샘플 프리셋 선택
+- 그룹 초안과 인덱스 결과를 30일간 보존하고 같은 커밋 범위에서 재사용
+- 자연어 다이어그램도 명시적 형식과 샘플 프리셋을 사용해 출력 구조를 안정화
+- Mermaid를 브라우저에서 지연 로드해 미리보기, 제한된 DSL 수정, SVG/PNG 다운로드 제공
 
-## 개인 PC에서 실행
+## 로컬 실행
 
-필수 도구는 .NET 9 SDK와 Node.js 24입니다. PowerShell에서 프로젝트 루트로 이동한 다음 아래 스크립트 하나를 실행합니다. 필요한 의존성과 변경된 프론트엔드·백엔드를 준비하고, API와 UI를 `127.0.0.1`에만 바인딩한 뒤 브라우저를 엽니다.
+필수 도구는 .NET 9 SDK와 Node.js 24입니다. 저장소 루트에서 다음을 실행하고 `http://localhost:5080`을 엽니다.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local.ps1
 ```
 
-접속 주소는 `http://localhost:5080`입니다. 종료할 때는 다음 스크립트를 사용합니다.
+종료:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\stop-local.ps1
 ```
 
-저장소 관리 화면에서 `C:\Work\Git\MyRepository` 같은 저장소 루트나 `C:\Work\Git\MyRepository\.git` 경로를 붙여넣고 **연결 테스트** 후 등록합니다. 등록 정보는 Git에서 제외되는 `data/repositories.json`에 저장되어 앱을 재시작해도 유지됩니다. 네트워크 공유 경로와 Git URL은 받지 않으며, 저장소의 build·hook·checkout을 실행하지 않습니다. Git 변경 분석은 PATH의 `git` 명령을 우선 사용하며, 실행 파일이 없을 때만 포함된 `isomorphic-git` Worker로 전환합니다.
+프론트엔드 HMR만 필요하면 `npm.cmd run dev --prefix .\web`을 사용합니다.
 
-프론트엔드를 수정하며 HMR이 필요할 때만 별도 터미널에서 `npm.cmd run dev --prefix .\web`을 실행하고 `http://localhost:5173`을 사용합니다.
+## Git 변경 분석 사용법
+
+1. **저장소 관리**에서 `C:\Work\Git\MyRepository` 같은 로컬 저장소 루트를 연결 테스트 후 등록합니다.
+2. **Git 변경 분석**에서 저장소와 Target 커밋을 선택하고 사전 분석을 시작합니다.
+3. 표시할 변경 심볼을 체크하고, 드롭다운으로 그룹을 이동하거나 여러 그룹을 병합합니다.
+4. 그룹별 다이어그램 형식과 샘플을 선택합니다. 필요할 때만 방향과 caller/callee 깊이를 덮어씁니다.
+5. 다이어그램을 생성한 뒤 그룹 탭에서 결과와 한국어 설명을 확인하고 SVG/PNG로 저장합니다.
+
+소스 본문은 초안에 저장하지 않습니다. LLM 요약이 필요하면 고정된 Base/Target SHA에서 제한된 diff를 다시 읽어 요청한 뒤 폐기합니다.
 
 ## 사내 LLM 연결
 
-실제 endpoint와 모델은 저장소가 아닌 `%LOCALAPPDATA%\DiagramMaker\llm-policy.json`에 둡니다. `packaging\windows\config\llm-policy.example.json`을 복사한 뒤 승인된 값으로 수정합니다.
+실제 endpoint와 모델은 `%LOCALAPPDATA%\DiagramMaker\llm-policy.json`에 둡니다. `packaging\windows\config\llm-policy.example.json`을 복사해 승인된 값으로 수정하세요.
 
 ```json
 {
   "Llm": {
     "Enabled": true,
-    "Endpoint": "https://llm.invalid/v1/chat/completions",
-    "AllowedOrigin": "https://llm.invalid",
+    "Endpoint": "https://llm.internal/v1/chat/completions",
+    "AllowedOrigin": "https://llm.internal",
     "Model": "approved-model",
-    "AllowDevelopmentStub": false,
-    "ThinkingOutputTokens": 60000,
-    "OutputHardLimit": 60000
+    "AllowDevelopmentStub": false
   }
 }
 ```
 
-Endpoint와 AllowedOrigin의 scheme, host, port가 정확히 일치하지 않으면 앱이 시작되지 않습니다. 현재 승인 계약은 API Key 없이 `structured_outputs.json`과 `chat_template_kwargs.enable_thinking`을 사용합니다. Redirect, cookie, 기본 자격 증명과 환경 proxy도 사용하지 않습니다.
+**사내 LLM 점검** 메뉴와 `test-llm.cmd`는 고정된 합성 데이터만 사용합니다. 자연어 생성은 낮은 temperature와 구조화 계약을 사용하고, Git 분석의 LLM 입력은 변경 후보·정적 그래프·제한된 diff로 한정합니다.
 
-웹의 **사내 LLM 점검** 탭은 프로젝트 데이터를 보내지 않고 기본 연결, DiagramIR 구조화, Thinking 프로토콜을 차례로 확인합니다. 2단계는 DiagramIR 무결성을 검사하고 3단계는 작은 고정 JSON으로 Thinking과 structured output의 결합만 독립 검증합니다. 자연어 생성과 Git LLM 요약에서는 요청별 Thinking 체크박스를 사용할 수 있습니다. 자연어 생성은 `temperature=0`을 기본값으로 사용하며, `Llm:NaturalDiagramSeed`를 지원하는 사내 모델에는 고정 seed도 지정할 수 있습니다.
-Thinking 요청의 `max_tokens`는 reasoning과 최종 JSON을 합친 생성 상한이며 `ThinkingOutputTokens`를 사용합니다. `MaxInputCharacters`는 토큰이 아닌 입력 문자 수 제한입니다.
+## 검증과 오프라인 패키지
 
-## 배포
-
-`.env.example`을 참고해 비밀정보를 vault 또는 배포 시스템에서 주입한 다음 사내 registry에 build한 image를 배포합니다.
-
-```powershell
-docker compose build
-docker compose up -d
-```
-
-Production에서는 앱을 OIDC reverse proxy 뒤에 배치하고 proxy가 `X-Remote-User`, `X-Remote-Roles`를 설정해야 합니다. 사용자 PC에는 .NET, Node, Clang 또는 LLM credential이 필요하지 않습니다. Git은 선택 사항이지만 대용량 pack 저장소 분석에는 승인된 네이티브 Git 설치를 권장합니다.
-
-외부 npm 접속 또는 GitHub Release asset 다운로드가 차단된 Windows x64 PC에서는 Source code ZIP 안의 `artifacts/release/DiagramMaker-*-win-x64.zip`을 사용합니다. 이 패키지는 self-contained .NET, portable Node.js, 웹 UI와 Git Worker 의존성을 포함하며 CMD에서 `configure-llm.cmd`, `start.cmd`, `test-llm.cmd` 순서로 실행합니다.
-
-## 검증
+전체 검증:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 ```
 
-CMD만 허용되는 환경에서는 인터넷과 승인된 패키지 registry가 있는 개발 PC에서 다음을 사용할 수 있습니다.
+Windows x64 오프라인 패키지 생성:
 
-```bat
-scripts\verify.cmd
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1
 ```
 
-검증은 backend unit test, loopback Fake vLLM, 실제 임시 Git repository 비교, frontend production build, vulnerability audit와 NPM license allowlist를 포함합니다. 자동 검증은 실제 사내 LLM에 접속하지 않습니다.
+결과는 `artifacts/release/DiagramMaker-0.1.0-offline.9-win-x64.zip`과 SHA-256 파일입니다. 회사 정책상 GitHub Release 다운로드가 막힌 환경을 위해 이 두 파일은 소스 ZIP에도 포함되도록 관리합니다.
 
-## 현재 경계
+## 현재 제한
 
-- C++ 분석은 Clang Worker가 연결되기 전까지 정규식 기반 `Inferred` 결과입니다.
-- 전체 repository baseline/incremental graph가 아니라 변경 파일 내 Symbol과 관계를 우선 분석합니다.
-- Working Tree, submodule, Git LFS, SSH clone, MR hook, Excalidraw/PlantUML은 포함하지 않습니다.
-- 운영 배포 전 회사 오픈소스·보안 담당자의 SBOM 및 network policy 승인이 필요합니다.
+- C++ 매크로 확장, 조건부 컴파일 결과, 함수 포인터·가상 디스패치의 런타임 대상은 완전하게 확정하지 않습니다.
+- State 다이어그램은 명시적인 상태 전이 근거가 없으면 Git 정적 분석에서 생성하지 않습니다.
+- Working Tree, submodule, Git LFS, 원격 clone, PlantUML과 Excalidraw는 지원하지 않습니다.

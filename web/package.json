@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && node ./build.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -20,6 +20,8 @@
     "@types/react": "19.1.10",
     "@types/react-dom": "19.1.7",
     "@vitejs/plugin-react": "5.0.2",
+    "esbuild": "0.28.2",
+    "rollup": "npm:@rollup/wasm-node@4.63.0",
     "typescript": "5.9.2",
     "vite": "7.3.6"
   }

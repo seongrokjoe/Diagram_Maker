@@ -10,8 +10,11 @@ This file identifies the primary open-source components. The release package's e
 | PostgreSQL | Persistent job/result store | PostgreSQL License |
 | React / React DOM | Web UI | MIT |
 | Mermaid | Diagram rendering | MIT |
+| Tree-sitter C++ / web-tree-sitter | C++ syntax indexing through WebAssembly | MIT |
 | isomorphic-git | Read-only Git object access | MIT |
 | jsdiff | Text hunk generation | BSD-3-Clause |
+| esbuild | Frontend production bundling | MIT |
+| Rollup WASM | Vite development tooling | MIT |
 | DOMPurify (Mermaid transitive) | Sanitization | Apache-2.0 selected from dual license |
 | caniuse-lite (build-time data) | Browser compatibility data | CC-BY-4.0 |
 

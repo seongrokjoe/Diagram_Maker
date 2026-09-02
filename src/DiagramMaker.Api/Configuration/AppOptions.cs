@@ -28,6 +28,10 @@ public sealed class GitWorkerOptions
     public int MaxContextFiles { get; set; } = 200;
     public int MaxContextFileBytes { get; set; } = 500_000;
     public int TimeoutSeconds { get; set; } = 120;
+    public int IndexTimeoutSeconds { get; set; } = 300;
+    public int MaxIndexedFiles { get; set; } = 10_000;
+    public long MaxIndexedBytes { get; set; } = 268_435_456;
+    public int MaxIndexedFileBytes { get; set; } = 1_000_000;
 }
 
 public sealed class LlmOptions

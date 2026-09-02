@@ -62,6 +62,31 @@ public sealed class LocalFileAppStoreTests
     }
 
     [Fact]
+    public async Task AnalysisPlan_SurvivesStoreRestartForThirtyDayDraftWorkflow()
+    {
+        var filePath = Path.Combine(AppContext.BaseDirectory, $"plan-registry-{Guid.NewGuid():N}.json");
+        var now = DateTimeOffset.UtcNow;
+        var plan = new AnalysisPlan(
+            Guid.NewGuid(), "reviewer", new AnalysisPlanRequest(Guid.NewGuid(), "target"),
+            AnalysisPlanState.Ready, "base", "target", 100, "Ready", null, null,
+            [], [], [], [], null, null, 3, now, now, now.AddDays(30), null);
+
+        await using (var first = new LocalFileAppStore(filePath))
+        {
+            await first.InitializeAsync(CancellationToken.None);
+            await first.SaveAnalysisPlanAsync(plan, CancellationToken.None);
+        }
+
+        await using var second = new LocalFileAppStore(filePath);
+        await second.InitializeAsync(CancellationToken.None);
+        var restored = await second.GetAnalysisPlanAsync(plan.Id, CancellationToken.None);
+
+        Assert.NotNull(restored);
+        Assert.Equal(3, restored.Revision);
+        Assert.Equal(plan.ExpiresAt, restored.ExpiresAt);
+    }
+
+    [Fact]
     public void LocalRepositoryPath_AcceptsRepositoryRootAndDotGitDirectory()
     {
         var repositoryPath = Path.Combine(AppContext.BaseDirectory, $"local-repository-{Guid.NewGuid():N}");

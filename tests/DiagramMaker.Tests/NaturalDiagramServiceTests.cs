@@ -23,6 +23,7 @@ public sealed class NaturalDiagramServiceTests
             new MermaidCompiler(validator),
             store,
             cache,
+            new DiagramPresetCatalog(),
             Options.Create(new LlmOptions { Model = "stable-model" }),
             new TestEnvironment());
         var request = new NaturalDiagramRequest("사용자에서 서비스로 흐름", "flowchart");
@@ -38,6 +39,8 @@ public sealed class NaturalDiagramServiceTests
         Assert.Equal(first.Id, regenerated.ParentDiagramId);
         Assert.Equal(first.Id, originalAgain.Id);
         Assert.Equal(2, llm.CallCount);
+        Assert.Equal("TB", first.Diagram.Ir.Direction);
+        Assert.Equal("flow-vertical-overview", first.Request.PresetId);
     }
 
     [Theory]
@@ -55,7 +58,13 @@ public sealed class NaturalDiagramServiceTests
         public bool IsEnabled => true;
         public int CallCount { get; private set; }
 
-        public Task<DiagramIr?> GenerateNaturalDiagramAsync(string prompt, string requestedType, bool enableThinking, CancellationToken cancellationToken)
+        public Task<DiagramIr?> GenerateNaturalDiagramAsync(
+            string prompt,
+            string requestedType,
+            bool enableThinking,
+            DiagramPreset preset,
+            DiagramStyleOverrides? style,
+            CancellationToken cancellationToken)
         {
             CallCount++;
             DiagramIr result = new(
@@ -70,6 +79,15 @@ public sealed class NaturalDiagramServiceTests
                 []);
             return Task.FromResult<DiagramIr?>(result);
         }
+
+        public Task<IReadOnlyList<AnalysisGroupDraft>?> RegroupChangesAsync(
+            IReadOnlyList<ChangeCandidate> candidates,
+            IReadOnlyList<AnalysisGroupDraft> staticGroups,
+            VersionedGraph graph,
+            IReadOnlyList<ChangedFile> files,
+            bool enableThinking,
+            CancellationToken cancellationToken)
+            => throw new NotSupportedException();
 
         public Task<ReviewNarrative?> GenerateReviewAsync(VersionedGraph graph, IReadOnlyList<ChangedFile> files, bool enableThinking, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<LlmConnectionTestResult> TestConnectionAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
