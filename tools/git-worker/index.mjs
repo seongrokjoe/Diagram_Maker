@@ -612,6 +612,9 @@ async function buildCppIndexNative(input, dir, comparison) {
       indexedBytes: 0,
       truncated: false,
       projectPaths: [],
+      excludedCalls: [],
+      excludedCallCount: 0,
+      excludedCallsTruncated: false,
     };
   }
 
@@ -665,7 +668,7 @@ async function buildCppIndexNative(input, dir, comparison) {
   for (const file of selectedFiles) {
     parsedTarget.push(await parseCppFile(file.filepath, file.content, projectForFile.get(file.filepath) ?? null));
   }
-  const target = resolveCppCalls(parsedTarget);
+  const target = resolveCppCalls(parsedTarget, input.indirectCallRules ?? []);
   const parsedBefore = [];
   for (const file of comparison.files) {
     const beforePath = file.previousPath ?? file.path;
@@ -684,6 +687,9 @@ async function buildCppIndexNative(input, dir, comparison) {
     indexedBytes: selectedBytes,
     truncated: selected.length < candidates.length,
     projectPaths: [...activeProjects].sort(),
+    excludedCalls: target.excludedCalls,
+    excludedCallCount: target.excludedCallCount,
+    excludedCallsTruncated: target.excludedCallsTruncated,
   };
 }
 
@@ -976,6 +982,7 @@ export async function prepare(input) {
       parserVersion: "fallback-none",
       targetSymbols: [], targetEdges: [], beforeChangedSymbols: [], diagnostics: ["C++ project indexing requires native Git."],
       ambiguousCallCount: 0, indexedFileCount: 0, indexedBytes: 0, truncated: true, projectPaths: [],
+      excludedCalls: [], excludedCallCount: 0, excludedCallsTruncated: false,
     },
   }));
 }

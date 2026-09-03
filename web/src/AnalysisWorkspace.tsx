@@ -19,6 +19,7 @@ const diagramTypes: Array<{ value: DiagramType; label: string }> = [
   { value: "flowchart", label: "흐름 / 영향도" },
   { value: "sequence", label: "호출 시퀀스" },
   { value: "class", label: "클래스 관계" },
+  { value: "code-relation", label: "코드 관계도" },
   { value: "state", label: "상태 전이" },
 ];
 
@@ -251,6 +252,19 @@ export function AnalysisWorkspace({ repositories, reportError }: {
           <div className="button-row"><button type="button" className="secondary" onClick={() => setPlan(null)}>커밋 다시 선택</button><button type="button" className="secondary" onClick={addGroup}>그룹 추가</button><button type="button" className="primary" disabled={busy} onClick={() => void saveAndGenerate()}>선택대로 다이어그램 생성</button></div>
         </div>
         {plan.warnings.map((warning) => <p className="warning" key={warning}>{warning}</p>)}
+        {plan.exclusions && plan.exclusions.totalCount > 0 && <details className="panel exclusion-panel">
+          <summary>제외된 호출 {plan.exclusions.totalCount.toLocaleString("ko-KR")}건 · {plan.exclusions.fileCount.toLocaleString("ko-KR")}개 파일</summary>
+          <p className="help">대상을 하나로 확정할 수 없어 관계에서 제외했습니다. 이 목록은 다이어그램에 포함되지 않습니다.</p>
+          {[...new Set(plan.exclusions!.calls.map((call) => call.filePath))].map((filePath) => <details className="exclusion-file" key={filePath}>
+            <summary>{filePath} ({plan.exclusions!.calls.filter((call) => call.filePath === filePath).length})</summary>
+            <ul>{plan.exclusions!.calls.filter((call) => call.filePath === filePath).map((call, index) => <li key={`${call.line}-${call.expression}-${index}`}>
+              <code>{call.line}: {call.expression}</code>
+              <span>{exclusionReason(call.reason)}</span>
+              {call.candidateTargets.length > 0 && <small>후보: {call.candidateTargets.join(", ")}</small>}
+            </li>)}</ul>
+          </details>)}
+          {plan.exclusions.truncated && <p className="warning">목록이 안전 표시 한도에서 잘렸습니다. 전체 제외 건수는 위 요약을 확인하세요.</p>}
+        </details>}
         <div className="selection-layout">
           <section className="panel candidate-panel">
             <h3>변경 심볼 ({plan.candidates.length})</h3>
@@ -260,7 +274,7 @@ export function AnalysisWorkspace({ repositories, reportError }: {
                 const groupId = assignment.get(candidate.id);
                 return <article className="candidate-row" key={candidate.id}>
                   <label className="checkbox"><input type="checkbox" checked={Boolean(groupId)} onChange={(event) => toggleCandidate(candidate.id, event.target.checked)} /><span><strong>{candidate.qualifiedName}</strong><small>{candidate.changeType} · {candidate.filePath}:{candidate.startLine} · caller {candidate.callerCount} / callee {candidate.calleeCount}</small></span></label>
-                  <div className="candidate-actions">{groupId && <select aria-label={`${candidate.qualifiedName} 그룹`} value={groupId} onChange={(event) => moveCandidate(candidate.id, event.target.value)}>{groups.map((group) => <option key={group.id} value={group.id}>{group.title}</option>)}</select>}{!evidence[candidate.id] && <button type="button" className="text-button" onClick={() => loadEvidence(candidate.id)}>소스 근거 보기</button>}</div>
+                  <div className="candidate-actions">{groupId && <label className="group-select-label"><span>그룹 선택:</span><select aria-label={`${candidate.qualifiedName} 그룹 선택`} value={groupId} onChange={(event) => moveCandidate(candidate.id, event.target.value)}>{groups.map((group) => <option key={group.id} value={group.id}>{group.title}</option>)}</select></label>}{!evidence[candidate.id] && <button type="button" className="text-button" onClick={() => loadEvidence(candidate.id)}>소스 근거 보기</button>}</div>
                   {evidence[candidate.id] && <details open className="evidence-snippet"><summary>{evidence[candidate.id].filePath}:{evidence[candidate.id].startLine}-{evidence[candidate.id].endLine}</summary><pre>{evidence[candidate.id].content}</pre></details>}
                 </article>;
               })}
@@ -313,3 +327,10 @@ function Progress({ value, label }: { value: number; label: string }) {
 function EmptyState({ text }: { text: string }) { return <div className="empty-state"><p>{text}</p></div>; }
 function messageOf(reason: unknown, fallback: string) { return reason instanceof Error ? reason.message : fallback; }
 function defaultPreset(type: DiagramType, presets: DiagramPreset[]) { return presets.find((preset) => preset.type === type && preset.detailLevel === "balanced")?.id ?? presets.find((preset) => preset.type === type)?.id ?? "balanced"; }
+function exclusionReason(reason: string) {
+  return ({
+    multipleTargets: "동일한 조건의 호출 대상이 여러 개입니다.",
+    indirectTypeUnresolved: "간접 호출의 클래스 인자를 문자열로 확정할 수 없습니다.",
+    indirectTypeNotFound: "간접 호출이 가리키는 클래스를 프로젝트에서 찾지 못했습니다.",
+  } as Record<string, string>)[reason] ?? reason;
+}

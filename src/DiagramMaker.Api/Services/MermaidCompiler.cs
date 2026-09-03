@@ -25,14 +25,25 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
         var builder = new StringBuilder($"flowchart {direction}\n");
         var aliases = diagram.Nodes.ToDictionary(static node => node.Id, static node => Alias(node.Id));
 
-        foreach (var node in diagram.Nodes)
+        var grouped = diagram.Nodes.Where(static node => !string.IsNullOrWhiteSpace(node.Group))
+            .GroupBy(static node => node.Group!, StringComparer.Ordinal).ToArray();
+        var groupedIds = grouped.SelectMany(static group => group).Select(static node => node.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var group in grouped)
         {
-            builder.Append("    ").Append(aliases[node.Id]).Append("[\"").Append(Escape(node.Label)).Append("\"]\n");
+            builder.Append("    subgraph g_").Append(Alias(group.Key)).Append("[\"").Append(Escape(group.Key)).Append("\"]\n");
+            builder.Append("        direction ").Append(direction).Append('\n');
+            foreach (var node in group) AppendFlowNode(builder, node, aliases[node.Id], "        ");
+            builder.AppendLine("    end");
+        }
+        foreach (var node in diagram.Nodes.Where(node => !groupedIds.Contains(node.Id)))
+        {
+            AppendFlowNode(builder, node, aliases[node.Id], "    ");
         }
 
         foreach (var edge in diagram.Edges)
         {
-            builder.Append("    ").Append(aliases[edge.SourceId]).Append(" -->");
+            var arrow = edge.IsIndirect ? " -.->" : edge.Type.Equals("loopBack", StringComparison.OrdinalIgnoreCase) ? " -.->" : " -->";
+            builder.Append("    ").Append(aliases[edge.SourceId]).Append(arrow);
             if (!string.IsNullOrWhiteSpace(edge.Label))
             {
                 builder.Append("|\"").Append(Escape(edge.Label)).Append("\"|");
@@ -42,7 +53,25 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
         }
 
         AppendStyles(builder, diagram, aliases);
+        if (diagram.Nodes.Any(static node => node.Shape is not null))
+            builder.AppendLine("    linkStyle default stroke:#365f91,stroke-width:2px");
         return builder.ToString();
+    }
+
+    private static void AppendFlowNode(StringBuilder builder, DiagramNode node, string alias, string indent)
+    {
+        var label = Escape(node.Label);
+        builder.Append(indent).Append(alias);
+        builder.Append(node.Shape?.ToLowerInvariant() switch
+        {
+            "terminal" => $"([\"{label}\"])",
+            "decision" => $"{{\"{label}\"}}",
+            "call" => $"[[\"{label}\"]]",
+            "return" => $"([\"{label}\"])",
+            "type" => $"[\"클래스\\n{label}\"]",
+            "method" => $"[\"메서드\\n{label}\"]",
+            _ => $"[\"{label}\"]"
+        }).Append('\n');
     }
 
     private static string CompileSequence(DiagramIr diagram)
@@ -56,8 +85,24 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
 
         foreach (var edge in diagram.Edges.OrderBy(static edge => edge.SequenceIndex ?? int.MaxValue))
         {
-            builder.Append("    ").Append(aliases[edge.SourceId]).Append("->>")
-                .Append(aliases[edge.TargetId]).Append(": ").Append(Escape(edge.Label)).Append('\n');
+            var scopes = edge.ControlPath ?? [];
+            foreach (var scope in scopes)
+            {
+                if (scope.Kind.Equals("loop", StringComparison.OrdinalIgnoreCase))
+                    builder.Append("    loop ").Append(Escape(scope.Label)).Append('\n');
+                else
+                {
+                    builder.Append("    alt ").Append(Escape(scope.Label)).Append('\n');
+                    if (scope.Branch.Equals("else", StringComparison.OrdinalIgnoreCase)) builder.AppendLine("    else 그 외");
+                }
+            }
+            var advanced = edge.ControlPath is not null;
+            builder.Append("    ").Append(aliases[edge.SourceId]).Append(edge.IsIndirect ? "-->>+" : advanced ? "->>+" : "->>")
+                .Append(aliases[edge.TargetId]).Append(": ").Append(Escape(edge.IsIndirect ? $"간접 API: {edge.ViaApi} · {edge.Label}" : edge.Label)).Append('\n');
+            if (advanced)
+                builder.Append("    ").Append(aliases[edge.TargetId]).Append("-->>-")
+                    .Append(aliases[edge.SourceId]).AppendLine(": return");
+            for (var index = scopes.Count - 1; index >= 0; index--) builder.AppendLine("    end");
         }
 
         return builder.ToString();
@@ -75,8 +120,10 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
 
         foreach (var edge in diagram.Edges)
         {
-            var arrow = edge.Type.Equals("inherits", StringComparison.OrdinalIgnoreCase) ? " <|-- " : " --> ";
-            builder.Append("    ").Append(aliases[edge.TargetId]).Append(arrow).Append(aliases[edge.SourceId]);
+            if (edge.Type.Equals("inherits", StringComparison.OrdinalIgnoreCase))
+                builder.Append("    ").Append(aliases[edge.TargetId]).Append(" <|-- ").Append(aliases[edge.SourceId]);
+            else
+                builder.Append("    ").Append(aliases[edge.SourceId]).Append(edge.IsIndirect ? " ..> " : " --> ").Append(aliases[edge.TargetId]);
             if (!string.IsNullOrWhiteSpace(edge.Label))
             {
                 builder.Append(" : ").Append(Escape(edge.Label));

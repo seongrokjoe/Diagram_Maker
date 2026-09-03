@@ -17,6 +17,7 @@ public sealed class AnalysisPlanProcessor(
         {
             var repository = await store.GetRepositoryAsync(current.Request.RepositoryId, cancellationToken)
                              ?? throw new InvalidOperationException("Repository is no longer registered.");
+            var indexVersion = BuildIndexVersion(repository);
             var target = await git.GetCommitAsync(repository, current.Request.TargetRevision, cancellationToken);
             var baseRevision = string.IsNullOrWhiteSpace(current.Request.BaseRevision)
                 ? target.ParentShas.FirstOrDefault()
@@ -37,19 +38,21 @@ public sealed class AnalysisPlanProcessor(
             GitComparison comparison;
             VersionedGraph graph;
             var warnings = new List<string>();
+            AnalysisExclusionSummary? exclusions = null;
             var cached = (await store.ListAnalysisPlansAsync(current.OwnerUserId, 50, cancellationToken))
                 .FirstOrDefault(plan => plan.Id != current.Id &&
                                         plan.State == AnalysisPlanState.Ready &&
                                         plan.Request.RepositoryId == repository.Id &&
                                         plan.BaseSha == baseCommit.Sha &&
                                         plan.TargetSha == target.Sha &&
-                                        plan.IndexVersion == SourceGraphAnalyzer.IndexVersion &&
+                                        plan.IndexVersion == indexVersion &&
                                         plan.Comparison is not null && plan.Graph is not null &&
                                         plan.ExpiresAt > DateTimeOffset.UtcNow);
             if (cached is not null)
             {
                 comparison = cached.Comparison!;
                 graph = cached.Graph!;
+                exclusions = cached.Exclusions;
                 warnings.Add("동일한 커밋 범위의 30일 인덱스 캐시를 재사용했습니다.");
                 if (current.Request.UseLlmGrouping && llm.IsEnabled)
                 {
@@ -63,6 +66,7 @@ public sealed class AnalysisPlanProcessor(
                 comparison = prepared.Comparison;
                 graph = analyzer.Analyze(repository.Id, comparison, prepared.CppIndex);
                 warnings.AddRange(BuildIndexWarnings(prepared.CppIndex));
+                exclusions = BuildExclusions(prepared.CppIndex);
             }
 
             var candidates = BuildCandidates(graph);
@@ -131,7 +135,8 @@ public sealed class AnalysisPlanProcessor(
                 Warnings = warnings,
                 Revision = current.Revision + 1,
                 LeaseUntil = null,
-                IndexVersion = SourceGraphAnalyzer.IndexVersion
+                IndexVersion = indexVersion,
+                Exclusions = exclusions
             }, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -296,8 +301,29 @@ public sealed class AnalysisPlanProcessor(
     {
         if (index.Truncated)
             yield return $"C++ 인덱스가 안전 한도에서 잘렸습니다. {index.IndexedFileCount:N0}개 파일만 분석했습니다.";
-        if (index.AmbiguousCallCount > 0)
-            yield return $"대상이 모호한 C++ 호출 {index.AmbiguousCallCount:N0}개는 다이어그램 관계에서 제외했습니다.";
+        if (index.ExcludedCallCount > 0)
+            yield return $"해석이 모호한 C++ 호출 {index.ExcludedCallCount:N0}개는 다이어그램 관계에서 제외했습니다.";
         foreach (var diagnostic in index.Diagnostics.Take(20)) yield return diagnostic;
+    }
+
+    private static AnalysisExclusionSummary? BuildExclusions(CppSourceIndex index)
+    {
+        if (index.ExcludedCallCount <= 0) return null;
+        var calls = index.ExcludedCalls ?? [];
+        return new AnalysisExclusionSummary(
+            index.ExcludedCallCount,
+            calls.Select(static call => call.FilePath).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+            index.ExcludedCallsTruncated,
+            calls);
+    }
+
+    private static string BuildIndexVersion(RepositoryDefinition repository)
+    {
+        var rules = repository.AnalysisRules?.IndirectCalls ?? [];
+        var fingerprint = string.Join('|', rules.OrderBy(static rule => rule.Id, StringComparer.Ordinal).Select(rule =>
+            $"{rule.Id}:{rule.Enabled}:{rule.ApiName}:{rule.TargetTypeArgumentIndex}:{rule.TargetMethodArgumentIndex}:" +
+            string.Join(',', rule.Aliases.OrderBy(static alias => alias.Expression, StringComparer.Ordinal)
+                .Select(static alias => $"{alias.Expression}={alias.TargetType}"))));
+        return $"{SourceGraphAnalyzer.IndexVersion}:{StableIds.Create(fingerprint)}";
     }
 }

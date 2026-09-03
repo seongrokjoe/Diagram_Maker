@@ -10,7 +10,7 @@ namespace DiagramMaker.Services;
 
 public sealed partial class SourceGraphAnalyzer
 {
-    public const string IndexVersion = "source-graph-v2";
+    public const string IndexVersion = "source-graph-v3";
 
     private sealed record ParsedSymbol(
         SymbolIdentity Identity,
@@ -55,6 +55,7 @@ public sealed partial class SourceGraphAnalyzer
         var changes = BuildChanges(beforeByIdentity, afterByIdentity).ToList();
         var edges = BuildEdges(after).ToList();
         var allSymbols = before.Concat(after).ToList();
+        var controlFlows = new List<MethodControlFlow>();
 
         if (hasCppIndex)
         {
@@ -70,6 +71,9 @@ public sealed partial class SourceGraphAnalyzer
             var cppTargetByIdentity = changedCppTarget.GroupBy(static symbol => symbol.Identity.Id).ToDictionary(static group => group.Key, static group => group.First());
             changes.AddRange(BuildChanges(cppBeforeByIdentity, cppTargetByIdentity));
             edges.AddRange(BuildCppEdges(repositoryId, cppIndex, cppTarget));
+            controlFlows.AddRange(BuildCppControlFlows(
+                cppIndex.TargetSymbols.Concat(cppIndex.BeforeChangedSymbols).DistinctBy(static fact => fact.SemanticKey).ToArray(),
+                cppTarget.Concat(cppBefore).DistinctBy(static symbol => symbol.Identity.Id).ToArray()));
             allSymbols.AddRange(cppBefore);
             allSymbols.AddRange(cppTarget);
         }
@@ -79,7 +83,8 @@ public sealed partial class SourceGraphAnalyzer
             allSymbols.Select(static symbol => symbol.Version).DistinctBy(static version => version.Id).ToArray(),
             edges.DistinctBy(static edge => edge.Id).ToArray(),
             allSymbols.Select(static symbol => symbol.Evidence).DistinctBy(static evidence => evidence.Id).ToArray(),
-            changes.DistinctBy(static change => change.Id).ToArray());
+            changes.DistinctBy(static change => change.Id).ToArray(),
+            controlFlows);
     }
 
     private static bool IsCppPath(string path) => Path.GetExtension(path).ToLowerInvariant() is
@@ -137,14 +142,17 @@ public sealed partial class SourceGraphAnalyzer
             if (!identityBySemanticKey.TryGetValue(edge.SourceSemanticKey, out var sourceId) ||
                 !identityBySemanticKey.TryGetValue(edge.TargetSemanticKey, out var targetId)) continue;
             edges.Add(new GraphEdge(
-                StableIds.Create(repositoryId, sourceId, targetId, edge.Type),
+                StableIds.Create(repositoryId, sourceId, targetId, edge.Type, edge.Line, edge.SequenceIndex, edge.ViaApi),
                 sourceId,
                 targetId,
                 edge.Type,
                 edge.Label,
                 edge.Confidence,
                 evidenceByIdentity.TryGetValue(sourceId, out var evidenceIds) ? evidenceIds : [],
-                edge.SequenceIndex));
+                edge.SequenceIndex,
+                edge.IsIndirect,
+                edge.ViaApi,
+                edge.ControlPath));
         }
 
         var typeFacts = index.TargetSymbols.Where(static fact => fact.Kind is "class" or "type").ToArray();
@@ -163,6 +171,37 @@ public sealed partial class SourceGraphAnalyzer
             }
         }
         return edges;
+    }
+
+    private static IReadOnlyList<MethodControlFlow> BuildCppControlFlows(
+        IReadOnlyList<CppSymbolFact> facts,
+        IReadOnlyList<ParsedSymbol> targetSymbols)
+    {
+        var identityBySemanticKey = targetSymbols
+            .GroupBy(static symbol => symbol.Identity.SemanticKey, StringComparer.Ordinal)
+            .ToDictionary(static group => group.Key, static group => group.First().Identity.Id, StringComparer.Ordinal);
+        var evidenceByIdentity = targetSymbols
+            .GroupBy(static symbol => symbol.Identity.Id, StringComparer.Ordinal)
+            .ToDictionary(static group => group.Key, static group => group.Select(static value => value.Evidence.Id).Distinct(StringComparer.Ordinal).ToArray(), StringComparer.Ordinal);
+        var result = new List<MethodControlFlow>();
+        foreach (var fact in facts.Where(static value => value.ControlNodes is { Count: > 0 }))
+        {
+            if (!identityBySemanticKey.TryGetValue(fact.SemanticKey, out var identityId)) continue;
+            var controlNodes = fact.ControlNodes!;
+            var localIds = controlNodes.ToDictionary(
+                static node => node.Id,
+                node => StableIds.Create(identityId, node.Id),
+                StringComparer.Ordinal);
+            var evidence = evidenceByIdentity.GetValueOrDefault(identityId, []);
+            var nodes = controlNodes.Select(node => new ControlFlowNode(
+                localIds[node.Id], node.Kind, node.Label, node.StartLine, node.EndLine, evidence,
+                node.TargetSemanticKey is not null && identityBySemanticKey.TryGetValue(node.TargetSemanticKey, out var targetId) ? targetId : null,
+                node.IsIndirect, node.ViaApi)).ToArray();
+            var edges = (fact.ControlEdges ?? []).Where(edge => localIds.ContainsKey(edge.SourceId) && localIds.ContainsKey(edge.TargetId))
+                .Select(edge => new ControlFlowEdge(localIds[edge.SourceId], localIds[edge.TargetId], edge.Type, edge.Label)).ToArray();
+            result.Add(new MethodControlFlow(identityId, nodes, edges));
+        }
+        return result;
     }
 
     private static IReadOnlyList<ParsedSymbol> Parse(

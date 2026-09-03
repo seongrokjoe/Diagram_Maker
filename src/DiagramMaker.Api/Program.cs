@@ -125,7 +125,8 @@ api.MapGet("/repositories", async (HttpContext context, IAppStore store, Cancell
         repository.LocalPath,
         repository.DefaultBranch,
         repository.AllowedRoles,
-        repository.CreatedAt
+        repository.CreatedAt,
+        AnalysisRules = repository.AnalysisRules ?? new RepositoryAnalysisRules(0, [])
     }));
 });
 
@@ -206,7 +207,8 @@ api.MapPost("/repositories", async (
         inspection.NormalizedPath,
         defaultBranch,
         request.AllowedRoles?.Where(static role => !string.IsNullOrWhiteSpace(role)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() ?? ["Reviewer"],
-        DateTimeOffset.UtcNow);
+        DateTimeOffset.UtcNow,
+        new RepositoryAnalysisRules(0, []));
     await store.SaveRepositoryAsync(repository, cancellationToken);
     await store.SaveAuditAsync(new AuditEvent(Guid.NewGuid(), identity.UserId, "repository.register", repository.Id, "allowed", DateTimeOffset.UtcNow), cancellationToken);
     return Results.Created($"/api/v1/repositories/{repository.Id}", new
@@ -216,8 +218,39 @@ api.MapPost("/repositories", async (
         repository.LocalPath,
         repository.DefaultBranch,
         repository.AllowedRoles,
-        repository.CreatedAt
+        repository.CreatedAt,
+        repository.AnalysisRules
     });
+});
+
+api.MapPut("/repositories/{id:guid}/analysis-rules", async (
+    Guid id,
+    UpdateRepositoryAnalysisRulesRequest request,
+    HttpContext context,
+    IAppStore store,
+    CancellationToken cancellationToken) =>
+{
+    var identity = context.GetInternalIdentity();
+    if (!identity.Roles.Contains("Admin")) return Results.Forbid();
+    var repository = await store.GetRepositoryAsync(id, cancellationToken);
+    if (repository is null) return Results.NotFound();
+    var currentRevision = repository.AnalysisRules?.Revision ?? 0;
+    if (request.ExpectedRevision != currentRevision)
+        return Results.Conflict(new { errorCode = "REPOSITORY_RULE_REVISION_CONFLICT", error = "The repository rules changed. Reload and try again.", currentRevision });
+    var validationError = ValidateIndirectCallRules(request.IndirectCalls);
+    if (validationError is not null) return Results.BadRequest(new { error = validationError });
+
+    var normalized = request.IndirectCalls.Select(rule => rule with
+    {
+        Id = rule.Id.Trim(),
+        Name = rule.Name.Trim(),
+        ApiName = rule.ApiName.Trim(),
+        Aliases = rule.Aliases.Select(alias => new IndirectCallAlias(alias.Expression.Trim(), alias.TargetType.Trim())).ToArray()
+    }).ToArray();
+    var updated = repository with { AnalysisRules = new RepositoryAnalysisRules(currentRevision + 1, normalized) };
+    await store.SaveRepositoryAsync(updated, cancellationToken);
+    await store.SaveAuditAsync(new AuditEvent(Guid.NewGuid(), identity.UserId, "repository.analysis-rules.update", repository.Id, "allowed", DateTimeOffset.UtcNow), cancellationToken);
+    return Results.Ok(updated);
 });
 
 api.MapGet("/repositories/{id:guid}/commits", async (
@@ -275,7 +308,7 @@ api.MapGet("/repositories/{id:guid}/commits/resolve", async (
 api.MapGet("/diagram-presets", (string? type, DiagramPresetCatalog catalog) =>
 {
     if (!string.IsNullOrWhiteSpace(type) && !DiagramProjectionService.IsSupported(type))
-        return Results.BadRequest(new { error = "Type must be flowchart, class, sequence, or state." });
+        return Results.BadRequest(new { error = "Type must be flowchart, class, sequence, code-relation, or state." });
     return Results.Ok(catalog.List(type));
 });
 
@@ -447,7 +480,7 @@ api.MapPost("/analyses", async (
     }
     if (request.DiagramTypes?.Any(type => !DiagramProjectionService.IsSupported(type)) == true)
     {
-        return Results.BadRequest(new { error = "DiagramTypes must contain only flowchart, class, sequence, or state." });
+        return Results.BadRequest(new { error = "DiagramTypes must contain only flowchart, class, sequence, code-relation, or state." });
     }
 
     var now = DateTimeOffset.UtcNow;
@@ -758,8 +791,41 @@ static object ToAnalysisPlanResponse(AnalysisPlan plan) => new
     plan.CreatedAt,
     plan.UpdatedAt,
     plan.ExpiresAt,
-    plan.IndexVersion
+    plan.IndexVersion,
+    plan.Exclusions
 };
+
+static string? ValidateIndirectCallRules(IReadOnlyList<IndirectCallRule>? rules)
+{
+    if (rules is null || rules.Count > 50) return "Zero to fifty indirect call rules are allowed.";
+    var ids = new HashSet<string>(StringComparer.Ordinal);
+    var enabledApis = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var rule in rules)
+    {
+        if (string.IsNullOrWhiteSpace(rule.Id) || rule.Id.Length > 80 || !ids.Add(rule.Id.Trim()))
+            return "Every indirect call rule must have a unique ID of at most 80 characters.";
+        if (string.IsNullOrWhiteSpace(rule.Name) || rule.Name.Trim().Length > 120)
+            return "Every indirect call rule needs a name of at most 120 characters.";
+        if (!IsCppQualifiedName(rule.ApiName)) return $"Invalid C++ API name: {rule.ApiName}";
+        if (rule.Enabled && !enabledApis.Add(rule.ApiName.Trim())) return $"Only one enabled rule is allowed for API '{rule.ApiName.Trim()}'.";
+        if (rule.TargetTypeArgumentIndex is < 0 or > 31 || rule.TargetMethodArgumentIndex is < 0 or > 31)
+            return "Argument indexes must be between 0 and 31.";
+        if (rule.TargetMethodArgumentIndex == rule.TargetTypeArgumentIndex)
+            return "The type and method argument indexes must be different.";
+        if (rule.Aliases is null || rule.Aliases.Count > 100) return "Each rule may contain up to 100 aliases.";
+        if (rule.Aliases.Any(static alias => string.IsNullOrWhiteSpace(alias.Expression) || string.IsNullOrWhiteSpace(alias.TargetType) ||
+                                                  alias.Expression.Trim().Length > 160 || alias.TargetType.Trim().Length > 160))
+            return "Alias expressions and target types must contain 1-160 characters.";
+    }
+    return null;
+}
+
+static bool IsCppQualifiedName(string? value)
+{
+    if (string.IsNullOrWhiteSpace(value) || value.Trim().Length > 160) return false;
+    return value.Trim().Split("::", StringSplitOptions.None).All(part => part.Length > 0 &&
+        (char.IsLetter(part[0]) || part[0] == '_') && part.Skip(1).All(static character => char.IsLetterOrDigit(character) || character == '_'));
+}
 
 static string? ValidatePlanSelections(
     IReadOnlyList<AnalysisGroupSelection>? groups,

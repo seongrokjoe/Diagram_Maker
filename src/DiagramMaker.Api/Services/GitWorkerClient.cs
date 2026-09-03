@@ -167,7 +167,10 @@ public sealed class GitWorkerClient : IGitWorkerClient
             maxContextFileBytes = _options.MaxContextFileBytes,
             maxIndexedFiles = _options.MaxIndexedFiles,
             maxIndexedBytes = _options.MaxIndexedBytes,
-            maxSourceFileBytes = _options.MaxIndexedFileBytes
+            maxSourceFileBytes = _options.MaxIndexedFileBytes,
+            indirectCallRules = repository.AnalysisRules?.IndirectCalls
+                .Where(static rule => rule.Enabled)
+                .ToArray() ?? []
         }, cancellationToken, _options.IndexTimeoutSeconds);
     }
 

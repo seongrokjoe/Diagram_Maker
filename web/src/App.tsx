@@ -3,6 +3,7 @@ import { AnalysisWorkspace } from "./AnalysisWorkspace";
 import { api } from "./api";
 import { MermaidPreview } from "./MermaidPreview";
 import { PresetPicker } from "./PresetPicker";
+import { RepositoryRuleEditor } from "./RepositoryRuleEditor";
 import type {
   DiagramPreset,
   DiagramType,
@@ -170,7 +171,7 @@ export default function App() {
           <div className="button-row"><button type="button" className="secondary" disabled={busy || !repositoryPath.trim()} onClick={() => void inspectRepository()}>연결 테스트</button><button className="primary" disabled={busy || !repositoryInspection}>저장소 등록</button></div>
           {repositoryInspection && <div className="connection-card"><strong>연결 성공</strong><span>{repositoryInspection.isBare ? "Bare repository" : "Working repository"}</span><code>{repositoryInspection.normalizedPath}</code><span>{repositoryInspection.defaultBranch} · {repositoryInspection.headSha.slice(0, 10)}</span><small>{repositoryInspection.headMessage}</small></div>}
         </form>
-        <section className="panel"><p className="section-label">REGISTERED</p><h2>사용 가능한 저장소</h2><ul className="repository-list">{repositories.map((repository) => <li key={repository.id}><div><strong>{repository.name}</strong><span>{repository.defaultBranch}</span></div><code title={repository.localPath}>{repository.localPath}</code></li>)}</ul>{repositories.length === 0 && <EmptyState text="등록된 저장소가 없습니다." />}</section>
+        <section className="panel"><p className="section-label">REGISTERED</p><h2>사용 가능한 저장소</h2><ul className="repository-list">{repositories.map((repository) => <li key={repository.id}><div><strong>{repository.name}</strong><span>{repository.defaultBranch}</span></div><code title={repository.localPath}>{repository.localPath}</code><RepositoryRuleEditor repository={repository} reportError={reportError} onSaved={(updated) => setRepositories((current) => current.map((item) => item.id === updated.id ? updated : item))} /></li>)}</ul>{repositories.length === 0 && <EmptyState text="등록된 저장소가 없습니다." />}</section>
       </section>}
 
       {tab === "llm" && <section className="llm-test-layout">

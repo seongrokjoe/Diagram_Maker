@@ -7,6 +7,7 @@ import type {
   DiagramType,
   EvidenceSnippet,
   GitCommit,
+  IndirectCallRule,
   LlmConnectionTestResult,
   LlmContractTestResult,
   LlmThinkingContractTestResult,
@@ -52,6 +53,11 @@ export const api = {
     }),
   registerRepository: (input: { name: string; localPath: string; defaultBranch: string }) =>
     request<Repository>("/api/v1/repositories", { method: "POST", body: JSON.stringify(input) }),
+  updateRepositoryAnalysisRules: (repositoryId: string, expectedRevision: number, indirectCalls: IndirectCallRule[]) =>
+    request<Repository>(`/api/v1/repositories/${repositoryId}/analysis-rules`, {
+      method: "PUT",
+      body: JSON.stringify({ expectedRevision, indirectCalls }),
+    }),
   listCommits: (repositoryId: string, query = "", skip = 0, limit = 50) =>
     request<GitCommit[]>(`/api/v1/repositories/${repositoryId}/commits?query=${encodeURIComponent(query)}&skip=${skip}&limit=${limit}`),
   resolveCommit: (repositoryId: string, revision: string) =>

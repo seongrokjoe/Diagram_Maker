@@ -166,10 +166,31 @@ function contextName(node) {
   return cleanName(field(node, "name")?.text ?? "");
 }
 
+function callArguments(node) {
+  const argumentsNode = field(node, "arguments");
+  return argumentsNode
+    ? children(argumentsNode).filter((child) => child.type !== "comment").map((child) => child.text.trim())
+    : [];
+}
+
+function scopeFor(node, kind, label, branch) {
+  return {
+    id: `${kind}_${node.startIndex}_${node.endIndex}`,
+    kind,
+    label: label.replace(/\s+/g, " ").trim().slice(0, 120),
+    branch,
+  };
+}
+
+function conditionLabel(node) {
+  return (field(node, "condition")?.text ?? field(node, "value")?.text ?? node.text.split("{")[0])
+    .replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
 function collectCalls(node) {
   const calls = [];
   let order = 0;
-  function visit(current) {
+  function visit(current, controlPath = []) {
     if (current !== node && current.type === "function_definition") return;
     if (current.type === "call_expression") {
       const expression = cleanName(field(current, "function")?.text ?? "");
@@ -180,13 +201,173 @@ function collectCalls(node) {
           argumentCount: countArguments(current),
           line: current.startPosition.row + 1,
           order: ++order,
+          arguments: callArguments(current),
+          controlPath,
         });
       }
+      for (const child of children(current)) visit(child, controlPath);
+      return;
     }
-    for (const child of children(current)) visit(child);
+    if (current.type === "if_statement") {
+      const condition = field(current, "condition");
+      if (condition) visit(condition, controlPath);
+      const label = conditionLabel(current);
+      const consequence = field(current, "consequence");
+      const alternative = field(current, "alternative");
+      if (consequence) visit(consequence, [...controlPath, scopeFor(current, "alt", label, "then")]);
+      if (alternative) visit(alternative, [...controlPath, scopeFor(current, "alt", label, "else")]);
+      return;
+    }
+    if (["for_statement", "for_range_loop", "while_statement", "do_statement"].includes(current.type)) {
+      const body = field(current, "body");
+      for (const child of children(current)) {
+        const isBody = body && child.startIndex === body.startIndex && child.endIndex === body.endIndex;
+        visit(child, isBody
+          ? [...controlPath, scopeFor(current, "loop", conditionLabel(current), "body")]
+          : controlPath);
+      }
+      return;
+    }
+    for (const child of children(current)) visit(child, controlPath);
   }
   visit(node);
   return calls;
+}
+
+function compactStatement(node, fallback) {
+  const value = node.text.replace(/\s+/g, " ").trim().replace(/[;{]\s*$/, "");
+  return (value || fallback).slice(0, 140);
+}
+
+function buildControlFlow(functionNode, calls) {
+  const nodes = [];
+  const edges = [];
+  let nextId = 0;
+  const addNode = (kind, label, syntaxNode, callOrder = null) => {
+    const item = {
+      id: `c${++nextId}`,
+      kind,
+      label: label.slice(0, 160),
+      startLine: syntaxNode?.startPosition.row + 1 || functionNode.startPosition.row + 1,
+      endLine: syntaxNode?.endPosition.row + 1 || functionNode.endPosition.row + 1,
+      callOrder,
+    };
+    nodes.push(item);
+    return item;
+  };
+  const connect = (incoming, target) => {
+    for (const source of incoming) {
+      edges.push({ sourceId: source.id, targetId: target.id, type: source.type ?? "control", label: source.label ?? "" });
+    }
+  };
+  const entry = addNode("entry", "시작", functionNode);
+  const exit = addNode("exit", "종료", functionNode);
+
+  function processSequence(statements, incoming, loopNode = null) {
+    let pending = incoming;
+    for (const statement of statements) {
+      const halted = pending.filter((item) => item.breakLoop);
+      const active = pending.filter((item) => !item.breakLoop);
+      pending = [...halted, ...processStatement(statement, active, loopNode)];
+    }
+    return pending;
+  }
+
+  function directCalls(statement) {
+    return calls.filter((call) => {
+      const line = call.line;
+      return line >= statement.startPosition.row + 1 && line <= statement.endPosition.row + 1;
+    });
+  }
+
+  function processStatement(statement, incoming, loopNode) {
+    if (!statement || statement.type === "comment") return incoming;
+    if (statement.type === "compound_statement") return processSequence(children(statement), incoming, loopNode);
+    if (statement.type === "if_statement") {
+      const decision = addNode("condition", conditionLabel(statement), statement);
+      connect(incoming, decision);
+      const consequence = field(statement, "consequence");
+      const alternative = field(statement, "alternative");
+      const yes = consequence ? processStatement(consequence, [{ id: decision.id, label: "예" }], loopNode) : [{ id: decision.id, label: "예" }];
+      const no = alternative ? processStatement(alternative, [{ id: decision.id, label: "아니오" }], loopNode) : [{ id: decision.id, label: "아니오" }];
+      return [...yes, ...no];
+    }
+    if (["for_statement", "for_range_loop", "while_statement", "do_statement"].includes(statement.type)) {
+      const loop = addNode("loop", conditionLabel(statement), statement);
+      connect(incoming, loop);
+      const body = field(statement, "body");
+      const bodyExit = body ? processStatement(body, [{ id: loop.id, label: "반복" }], loop) : [];
+      for (const source of bodyExit.filter((item) => !item.breakLoop)) {
+        edges.push({ sourceId: source.id, targetId: loop.id, type: "loopBack", label: "다음 반복" });
+      }
+      return [{ id: loop.id, label: "종료" }, ...bodyExit.filter((item) => item.breakLoop).map((item) => ({ id: item.id, label: "break" }))];
+    }
+    if (statement.type === "return_statement") {
+      let pending = incoming;
+      for (const call of directCalls(statement)) {
+        const callNode = addNode("call", `${call.expression}(${(call.arguments ?? []).join(", ")})`, statement, call.order);
+        connect(pending, callNode);
+        pending = [{ id: callNode.id }];
+      }
+      const value = statement.text.replace(/^\s*return\s*/, "").replace(/;\s*$/, "").trim();
+      const returned = addNode("return", value ? `return ${value}` : "return", statement);
+      connect(pending, returned);
+      edges.push({ sourceId: returned.id, targetId: exit.id, type: "return", label: "리턴" });
+      return [];
+    }
+    if (statement.type === "continue_statement") {
+      const continued = addNode("continue", "continue", statement);
+      connect(incoming, continued);
+      if (loopNode) edges.push({ sourceId: continued.id, targetId: loopNode.id, type: "loopBack", label: "다음 반복" });
+      return [];
+    }
+    if (statement.type === "break_statement") {
+      const broken = addNode("break", "break", statement);
+      connect(incoming, broken);
+      return [{ id: broken.id, breakLoop: true }];
+    }
+
+    const statementCalls = directCalls(statement);
+    if (statementCalls.length > 0) {
+      let pending = incoming;
+      for (const call of statementCalls) {
+        const callNode = addNode("call", `${call.expression}(${(call.arguments ?? []).join(", ")})`, statement, call.order);
+        connect(pending, callNode);
+        pending = [{ id: callNode.id }];
+      }
+      return pending;
+    }
+    if (["declaration", "expression_statement", "throw_statement"].includes(statement.type)) {
+      const operation = addNode("operation", compactStatement(statement, "처리"), statement);
+      connect(incoming, operation);
+      return [{ id: operation.id }];
+    }
+    return processSequence(children(statement), incoming, loopNode);
+  }
+
+  const body = field(functionNode, "body");
+  const pending = body ? processStatement(body, [{ id: entry.id }], null) : [{ id: entry.id }];
+  connect(pending, exit);
+  return { nodes, edges };
+}
+
+function collectStringBindings(content) {
+  const values = new Map();
+  const references = [];
+  const add = (name, value) => {
+    const key = name.replace(/^this->/, "").trim();
+    const list = values.get(key) ?? [];
+    if (!list.includes(value)) list.push(value);
+    values.set(key, list);
+  };
+  for (const match of content.matchAll(/^\s*#\s*define\s+([A-Za-z_]\w*)\s+"([^"]+)"/gm)) add(match[1], match[2]);
+  for (const match of content.matchAll(/(?:^|[;{}])\s*(?:[\w:<>*&]+\s+)+([A-Za-z_]\w*)\s*=\s*"([^"]+)"/gm)) add(match[1], match[2]);
+  for (const match of content.matchAll(/(?:this->)?([A-Za-z_]\w*)\s*=\s*"([^"]+)"\s*;/g)) add(match[1], match[2]);
+  for (const match of content.matchAll(/(?:^|[;{}])\s*(?:[\w:<>*&]+\s+)+([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*;/gm)) references.push([match[1], match[2]]);
+  for (let pass = 0; pass < references.length; pass += 1) {
+    for (const [name, source] of references) for (const value of values.get(source) ?? []) add(name, value);
+  }
+  return values;
 }
 
 function collectIncludes(root) {
@@ -257,6 +438,8 @@ export async function parseCppFile(filepath, content, projectPath = null) {
         const parameters = parameterTypes(declarator);
         const parameterCount = parameters.length;
         const qualifiers = functionQualifiers(declarator);
+        const calls = collectCalls(node);
+        const control = buildControlFlow(node, calls);
         const symbol = {
           semanticKey: `function:${qualifiedName}(${parameters.join(",")})${qualifiers}`,
           qualifiedName,
@@ -269,8 +452,10 @@ export async function parseCppFile(filepath, content, projectPath = null) {
           startLine: node.startPosition.row + 1,
           endLine: node.endPosition.row + 1,
           contentFingerprint: fingerprint(node.text),
-          calls: collectCalls(node),
+          calls,
           bases: [],
+          controlNodes: control.nodes,
+          controlEdges: control.edges,
         };
         symbols.push(symbol);
         definitions.push(symbol.semanticKey);
@@ -286,7 +471,7 @@ export async function parseCppFile(filepath, content, projectPath = null) {
   const diagnostics = [];
   if (tree.rootNode.hasError) diagnostics.push(`C++ parser recovered from syntax errors in ${filepath}.`);
   tree.delete();
-  return { filepath, projectPath, includes, symbols, definitions, diagnostics };
+  return { filepath, projectPath, includes, symbols, definitions, diagnostics, stringBindings: collectStringBindings(content) };
 }
 
 function ownerName(qualifiedName) {
@@ -294,7 +479,31 @@ function ownerName(qualifiedName) {
   return parts.length > 1 ? parts.slice(0, -1).join("::") : "";
 }
 
-export function resolveCppCalls(files) {
+function normalizeExpression(value) {
+  let result = String(value ?? "").trim();
+  while (result.startsWith("(") && result.endsWith(")")) result = result.slice(1, -1).trim();
+  return result.replace(/^this->/, "");
+}
+
+function resolveStringValue(expression, bindings, aliases = []) {
+  const normalized = normalizeExpression(expression);
+  const literal = /^"([^"\\]*(?:\\.[^"\\]*)*)"$/.exec(normalized);
+  if (literal) return { value: literal[1].replace(/\\"/g, '"'), confidence: "Exact" };
+  const alias = aliases.find((item) => normalizeExpression(item.expression) === normalized);
+  if (alias?.targetType) return { value: alias.targetType, confidence: "Inferred" };
+  const values = bindings.get(normalized) ?? bindings.get(lastName(normalized)) ?? [];
+  return values.length === 1 ? { value: values[0], confidence: "Inferred" } : null;
+}
+
+function ruleMatches(rule, call) {
+  const apiName = cleanName(rule.apiName ?? "");
+  if (!rule.enabled || !apiName) return false;
+  return apiName.includes("::")
+    ? call.expression.replaceAll(".", "::").replaceAll("->", "::") === apiName
+    : call.name === apiName;
+}
+
+export function resolveCppCalls(files, indirectCallRules = []) {
   const symbols = files.flatMap((file) => file.symbols);
   const byQualified = new Map();
   const bySimple = new Map();
@@ -309,10 +518,95 @@ export function resolveCppCalls(files) {
     bySimple.set(key, values);
   }
 
+  const bindings = new Map();
+  for (const file of files) {
+    for (const [name, fileValues] of file.stringBindings ?? []) {
+      const values = bindings.get(name) ?? [];
+      for (const value of fileValues) if (!values.includes(value)) values.push(value);
+      bindings.set(name, values);
+    }
+  }
+
   const edges = [];
+  const excludedCalls = [];
+  let excludedCallCount = 0;
   let ambiguousCallCount = 0;
+  const resolvedControlCalls = new Map();
+  const exclude = (source, call, reason, candidates = []) => {
+    excludedCallCount += 1;
+    if (reason === "multipleTargets") ambiguousCallCount += 1;
+    if (excludedCalls.length < 500) {
+      excludedCalls.push({
+        filePath: source.filePath,
+        line: call.line,
+        sourceSemanticKey: source.semanticKey,
+        expression: call.expression,
+        reason,
+        candidateTargets: candidates.slice(0, 10),
+      });
+    }
+  };
+  const rememberControlTarget = (source, call, target, isIndirect, viaApi) => {
+    resolvedControlCalls.set(`${source.semanticKey}/${call.order}`, {
+      targetSemanticKey: target.semanticKey,
+      isIndirect,
+      viaApi,
+    });
+  };
+
   for (const source of symbols.filter((symbol) => symbol.calls.length > 0)) {
     for (const call of source.calls) {
+      const indirectRule = indirectCallRules.find((rule) => ruleMatches(rule, call));
+      if (indirectRule) {
+        const typeIndex = Number(indirectRule.targetTypeArgumentIndex);
+        const methodIndex = indirectRule.targetMethodArgumentIndex === null || indirectRule.targetMethodArgumentIndex === undefined
+          ? null
+          : Number(indirectRule.targetMethodArgumentIndex);
+        const typeValue = resolveStringValue(call.arguments?.[typeIndex], bindings, indirectRule.aliases ?? []);
+        if (!typeValue) {
+          exclude(source, call, "indirectTypeUnresolved");
+          continue;
+        }
+        const typeSymbols = symbols.filter((symbol) => ["class", "type"].includes(symbol.kind));
+        const exactTypes = typeSymbols.filter((symbol) => symbol.qualifiedName === typeValue.value);
+        const typeCandidates = exactTypes.length > 0
+          ? exactTypes
+          : typeSymbols.filter((symbol) => symbol.simpleName === lastName(typeValue.value));
+        if (typeCandidates.length !== 1) {
+          exclude(source, call, typeCandidates.length > 1 ? "multipleTargets" : "indirectTypeNotFound",
+            typeCandidates.map((candidate) => candidate.qualifiedName));
+          continue;
+        }
+        let target = typeCandidates[0];
+        let methodLabel = "";
+        if (methodIndex !== null) {
+          const methodValue = resolveStringValue(call.arguments?.[methodIndex], bindings);
+          methodLabel = methodValue?.value ?? normalizeExpression(call.arguments?.[methodIndex] ?? "");
+          if (methodValue) {
+            const methods = symbols.filter((symbol) => ["method", "function"].includes(symbol.kind)
+              && ownerName(symbol.qualifiedName) === target.qualifiedName
+              && symbol.simpleName === methodValue.value);
+            if (methods.length === 1) target = methods[0];
+          }
+        }
+        const edge = {
+          sourceSemanticKey: source.semanticKey,
+          targetSemanticKey: target.semanticKey,
+          type: "calls",
+          label: methodLabel ? `${indirectRule.apiName}: ${methodLabel}` : indirectRule.apiName,
+          confidence: typeValue.confidence,
+          filePath: source.filePath,
+          line: call.line,
+          sequenceIndex: call.order,
+          isIndirect: true,
+          viaApi: indirectRule.apiName,
+          controlPath: call.controlPath ?? [],
+        };
+        edges.push(edge);
+        rememberControlTarget(source, call, target, true, indirectRule.apiName);
+        continue;
+      }
+
       const exactName = call.expression.replaceAll(".", "::").replaceAll("->", "::");
       const ownerCandidate = [ownerName(source.qualifiedName), call.name].filter(Boolean).join("::");
       const qualifiedCandidates = [
@@ -322,14 +616,14 @@ export function resolveCppCalls(files) {
       let target = qualifiedCandidates.length === 1 ? qualifiedCandidates[0] : null;
       let confidence = "Exact";
       if (qualifiedCandidates.length > 1) {
-        ambiguousCallCount += 1;
+        exclude(source, call, "multipleTargets", qualifiedCandidates.map((candidate) => candidate.qualifiedName));
       } else if (!target) {
         const candidates = bySimple.get(`${call.name}/${call.argumentCount}`) ?? [];
         if (candidates.length === 1) {
           [target] = candidates;
           confidence = "Inferred";
         } else if (candidates.length > 1) {
-          ambiguousCallCount += 1;
+          exclude(source, call, "multipleTargets", candidates.map((candidate) => candidate.qualifiedName));
         }
       }
       if (!target || target.semanticKey === source.semanticKey) continue;
@@ -337,13 +631,24 @@ export function resolveCppCalls(files) {
         sourceSemanticKey: source.semanticKey,
         targetSemanticKey: target.semanticKey,
         type: "calls",
-        label: "calls",
+        label: call.expression,
         confidence,
         filePath: source.filePath,
         line: call.line,
         sequenceIndex: call.order,
+        isIndirect: false,
+        viaApi: null,
+        controlPath: call.controlPath ?? [],
       });
+      rememberControlTarget(source, call, target, false, null);
     }
+  }
+
+  for (const symbol of symbols) {
+    symbol.controlNodes = (symbol.controlNodes ?? []).map((node) => ({
+      ...node,
+      ...(node.callOrder ? resolvedControlCalls.get(`${symbol.semanticKey}/${node.callOrder}`) : null),
+    }));
   }
 
   return {
@@ -352,8 +657,13 @@ export function resolveCppCalls(files) {
     edges: edges.filter((edge, index, all) => all.findIndex((candidate) =>
       candidate.sourceSemanticKey === edge.sourceSemanticKey
       && candidate.targetSemanticKey === edge.targetSemanticKey
-      && candidate.type === edge.type) === index),
+      && candidate.type === edge.type
+      && candidate.line === edge.line
+      && candidate.sequenceIndex === edge.sequenceIndex) === index),
     diagnostics: files.flatMap((file) => file.diagnostics),
     ambiguousCallCount,
+    excludedCalls,
+    excludedCallCount,
+    excludedCallsTruncated: excludedCallCount > excludedCalls.length,
   };
 }

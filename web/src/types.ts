@@ -5,7 +5,20 @@ export type Repository = {
   defaultBranch: string;
   allowedRoles: string[];
   createdAt: string;
+  analysisRules: RepositoryAnalysisRules;
 };
+
+export type IndirectCallAlias = { expression: string; targetType: string };
+export type IndirectCallRule = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  apiName: string;
+  targetTypeArgumentIndex: number;
+  targetMethodArgumentIndex?: number;
+  aliases: IndirectCallAlias[];
+};
+export type RepositoryAnalysisRules = { revision: number; indirectCalls: IndirectCallRule[] };
 
 export type RepositoryInspection = {
   normalizedPath: string;
@@ -48,7 +61,7 @@ export type DiagramPreset = {
   maximumEdges: number;
 };
 
-export type DiagramType = "flowchart" | "sequence" | "class" | "state";
+export type DiagramType = "flowchart" | "sequence" | "class" | "code-relation" | "state";
 
 export type DiagramArtifact = {
   id: string;
@@ -193,6 +206,19 @@ export type AnalysisPlan = {
   updatedAt: string;
   expiresAt: string;
   indexVersion?: string;
+  exclusions?: {
+    totalCount: number;
+    fileCount: number;
+    truncated: boolean;
+    calls: Array<{
+      filePath: string;
+      line: number;
+      sourceSemanticKey: string;
+      expression: string;
+      reason: string;
+      candidateTargets: string[];
+    }>;
+  };
 };
 
 export type AnalysisDiagramGroup = {

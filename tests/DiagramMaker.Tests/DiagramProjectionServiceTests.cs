@@ -114,4 +114,73 @@ public sealed class DiagramProjectionServiceTests
         Assert.Empty(diagram.Edges);
         _ = new MermaidCompiler(new DiagramValidator()).Compile(diagram);
     }
+
+    [Fact]
+    public void Build_CppFlowchart_ProjectsMethodControlFlowInsteadOfImpactBoxes()
+    {
+        var repositoryId = Guid.NewGuid();
+        var sha = new string('b', 40);
+        var identity = new SymbolIdentity("method", repositoryId, "cpp", "method", "function:Service::Run()");
+        var version = new SymbolVersion("version", identity.Id, sha, "Service::Run", "void Run()", "Service.cpp", 1, 8, "hash");
+        var graph = new VersionedGraph(
+            [identity], [version], [], [],
+            [new SymbolChange("change", SymbolChangeKind.ModifyBody, version.Id, version.Id, Confidence.Exact, [])],
+            [new MethodControlFlow(identity.Id,
+                [
+                    new ControlFlowNode("start", "entry", "시작", 1, 1, []),
+                    new ControlFlowNode("loop", "loop", "index < 2", 2, 6, []),
+                    new ControlFlowNode("return", "return", "return", 7, 7, [])
+                ],
+                [
+                    new ControlFlowEdge("start", "loop", "control", ""),
+                    new ControlFlowEdge("loop", "loop", "loopBack", "다음 반복"),
+                    new ControlFlowEdge("loop", "return", "control", "종료")
+                ])]);
+        var comparison = new GitComparison(new string('a', 40), sha, []);
+
+        var result = new DiagramProjectionService().Build("sample", graph, comparison, ["flowchart"], 1, 1, false);
+        var diagram = Assert.Single(result.Artifacts).Ir;
+
+        Assert.Contains(diagram.Nodes, node => node.Shape == "decision");
+        Assert.Contains(diagram.Nodes, node => node.Shape == "return");
+        Assert.Contains(diagram.Edges, edge => edge.Type == "loopBack");
+        _ = new MermaidCompiler(new DiagramValidator()).Compile(diagram);
+    }
+
+    [Fact]
+    public void Build_CodeRelation_GroupsMethodsByClassAndMarksIndirectEdge()
+    {
+        var repositoryId = Guid.NewGuid();
+        var sha = new string('b', 40);
+        var identities = new[]
+        {
+            new SymbolIdentity("type-a", repositoryId, "cpp", "class", "type:InterfaceCustom"),
+            new SymbolIdentity("method-a", repositoryId, "cpp", "method", "function:InterfaceCustom::Run()"),
+            new SymbolIdentity("type-b", repositoryId, "cpp", "class", "type:Opr_Xfer"),
+            new SymbolIdentity("method-b", repositoryId, "cpp", "method", "function:Opr_Xfer::runOrgReturn()")
+        };
+        var versions = new[]
+        {
+            new SymbolVersion("vta", "type-a", sha, "InterfaceCustom", "class InterfaceCustom", "A.cpp", 1, 10, "ta"),
+            new SymbolVersion("vma", "method-a", sha, "InterfaceCustom::Run", "void Run()", "A.cpp", 2, 8, "ma"),
+            new SymbolVersion("vtb", "type-b", sha, "Opr_Xfer", "class Opr_Xfer", "B.cpp", 1, 10, "tb"),
+            new SymbolVersion("vmb", "method-b", sha, "Opr_Xfer::runOrgReturn", "void runOrgReturn()", "B.cpp", 2, 8, "mb")
+        };
+        var graph = new VersionedGraph(
+            identities, versions,
+            [new GraphEdge("edge", "method-a", "method-b", "calls", "runOrgReturn", Confidence.Inferred, [], 1, true, "RunFunction")],
+            [], [new SymbolChange("change", SymbolChangeKind.ModifyBody, "vma", "vma", Confidence.Exact, [])]);
+        var comparison = new GitComparison(new string('a', 40), sha, []);
+        var preset = new DiagramPresetCatalog().Resolve("code-relation", "code-class-grouped");
+
+        var result = new DiagramProjectionService().Build("sample", graph, comparison, ["code-relation"], 1, 1, false,
+            new HashSet<string>(["change"], StringComparer.Ordinal), preset);
+        var diagram = Assert.Single(result.Artifacts).Ir;
+
+        Assert.Contains(diagram.Nodes, node => node.Group == "InterfaceCustom");
+        Assert.Contains(diagram.Nodes, node => node.Group == "Opr_Xfer");
+        Assert.Contains(diagram.Edges, edge => edge.IsIndirect && edge.Label.Contains("RunFunction", StringComparison.Ordinal));
+        var dsl = new MermaidCompiler(new DiagramValidator()).Compile(diagram);
+        Assert.Contains("-.->", dsl, StringComparison.Ordinal);
+    }
 }

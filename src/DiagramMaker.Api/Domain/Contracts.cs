@@ -61,7 +61,27 @@ public sealed record RepositoryDefinition(
     string LocalPath,
     string DefaultBranch,
     IReadOnlyList<string> AllowedRoles,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    RepositoryAnalysisRules? AnalysisRules = null);
+
+public sealed record RepositoryAnalysisRules(
+    int Revision,
+    IReadOnlyList<IndirectCallRule> IndirectCalls);
+
+public sealed record IndirectCallRule(
+    string Id,
+    string Name,
+    bool Enabled,
+    string ApiName,
+    int TargetTypeArgumentIndex,
+    int? TargetMethodArgumentIndex,
+    IReadOnlyList<IndirectCallAlias> Aliases);
+
+public sealed record IndirectCallAlias(string Expression, string TargetType);
+
+public sealed record UpdateRepositoryAnalysisRulesRequest(
+    int ExpectedRevision,
+    IReadOnlyList<IndirectCallRule> IndirectCalls);
 
 public sealed record RegisterRepositoryRequest(
     string Name,
@@ -152,7 +172,32 @@ public sealed record CppCallFact(
     string Name,
     int ArgumentCount,
     int Line,
-    int Order);
+    int Order,
+    IReadOnlyList<string>? Arguments = null,
+    IReadOnlyList<ControlScope>? ControlPath = null);
+
+public sealed record ControlScope(
+    string Id,
+    string Kind,
+    string Label,
+    string Branch);
+
+public sealed record CppControlNodeFact(
+    string Id,
+    string Kind,
+    string Label,
+    int StartLine,
+    int EndLine,
+    int? CallOrder = null,
+    string? TargetSemanticKey = null,
+    bool IsIndirect = false,
+    string? ViaApi = null);
+
+public sealed record CppControlEdgeFact(
+    string SourceId,
+    string TargetId,
+    string Type,
+    string Label);
 
 public sealed record CppSymbolFact(
     string SemanticKey,
@@ -167,7 +212,9 @@ public sealed record CppSymbolFact(
     int EndLine,
     string ContentFingerprint,
     IReadOnlyList<CppCallFact> Calls,
-    IReadOnlyList<string> Bases);
+    IReadOnlyList<string> Bases,
+    IReadOnlyList<CppControlNodeFact>? ControlNodes = null,
+    IReadOnlyList<CppControlEdgeFact>? ControlEdges = null);
 
 public sealed record CppEdgeFact(
     string SourceSemanticKey,
@@ -177,7 +224,18 @@ public sealed record CppEdgeFact(
     Confidence Confidence,
     string FilePath,
     int Line,
-    int? SequenceIndex);
+    int? SequenceIndex,
+    bool IsIndirect = false,
+    string? ViaApi = null,
+    IReadOnlyList<ControlScope>? ControlPath = null);
+
+public sealed record ExcludedCallFact(
+    string FilePath,
+    int Line,
+    string SourceSemanticKey,
+    string Expression,
+    string Reason,
+    IReadOnlyList<string> CandidateTargets);
 
 public sealed record CppSourceIndex(
     string ParserVersion,
@@ -189,7 +247,10 @@ public sealed record CppSourceIndex(
     int IndexedFileCount,
     long IndexedBytes,
     bool Truncated,
-    IReadOnlyList<string> ProjectPaths);
+    IReadOnlyList<string> ProjectPaths,
+    IReadOnlyList<ExcludedCallFact>? ExcludedCalls = null,
+    int ExcludedCallCount = 0,
+    bool ExcludedCallsTruncated = false);
 
 public sealed record PreparedRepositoryAnalysis(
     GitComparison Comparison,
@@ -237,7 +298,32 @@ public sealed record GraphEdge(
     string Label,
     Confidence Confidence,
     IReadOnlyList<string> EvidenceIds,
-    int? SequenceIndex = null);
+    int? SequenceIndex = null,
+    bool IsIndirect = false,
+    string? ViaApi = null,
+    IReadOnlyList<ControlScope>? ControlPath = null);
+
+public sealed record ControlFlowNode(
+    string Id,
+    string Kind,
+    string Label,
+    int StartLine,
+    int EndLine,
+    IReadOnlyList<string> EvidenceIds,
+    string? CallTargetIdentityId = null,
+    bool IsIndirect = false,
+    string? ViaApi = null);
+
+public sealed record ControlFlowEdge(
+    string SourceId,
+    string TargetId,
+    string Type,
+    string Label);
+
+public sealed record MethodControlFlow(
+    string IdentityId,
+    IReadOnlyList<ControlFlowNode> Nodes,
+    IReadOnlyList<ControlFlowEdge> Edges);
 
 public sealed record SymbolChange(
     string Id,
@@ -252,7 +338,8 @@ public sealed record VersionedGraph(
     IReadOnlyList<SymbolVersion> Versions,
     IReadOnlyList<GraphEdge> Edges,
     IReadOnlyList<EvidenceRef> Evidence,
-    IReadOnlyList<SymbolChange> Changes);
+    IReadOnlyList<SymbolChange> Changes,
+    IReadOnlyList<MethodControlFlow>? ControlFlows = null);
 
 public sealed record DiagramNode(
     string Id,
@@ -261,7 +348,9 @@ public sealed record DiagramNode(
     string? Group,
     string Status,
     Confidence Confidence,
-    IReadOnlyList<string> EvidenceIds);
+    IReadOnlyList<string> EvidenceIds,
+    string? Shape = null,
+    IReadOnlyList<string>? Details = null);
 
 public sealed record DiagramEdge(
     string Id,
@@ -272,7 +361,10 @@ public sealed record DiagramEdge(
     string Status,
     Confidence Confidence,
     IReadOnlyList<string> EvidenceIds,
-    int? SequenceIndex = null);
+    int? SequenceIndex = null,
+    bool IsIndirect = false,
+    string? ViaApi = null,
+    IReadOnlyList<ControlScope>? ControlPath = null);
 
 public sealed record DiagramIr(
     string Type,
@@ -391,7 +483,14 @@ public sealed record AnalysisPlan(
     DateTimeOffset UpdatedAt,
     DateTimeOffset ExpiresAt,
     DateTimeOffset? LeaseUntil,
-    string? IndexVersion = null);
+    string? IndexVersion = null,
+    AnalysisExclusionSummary? Exclusions = null);
+
+public sealed record AnalysisExclusionSummary(
+    int TotalCount,
+    int FileCount,
+    bool Truncated,
+    IReadOnlyList<ExcludedCallFact> Calls);
 
 public sealed record UpdateAnalysisPlanSelectionRequest(
     int ExpectedRevision,

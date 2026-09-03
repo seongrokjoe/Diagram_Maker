@@ -8,7 +8,7 @@ public sealed class DiagramProjectionService
 {
     private const int DisplayNodeLimit = 80;
     private const int DisplayEdgeLimit = 120;
-    private static readonly string[] SupportedTypes = ["flowchart", "class", "sequence", "state"];
+    private static readonly string[] SupportedTypes = ["flowchart", "class", "sequence", "code-relation", "state"];
 
     public DiagramProjectionResult Build(
         string repositoryName, VersionedGraph graph, GitComparison comparison, IReadOnlyList<string>? requestedTypes,
@@ -31,13 +31,14 @@ public sealed class DiagramProjectionService
         {
             if (type == "state")
             {
-                availability.Add(new DiagramAvailability(type, false, "정적 분석 결과에 명시적인 상태 전이 근거가 없어 생성하지 않았습니다."));
+                availability.Add(new DiagramAvailability(type, false, "정적 분석 결과에 명시적인 상태 전이 근거가 없어 생성하지 않습니다."));
                 continue;
             }
             var ir = type switch
             {
                 "class" => BuildClass(repositoryName, graph, comparison, selected, changes, contextFilesTruncated, maximumNodes, maximumEdges, direction),
                 "sequence" => BuildSequence(repositoryName, graph, comparison, selected, changes, contextFilesTruncated, maximumNodes, maximumEdges, direction),
+                "code-relation" => BuildCodeRelation(repositoryName, graph, comparison, selected, changes, contextFilesTruncated, maximumNodes, maximumEdges, direction),
                 _ => BuildFlow(repositoryName, graph, comparison, selected, changes, contextFilesTruncated, maximumNodes, maximumEdges, direction)
             };
             if (ir.Nodes.Count == 0)
@@ -57,24 +58,48 @@ public sealed class DiagramProjectionService
         string repositoryName, VersionedGraph graph, GitComparison comparison, IReadOnlySet<string> selected,
         IReadOnlyDictionary<string, string> changes, bool truncated, int maxNodes, int maxEdges, string direction)
     {
-        var nodes = CreateNodes(graph, comparison, selected, changes, maximumNodes: maxNodes);
-        var edges = KeepEdgesBetweenNodes(CreateEdges(graph, selected, changes, false, maxEdges), nodes, maxEdges);
-        return CreateIr("flowchart", repositoryName, comparison, nodes, edges, truncated, maxNodes, maxEdges, direction,
-            "변경 심볼 중심의 caller/callee 영향 흐름입니다.");
+        var selectedFlows = (graph.ControlFlows ?? []).Where(flow => changes.ContainsKey(flow.IdentityId)).ToArray();
+        if (selectedFlows.Length == 0)
+        {
+            var fallbackNodes = CreateNodes(graph, comparison, selected, changes, maximumNodes: maxNodes);
+            var fallbackEdges = KeepEdgesBetweenNodes(CreateEdges(graph, selected, changes, false, maxEdges), fallbackNodes, maxEdges);
+            return CreateIr("flowchart", repositoryName, comparison, fallbackNodes, fallbackEdges, truncated, maxNodes, maxEdges, direction,
+                "제어 흐름 근거가 없는 언어이므로 변경 심볼 중심의 호출 영향도를 표시합니다.");
+        }
+
+        var versions = CurrentVersions(graph, comparison).ToDictionary(static version => version.IdentityId, StringComparer.Ordinal);
+        var nodes = new List<DiagramNode>();
+        var edges = new List<DiagramEdge>();
+        foreach (var flow in selectedFlows.OrderBy(static item => item.IdentityId, StringComparer.Ordinal))
+        {
+            var group = versions.GetValueOrDefault(flow.IdentityId)?.QualifiedName ?? flow.IdentityId;
+            nodes.AddRange(flow.Nodes.Select(node => new DiagramNode(
+                node.Id, node.Label, node.Kind, group, changes.GetValueOrDefault(flow.IdentityId, "modified"),
+                Confidence.Exact, node.EvidenceIds, ShapeForControl(node.Kind),
+                node.CallTargetIdentityId is null ? null : [LabelForIdentity(graph, comparison, node.CallTargetIdentityId)])));
+            edges.AddRange(flow.Edges.Select((edge, index) => new DiagramEdge(
+                StableIds.Create(flow.IdentityId, edge.SourceId, edge.TargetId, edge.Type, index), edge.SourceId, edge.TargetId,
+                edge.Type, edge.Label, changes.GetValueOrDefault(flow.IdentityId, "modified"), Confidence.Exact,
+                flow.Nodes.FirstOrDefault(node => node.Id == edge.SourceId)?.EvidenceIds ?? [])));
+        }
+        var limitedNodes = nodes.Take(maxNodes).ToArray();
+        var limitedEdges = KeepEdgesBetweenNodes(edges, limitedNodes, maxEdges);
+        return CreateIr("flowchart", repositoryName, comparison, limitedNodes, limitedEdges, truncated, maxNodes, maxEdges, direction,
+            "선택한 C++ 변경 메서드의 조건, 반복, 호출 및 리턴을 정적 구문 순서로 표시합니다.");
     }
 
     private static DiagramIr BuildSequence(
         string repositoryName, VersionedGraph graph, GitComparison comparison, IReadOnlySet<string> selected,
         IReadOnlyDictionary<string, string> changes, bool truncated, int maxNodes, int maxEdges, string direction)
     {
-        var callable = selected.Where(id => graph.Identities.FirstOrDefault(identity => identity.Id == id)?.Kind is "method" or "constructor" or "function")
+        var callable = selected.Where(id => graph.Identities.FirstOrDefault(identity => identity.Id == id)?.Kind is "method" or "constructor" or "function" or "class" or "type")
             .ToHashSet(StringComparer.Ordinal);
         if (callable.Count == 0) callable = selected.ToHashSet(StringComparer.Ordinal);
         var nodes = CreateNodes(graph, comparison, callable, changes, maximumNodes: maxNodes);
         var edges = KeepEdgesBetweenNodes(CreateEdges(graph, callable, changes, true, maxEdges), nodes, maxEdges)
             .Where(static edge => edge.Type.Equals("calls", StringComparison.OrdinalIgnoreCase)).ToArray();
         return CreateIr("sequence", repositoryName, comparison, nodes, edges, truncated, maxNodes, maxEdges, direction,
-            "정적 호출 위치를 정렬한 시퀀스이며 실제 런타임 실행 순서를 의미하지 않습니다.");
+            "정적 호출 위치와 확인된 조건·반복 범위를 표시하며 실제 런타임 실행 경로를 의미하지 않습니다.");
     }
 
     private static DiagramIr BuildClass(
@@ -88,16 +113,37 @@ public sealed class DiagramProjectionService
         var nodes = CreateNodes(graph, comparison, selectedOwners, changes, owners, versions, maxNodes);
         var edges = graph.Edges
             .Where(edge => selected.Contains(edge.FromIdentityId) && selected.Contains(edge.ToIdentityId))
-            .Where(edge => edge.Type.Equals("inherits", StringComparison.OrdinalIgnoreCase) || edge.Type.Equals("calls", StringComparison.OrdinalIgnoreCase))
+            .Where(static edge => edge.Type is "inherits" or "calls")
             .Select(edge => edge with { FromIdentityId = owners.GetValueOrDefault(edge.FromIdentityId, edge.FromIdentityId), ToIdentityId = owners.GetValueOrDefault(edge.ToIdentityId, edge.ToIdentityId) })
             .Where(edge => edge.FromIdentityId != edge.ToIdentityId && selectedOwners.Contains(edge.FromIdentityId) && selectedOwners.Contains(edge.ToIdentityId))
-            .DistinctBy(edge => $"{edge.FromIdentityId}:{edge.ToIdentityId}:{edge.Type}")
+            .DistinctBy(edge => $"{edge.FromIdentityId}:{edge.ToIdentityId}:{edge.Type}:{edge.IsIndirect}")
             .Take(maxEdges)
-            .Select(edge => new DiagramEdge(edge.Id, edge.FromIdentityId, edge.ToIdentityId, edge.Type, edge.Label, "unchanged", edge.Confidence, edge.EvidenceIds))
+            .Select(edge => new DiagramEdge(edge.Id, edge.FromIdentityId, edge.ToIdentityId, edge.Type,
+                edge.IsIndirect ? $"간접 API: {edge.ViaApi}" : edge.Label, "unchanged", edge.Confidence, edge.EvidenceIds,
+                edge.SequenceIndex, edge.IsIndirect, edge.ViaApi, edge.ControlPath))
             .ToArray();
         edges = KeepEdgesBetweenNodes(edges, nodes, maxEdges);
         return CreateIr("class", repositoryName, comparison, nodes, edges, truncated, maxNodes, maxEdges, direction,
-            "변경 메서드는 소유 클래스에 축약하여 표시합니다.");
+            "변경 메서드를 소유 클래스에 축약하고 상속 및 호출 의존 방향을 표시합니다.");
+    }
+
+    private static DiagramIr BuildCodeRelation(
+        string repositoryName, VersionedGraph graph, GitComparison comparison, IReadOnlySet<string> selected,
+        IReadOnlyDictionary<string, string> changes, bool truncated, int maxNodes, int maxEdges, string direction)
+    {
+        var versions = CurrentVersions(graph, comparison);
+        var owners = BuildOwners(versions, versions.Where(version => IsType(graph, version.IdentityId)).ToArray());
+        var nodes = CreateNodes(graph, comparison, selected, changes, maximumNodes: maxNodes)
+            .Select(node => node with
+            {
+                Label = LastQualifiedPart(node.Label),
+                Group = OwnerLabel(versions, owners.GetValueOrDefault(node.Id, node.Id)),
+                Shape = IsType(graph, node.Id) ? "type" : "method"
+            }).ToArray();
+        var edges = KeepEdgesBetweenNodes(CreateEdges(graph, selected, changes, false, maxEdges), nodes, maxEdges)
+            .Select(edge => edge with { Label = edge.IsIndirect ? $"간접 API: {edge.ViaApi}" : edge.Label }).ToArray();
+        return CreateIr("code-relation", repositoryName, comparison, nodes, edges, truncated, maxNodes, maxEdges, direction,
+            "클래스별 카드 안에 선택 메서드와 직접 관련 메서드를 배치한 코드 관계도입니다.");
     }
 
     private static DiagramIr CreateIr(
@@ -105,7 +151,7 @@ public sealed class DiagramProjectionService
         IReadOnlyList<DiagramEdge> edges, bool truncated, int maxNodes, int maxEdges, string direction, string description)
     {
         var notes = new List<string> { description, "변경 심볼은 색상으로 구분하며 관계 근거는 Evidence에서 확인할 수 있습니다." };
-        if (truncated) notes.Add("참조 문맥이 제한되어 일부 caller/callee가 누락될 수 있습니다.");
+        if (truncated) notes.Add("참조 문맥이 제한되어 일부 관계가 누락될 수 있습니다.");
         if (nodes.Count >= maxNodes || edges.Count >= maxEdges) notes.Add($"표시는 최대 {maxNodes}개 노드와 {maxEdges}개 관계로 제한합니다.");
         return new DiagramIr(type, $"{repositoryName}: {comparison.BaseSha[..8]} → {comparison.TargetSha[..8]}", nodes, edges,
             notes, [comparison.BaseSha, comparison.TargetSha], direction);
@@ -132,7 +178,8 @@ public sealed class DiagramProjectionService
                 var evidence = graph.Evidence.Where(item => item.RevisionSha == version.RevisionSha && item.FilePath == version.FilePath && item.StartLine == version.StartLine)
                     .Select(static item => item.Id).ToArray();
                 return new DiagramNode(actual.Id, version.QualifiedName + changedMethods, actual.Kind, Path.GetDirectoryName(version.FilePath),
-                    changes.GetValueOrDefault(actual.Id, "unchanged"), evidence.Length == 0 ? Confidence.Inferred : Confidence.Exact, evidence);
+                    changes.GetValueOrDefault(actual.Id, "unchanged"), evidence.Length == 0 ? Confidence.Inferred : Confidence.Exact, evidence,
+                    IsType(graph, actual.Id) ? "type" : "method", [version.Signature]);
             }).Where(static node => node is not null).Take(maximumNodes).Cast<DiagramNode>().ToArray();
     }
 
@@ -150,7 +197,8 @@ public sealed class DiagramProjectionService
             .ThenBy(static edge => edge.SequenceIndex ?? int.MaxValue).ThenBy(static edge => edge.FromIdentityId, StringComparer.Ordinal)
             .ThenBy(static edge => edge.ToIdentityId, StringComparer.Ordinal).Take(maxEdges)
             .Select((edge, index) => new DiagramEdge(edge.Id, edge.FromIdentityId, edge.ToIdentityId, edge.Type, edge.Label, "unchanged",
-                edge.Confidence, edge.EvidenceIds, sequence ? edge.SequenceIndex ?? index + 1 : edge.SequenceIndex)).ToArray();
+                edge.Confidence, edge.EvidenceIds, sequence ? edge.SequenceIndex ?? index + 1 : edge.SequenceIndex,
+                edge.IsIndirect, edge.ViaApi, edge.ControlPath)).ToArray();
 
     private static HashSet<string> SelectImpact(VersionedGraph graph, IEnumerable<string> roots, int callerDepth, int calleeDepth)
     {
@@ -200,6 +248,18 @@ public sealed class DiagramProjectionService
         return result;
     }
 
+    private static string LabelForIdentity(VersionedGraph graph, GitComparison comparison, string identityId) =>
+        CurrentVersions(graph, comparison).FirstOrDefault(version => version.IdentityId == identityId)?.QualifiedName ?? identityId;
+    private static string OwnerLabel(IReadOnlyList<SymbolVersion> versions, string identityId) =>
+        versions.FirstOrDefault(version => version.IdentityId == identityId)?.QualifiedName ?? "전역 함수";
+    private static string ShapeForControl(string kind) => kind switch
+    {
+        "entry" or "exit" => "terminal",
+        "condition" or "loop" => "decision",
+        "call" => "call",
+        "return" => "return",
+        _ => "operation"
+    };
     private static bool IsOwnedBy(string member, string type) => member.StartsWith(type + ".", StringComparison.Ordinal) || member.StartsWith(type + "::", StringComparison.Ordinal);
     private static string LastQualifiedPart(string value) => value.Split(["::", "."], StringSplitOptions.RemoveEmptyEntries).Last();
     private static bool IsType(VersionedGraph graph, string identityId) => graph.Identities.FirstOrDefault(identity => identity.Id == identityId)?.Kind is { } kind &&
@@ -208,5 +268,5 @@ public sealed class DiagramProjectionService
     { "compact" => nodes ? Math.Min(fallback, 20) : Math.Min(fallback, 30), "detailed" => nodes ? Math.Max(fallback, 60) : Math.Max(fallback, 100), _ => fallback };
     private static string NormalizeDirection(string? direction) => direction?.Equals("TB", StringComparison.OrdinalIgnoreCase) == true ? "TB" : "LR";
     private static string NormalizeType(string type) => type.Trim().ToLowerInvariant() switch
-    { "flow" or "dependency" or "component" => "flowchart", "classdiagram" => "class", _ => type.Trim().ToLowerInvariant() };
+    { "flow" or "dependency" or "component" => "flowchart", "classdiagram" => "class", "coderelation" or "er" => "code-relation", _ => type.Trim().ToLowerInvariant() };
 }

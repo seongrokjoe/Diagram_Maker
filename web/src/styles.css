@@ -119,7 +119,7 @@ textarea { resize: vertical; line-height: 1.55; }
 .change.renamed { color: #5d3a9f; background: #eee6fc; }
 .risk { display: flex; gap: 12px; margin: 8px 0; padding: 10px 12px; background: #fff3f1; border: 1px solid #f0c7c2; font-size: 12px; }
 .risk strong { color: #b33027; text-transform: uppercase; }
-.repository-list li { justify-content: space-between; }
+.repository-list li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, .7fr); justify-content: stretch; }
 .repository-list div { display: flex; flex-direction: column; gap: 4px; }
 .repository-list span { color: #718198; font-size: 12px; }
 details { margin-top: 16px; }
@@ -153,6 +153,24 @@ pre { overflow: auto; max-height: 260px; padding: 14px; background: #101c2d; col
 .candidate-row select { margin-top: 8px; padding: 7px 9px; }
 .candidate-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .candidate-actions select { flex: 1; }
+.group-select-label { flex: 1; display: grid; grid-template-columns: auto minmax(150px, 1fr); align-items: center; gap: 8px; }
+.group-select-label span { white-space: nowrap; }
+.group-select-label select { margin-top: 0; }
+.exclusion-panel { min-height: 0; margin: 12px 0; padding: 14px 18px; box-shadow: none; }
+.exclusion-panel > summary { color: #8a5b00; }
+.exclusion-panel .help { margin-top: 10px; }
+.exclusion-file { margin-top: 9px; border: 1px solid #e5d7ad; padding: 8px 10px; background: #fffdf5; }
+.exclusion-file ul { display: grid; gap: 7px; margin: 9px 0 0; padding: 0; list-style: none; }
+.exclusion-file li { display: grid; gap: 3px; font-size: 11px; }
+.exclusion-file small { color: #7c6b47; overflow-wrap: anywhere; }
+.repository-rules { grid-column: 1 / -1; margin: 3px 0 5px; padding: 10px 12px; border: 1px solid #d9e2eb; background: #f8fafc; }
+.repository-rules > .help { margin-top: 10px; }
+.rule-stack { display: grid !important; gap: 10px; margin: 12px 0; }
+.rule-card { display: grid; gap: 12px; padding: 12px; border: 1px solid #ccd8e4; background: white; }
+.rule-heading { display: flex !important; flex-direction: row !important; justify-content: space-between; align-items: center; }
+.alias-editor { margin-top: 0; }
+.alias-row { display: grid !important; grid-template-columns: minmax(130px, 1fr) auto minmax(130px, 1fr) auto; align-items: center; gap: 7px !important; margin: 8px 0; }
+.alias-row input { padding: 8px; }
 .evidence-snippet { margin-top: 8px; }
 .evidence-snippet pre { max-height: 210px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .merge-toolbar { display: flex; justify-content: flex-end; }

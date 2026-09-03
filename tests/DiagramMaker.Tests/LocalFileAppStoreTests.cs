@@ -11,7 +11,12 @@ public sealed class LocalFileAppStoreTests
     {
         var filePath = Path.Combine(AppContext.BaseDirectory, $"repository-registry-{Guid.NewGuid():N}.json");
         var repository = new RepositoryDefinition(
-            Guid.NewGuid(), "Test repository", @"C:\Work\Repository", "main", ["Reviewer"], DateTimeOffset.UtcNow);
+            Guid.NewGuid(), "Test repository", @"C:\Work\Repository", "main", ["Reviewer"], DateTimeOffset.UtcNow,
+            new RepositoryAnalysisRules(1,
+            [
+                new IndirectCallRule("run-function", "RunFunction", true, "RunFunction", 0, 1,
+                    [new IndirectCallAlias("m_strFunctionOprXfer", "Opr_Xfer")])
+            ]));
 
         await using (var first = new LocalFileAppStore(filePath))
         {
@@ -26,6 +31,8 @@ public sealed class LocalFileAppStoreTests
         Assert.NotNull(restored);
         Assert.Equal(repository.LocalPath, restored.LocalPath);
         Assert.Equal(repository.DefaultBranch, restored.DefaultBranch);
+        Assert.Equal(1, restored.AnalysisRules?.Revision);
+        Assert.Equal("Opr_Xfer", Assert.Single(Assert.Single(restored.AnalysisRules!.IndirectCalls).Aliases).TargetType);
     }
 
     [Fact]

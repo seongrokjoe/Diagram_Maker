@@ -47,19 +47,32 @@ public sealed class SourceGraphAnalyzerTests
             new string('a', 40),
             targetSha,
             [new ChangedFile("Service.cpp", null, ChangeKind.Modified, "before", "after", [], "void Run() {}", "void Run() { Save(); }")]);
-        var run = CppFact("function:Run()", "Run", "run");
+        var run = CppFact("function:Run()", "Run", "run") with
+        {
+            ControlNodes =
+            [
+                new CppControlNodeFact("start", "entry", "시작", 1, 1),
+                new CppControlNodeFact("call", "call", "Save(1)", 1, 1, 1, "function:Save(int)", true, "RunFunction")
+            ],
+            ControlEdges = [new CppControlEdgeFact("start", "call", "control", "")]
+        };
         var save = CppFact("function:Save(int)", "Save", "save");
         var duplicateSave = save with { FilePath = "Service.cpp", StartLine = 20, EndLine = 21 };
         var index = new CppSourceIndex(
             "tree-sitter-cpp-0.23.4/index-v2",
             [run, save, duplicateSave],
-            [new CppEdgeFact(run.SemanticKey, save.SemanticKey, "calls", "calls", Confidence.Exact, "Service.cpp", 1, 1)],
+            [new CppEdgeFact(run.SemanticKey, save.SemanticKey, "calls", "calls", Confidence.Exact, "Service.cpp", 1, 1, true, "RunFunction")],
             [], [], 0, 1, 100, false, []);
 
         var result = new SourceGraphAnalyzer().Analyze(Guid.NewGuid(), comparison, index);
 
         Assert.Single(result.Identities, identity => identity.SemanticKey == save.SemanticKey);
-        Assert.Single(result.Edges, edge => edge.Type == "calls");
+        var edge = Assert.Single(result.Edges, edge => edge.Type == "calls");
+        Assert.True(edge.IsIndirect);
+        Assert.Equal("RunFunction", edge.ViaApi);
+        var flow = Assert.Single(result.ControlFlows!);
+        Assert.Equal(2, flow.Nodes.Count);
+        Assert.Contains(flow.Nodes, node => node.IsIndirect && node.CallTargetIdentityId == edge.ToIdentityId);
     }
 
     private static CppSymbolFact CppFact(string semanticKey, string name, string fingerprint) => new(

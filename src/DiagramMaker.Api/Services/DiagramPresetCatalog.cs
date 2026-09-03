@@ -9,23 +9,23 @@ public sealed class DiagramPresetCatalog
         new(
             "flow-horizontal-focused",
             "flowchart",
-            "가로 집중형",
-            "핵심 변경과 직접 호출 관계만 왼쪽에서 오른쪽으로 표시합니다.",
-            "flowchart LR\n    change[\"변경\"] --> callee[\"직접 호출\"]",
+            "메서드 직선 흐름",
+            "선택 메서드의 주요 처리와 직접 호출을 왼쪽에서 오른쪽으로 표시합니다.",
+            "flowchart LR\n    start([\"시작\"]) --> call[[\"직접 호출\"]] --> done([\"종료\"])",
             "LR", "compact", 1, 1, 1, 20, 30),
         new(
             "flow-vertical-overview",
             "flowchart",
-            "세로 개요형",
-            "변경 지점과 직접적인 상·하위 호출 관계를 위에서 아래로 표시합니다.",
-            "flowchart TB\n    caller[\"호출자\"] --> change[\"변경\"]\n    change --> callee[\"피호출자\"]",
+            "조건 분기형",
+            "조건, 처리, 리턴을 위에서 아래로 읽기 쉽게 표시합니다.",
+            "flowchart TB\n    start([\"시작\"]) --> check{\"조건\"}\n    check -->|예| call[[\"호출\"]]\n    check -->|아니오| done([\"종료\"])",
             "TB", "balanced", 1, 1, 1, 35, 60),
         new(
             "flow-impact-detailed",
             "flowchart",
-            "상세 영향형",
-            "변경 전후의 호출 영향을 최대 2단계까지 가로로 확장합니다.",
-            "flowchart LR\n    caller[\"상위 호출\"] --> change[\"변경\"]\n    change --> callee[\"직접 호출\"] --> downstream[\"하위 호출\"]",
+            "반복 상세형",
+            "반복, 분기, 호출 및 리턴을 넓은 화면에 상세히 표시합니다.",
+            "flowchart LR\n    start([\"시작\"]) --> loop{\"반복 조건\"}\n    loop -->|반복| call[[\"호출\"]]\n    call -.->|다음 반복| loop\n    loop -->|종료| done([\"리턴\"])",
             "LR", "detailed", 2, 2, 2, 60, 100),
 
         new(
@@ -71,6 +71,28 @@ public sealed class DiagramPresetCatalog
             "관련 클래스 의존 관계를 최대 2단계까지 가로로 표시합니다.",
             "classDiagram\n    direction LR\n    class Caller\n    class Changed\n    class Dependency\n    Caller --> Changed\n    Changed --> Dependency",
             "LR", "detailed", 2, 2, 2, 50, 80),
+
+        new(
+            "code-method-centered",
+            "code-relation",
+            "메서드 중심형",
+            "선택 메서드와 직접 호출 대상만 간결한 카드 형태로 표시합니다.",
+            "flowchart LR\n    source[\"변경 메서드\"] --> target[\"호출 메서드\"]",
+            "LR", "compact", 0, 1, 1, 20, 30),
+        new(
+            "code-class-grouped",
+            "code-relation",
+            "클래스 그룹형",
+            "관련 메서드를 소유 클래스별로 묶어 세로로 표시합니다.",
+            "flowchart TB\n    subgraph A[\"InterfaceCustom\"]\n      run[\"Run\"]\n    end\n    subgraph B[\"Opr_Xfer\"]\n      target[\"runOrgReturn\"]\n    end\n    run --> target",
+            "TB", "balanced", 1, 1, 1, 35, 60),
+        new(
+            "code-indirect-focused",
+            "code-relation",
+            "간접 API 강조형",
+            "직접 호출과 사용자 정의 간접 API 호출을 시각적으로 구분합니다.",
+            "flowchart LR\n    source[\"InterfaceCustom.Run\"] -.->|\"간접 API: RunFunction\"| target[\"Opr_Xfer.runOrgReturn\"]",
+            "LR", "detailed", 1, 1, 1, 50, 80),
 
         new(
             "state-vertical-compact",
