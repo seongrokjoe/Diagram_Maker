@@ -110,7 +110,9 @@ public sealed record AnalyzeRequest(
     bool IncludeLlmSummary = true,
     bool EnableThinking = false,
     Guid? AnalysisPlanId = null,
-    IReadOnlyList<AnalysisGroupSelection>? Groups = null);
+    IReadOnlyList<AnalysisGroupSelection>? Groups = null,
+    Guid? SourceAnalysisId = null,
+    IReadOnlyList<string>? RequestedViewIds = null);
 
 public sealed record AnalysisJob(
     Guid Id,
@@ -413,7 +415,18 @@ public sealed record AnalysisDiagramGroupResult(
     IReadOnlyList<string> ChangeIds,
     DiagramArtifact? Diagram,
     ReviewNarrative Narrative,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    IReadOnlyList<AnalysisDiagramViewResult>? Views = null);
+
+public sealed record AnalysisDiagramViewResult(
+    string ViewId,
+    DiagramViewSelection Selection,
+    DiagramArtifact? Diagram,
+    IReadOnlyList<string> Warnings,
+    string State = "Completed",
+    string? ErrorCode = null,
+    string? ErrorMessage = null,
+    bool Reused = false);
 
 public sealed record DiagramStyleOverrides(
     string? Direction = null,
@@ -422,13 +435,20 @@ public sealed record DiagramStyleOverrides(
     int? CalleeDepth = null,
     int? RelationDepth = null);
 
+public sealed record DiagramViewSelection(
+    string Id,
+    string DiagramType,
+    string PresetId,
+    DiagramStyleOverrides? Overrides = null);
+
 public sealed record AnalysisGroupSelection(
     string Id,
     string Title,
     IReadOnlyList<string> ChangeIds,
     string DiagramType,
     string PresetId,
-    DiagramStyleOverrides? Overrides = null);
+    DiagramStyleOverrides? Overrides = null,
+    IReadOnlyList<DiagramViewSelection>? Views = null);
 
 public sealed record AnalysisPlanRequest(
     Guid RepositoryId,
@@ -484,7 +504,15 @@ public sealed record AnalysisPlan(
     DateTimeOffset ExpiresAt,
     DateTimeOffset? LeaseUntil,
     string? IndexVersion = null,
-    AnalysisExclusionSummary? Exclusions = null);
+    AnalysisExclusionSummary? Exclusions = null,
+    string? TargetCommitMessage = null,
+    IReadOnlyList<AnalysisNotice>? Notices = null);
+
+public sealed record AnalysisNotice(
+    string Code,
+    string Category,
+    string Severity,
+    string Message);
 
 public sealed record AnalysisExclusionSummary(
     int TotalCount,
@@ -496,7 +524,10 @@ public sealed record UpdateAnalysisPlanSelectionRequest(
     int ExpectedRevision,
     IReadOnlyList<AnalysisGroupSelection> Groups);
 
-public sealed record GenerateAnalysisPlanRequest(int ExpectedRevision);
+public sealed record GenerateAnalysisPlanRequest(
+    int ExpectedRevision,
+    Guid? SourceAnalysisId = null,
+    IReadOnlyList<string>? RequestedViewIds = null);
 
 public sealed record DiagramPreset(
     string Id,
@@ -519,7 +550,22 @@ public sealed record NaturalDiagramRequest(
     bool EnableThinking = false,
     bool ForceRegenerate = false,
     string PresetId = "balanced",
-    DiagramStyleOverrides? Style = null);
+    DiagramStyleOverrides? Style = null,
+    IReadOnlyList<DiagramViewSelection>? Views = null);
+
+public sealed record ReviseNaturalDiagramViewsRequest(
+    IReadOnlyList<DiagramViewSelection> Views,
+    IReadOnlyList<string>? RegenerateViewIds = null);
+
+public sealed record NaturalDiagramViewResult(
+    string ViewId,
+    DiagramViewSelection Selection,
+    DiagramArtifact? Diagram,
+    string State = "Completed",
+    string? ErrorCode = null,
+    string? ErrorMessage = null,
+    DiagramArtifact? LastSuccessfulDiagram = null,
+    bool Reused = false);
 
 public sealed record NaturalDiagramRecord(
     Guid Id,
@@ -531,9 +577,46 @@ public sealed record NaturalDiagramRecord(
     Guid? ParentDiagramId = null,
     string Source = "generated",
     string GeneratorVersion = "natural-v1",
-    bool Reused = false);
+    bool Reused = false,
+    IReadOnlyList<NaturalDiagramViewResult>? Views = null,
+    int Revision = 1);
 
 public sealed record SaveDiagramDslRevisionRequest(string MermaidDsl);
+
+public sealed record EditableDiagramNode(string Id, string Label);
+
+public sealed record EditableDiagramEdge(
+    string Id,
+    string SourceId,
+    string TargetId,
+    string Label,
+    string? Type = null);
+
+public sealed record DiagramEditDocument(
+    string Title,
+    string? Direction,
+    IReadOnlyList<EditableDiagramNode> Nodes,
+    IReadOnlyList<EditableDiagramEdge> Edges);
+
+public sealed record SaveDiagramEditRequest(
+    Guid RootArtifactId,
+    Guid? ParentRevisionId,
+    int ExpectedVersion,
+    DiagramEditDocument Document);
+
+public sealed record DiagramRevisionRecord(
+    Guid Id,
+    Guid RootArtifactId,
+    Guid SourceArtifactId,
+    Guid? ParentRevisionId,
+    string OwnerUserId,
+    string SourceKind,
+    Guid SourceId,
+    string? GroupId,
+    string ViewId,
+    int Version,
+    DiagramArtifact Diagram,
+    DateTimeOffset CreatedAt);
 
 public sealed record AuditEvent(
     Guid Id,

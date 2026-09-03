@@ -43,6 +43,37 @@ public sealed class NaturalDiagramServiceTests
         Assert.Equal("flow-vertical-overview", first.Request.PresetId);
     }
 
+    [Fact]
+    public async Task ReviseViewsAsync_RegeneratesOnlyRequestedViewAndReusesTheOtherView()
+    {
+        var llm = new FakeLlm();
+        var store = new InMemoryAppStore();
+        await store.InitializeAsync(CancellationToken.None);
+        using var cache = new NaturalDiagramSessionCache();
+        var validator = new DiagramValidator();
+        var service = new NaturalDiagramService(
+            llm, new MermaidCompiler(validator), store, cache, new DiagramPresetCatalog(),
+            Options.Create(new LlmOptions { Model = "stable-model" }), new TestEnvironment());
+        var views = new[]
+        {
+            new DiagramViewSelection("flow", "flowchart", "flow-vertical-overview"),
+            new DiagramViewSelection("sequence", "sequence", "sequence-caller-context")
+        };
+        var request = new NaturalDiagramRequest("사용자에서 서비스로 흐름", "flowchart", Views: views);
+
+        var first = await service.GenerateAsync(request, "reviewer", CancellationToken.None);
+        var revised = await service.ReviseViewsAsync(first, views, new HashSet<string>(["sequence"]),
+            "reviewer", CancellationToken.None);
+
+        Assert.Equal(3, llm.CallCount);
+        Assert.Equal(2, revised.Views!.Count);
+        Assert.True(revised.Views.Single(view => view.ViewId == "flow").Reused);
+        Assert.False(revised.Views.Single(view => view.ViewId == "sequence").Reused);
+        Assert.Equal(first.Views!.Single(view => view.ViewId == "flow").Diagram!.Id,
+            revised.Views.Single(view => view.ViewId == "flow").Diagram!.Id);
+        Assert.Equal(2, revised.Revision);
+    }
+
     [Theory]
     [InlineData("호출 순서를 시퀀스로 그려줘", "sequence")]
     [InlineData("클래스 상속 관계를 그려줘", "class")]

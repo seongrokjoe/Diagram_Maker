@@ -42,14 +42,21 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
 
         foreach (var edge in diagram.Edges)
         {
-            var arrow = edge.IsIndirect ? " -.->" : edge.Type.Equals("loopBack", StringComparison.OrdinalIgnoreCase) ? " -.->" : " -->";
-            builder.Append("    ").Append(aliases[edge.SourceId]).Append(arrow);
-            if (!string.IsNullOrWhiteSpace(edge.Label))
+            var dotted = edge.IsIndirect || edge.Type.Equals("loopBack", StringComparison.OrdinalIgnoreCase);
+            builder.Append("    ").Append(aliases[edge.SourceId]);
+            if (dotted)
             {
-                builder.Append("|\"").Append(Escape(edge.Label)).Append("\"|");
+                if (string.IsNullOrWhiteSpace(edge.Label)) builder.Append(" -.-> ");
+                else builder.Append(" -. ").Append(EscapeDottedEdgeLabel(edge.Label)).Append(" .-> ");
             }
-
-            builder.Append(' ').Append(aliases[edge.TargetId]).Append('\n');
+            else
+            {
+                builder.Append(" -->");
+                if (!string.IsNullOrWhiteSpace(edge.Label))
+                    builder.Append("|\"").Append(Escape(edge.Label)).Append("\"|");
+                builder.Append(' ');
+            }
+            builder.Append(aliases[edge.TargetId]).Append('\n');
         }
 
         AppendStyles(builder, diagram, aliases);
@@ -80,7 +87,7 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
         var aliases = diagram.Nodes.ToDictionary(static node => node.Id, static node => Alias(node.Id));
         foreach (var node in diagram.Nodes)
         {
-            builder.Append("    participant ").Append(aliases[node.Id]).Append(" as ").Append(Escape(node.Label)).Append('\n');
+            builder.Append("    participant ").Append(aliases[node.Id]).Append(" as ").Append(EscapeSequence(node.Label)).Append('\n');
         }
 
         foreach (var edge in diagram.Edges.OrderBy(static edge => edge.SequenceIndex ?? int.MaxValue))
@@ -89,16 +96,16 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
             foreach (var scope in scopes)
             {
                 if (scope.Kind.Equals("loop", StringComparison.OrdinalIgnoreCase))
-                    builder.Append("    loop ").Append(Escape(scope.Label)).Append('\n');
+                    builder.Append("    loop ").Append(EscapeSequence(scope.Label)).Append('\n');
                 else
                 {
-                    builder.Append("    alt ").Append(Escape(scope.Label)).Append('\n');
+                    builder.Append("    alt ").Append(EscapeSequence(scope.Label)).Append('\n');
                     if (scope.Branch.Equals("else", StringComparison.OrdinalIgnoreCase)) builder.AppendLine("    else 그 외");
                 }
             }
             var advanced = edge.ControlPath is not null;
             builder.Append("    ").Append(aliases[edge.SourceId]).Append(edge.IsIndirect ? "-->>+" : advanced ? "->>+" : "->>")
-                .Append(aliases[edge.TargetId]).Append(": ").Append(Escape(edge.IsIndirect ? $"간접 API: {edge.ViaApi} · {edge.Label}" : edge.Label)).Append('\n');
+                .Append(aliases[edge.TargetId]).Append(": ").Append(EscapeSequence(edge.IsIndirect ? $"간접 API: {edge.ViaApi} · {edge.Label}" : edge.Label)).Append('\n');
             if (advanced)
                 builder.Append("    ").Append(aliases[edge.TargetId]).Append("-->>-")
                     .Append(aliases[edge.SourceId]).AppendLine(": return");
@@ -186,6 +193,17 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
         .Replace("\r", " ", StringComparison.Ordinal)
         .Replace("\n", " ", StringComparison.Ordinal)
         .Trim();
+
+    private static string EscapeSequence(string value) => value
+        .Replace("%%", string.Empty, StringComparison.Ordinal)
+        .Replace("\"", "'", StringComparison.Ordinal)
+        .Replace("\r", " ", StringComparison.Ordinal)
+        .Replace("\n", " ", StringComparison.Ordinal)
+        .Trim();
+
+    private static string EscapeDottedEdgeLabel(string value) => Escape(value)
+        .Replace(".", "·", StringComparison.Ordinal)
+        .Replace("-", "–", StringComparison.Ordinal);
 
     private static string Alias(string id) => "n_" + InvalidAliasCharacters().Replace(id, "_");
 

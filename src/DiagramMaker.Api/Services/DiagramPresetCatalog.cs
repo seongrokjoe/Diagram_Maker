@@ -25,7 +25,7 @@ public sealed class DiagramPresetCatalog
             "flowchart",
             "반복 상세형",
             "반복, 분기, 호출 및 리턴을 넓은 화면에 상세히 표시합니다.",
-            "flowchart LR\n    start([\"시작\"]) --> loop{\"반복 조건\"}\n    loop -->|반복| call[[\"호출\"]]\n    call -.->|다음 반복| loop\n    loop -->|종료| done([\"리턴\"])",
+            "flowchart LR\n    start([\"시작\"]) --> loop{\"반복 조건\"}\n    loop -->|반복| call[[\"호출\"]]\n    call -. 다음 반복 .-> loop\n    loop -->|종료| done([\"리턴\"])",
             "LR", "detailed", 2, 2, 2, 60, 100),
 
         new(
@@ -91,7 +91,7 @@ public sealed class DiagramPresetCatalog
             "code-relation",
             "간접 API 강조형",
             "직접 호출과 사용자 정의 간접 API 호출을 시각적으로 구분합니다.",
-            "flowchart LR\n    source[\"InterfaceCustom.Run\"] -.->|\"간접 API: RunFunction\"| target[\"Opr_Xfer.runOrgReturn\"]",
+            "flowchart LR\n    source[\"InterfaceCustom.Run\"] -. 간접 API: RunFunction .-> target[\"Opr_Xfer.runOrgReturn\"]",
             "LR", "detailed", 1, 1, 1, 50, 80),
 
         new(

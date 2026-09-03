@@ -9,6 +9,7 @@ public sealed class InMemoryAppStore : IAppStore
     private readonly ConcurrentDictionary<Guid, AnalysisJob> _analyses = new();
     private readonly ConcurrentDictionary<Guid, AnalysisPlan> _analysisPlans = new();
     private readonly ConcurrentDictionary<Guid, NaturalDiagramRecord> _diagrams = new();
+    private readonly ConcurrentDictionary<Guid, DiagramRevisionRecord> _diagramRevisions = new();
     private readonly ConcurrentQueue<AuditEvent> _audit = new();
     private readonly SemaphoreSlim _leaseLock = new(1, 1);
     private readonly SemaphoreSlim _planLeaseLock = new(1, 1);
@@ -146,7 +147,9 @@ public sealed class InMemoryAppStore : IAppStore
 
     public Task<IReadOnlyList<NaturalDiagramRecord>> ListNaturalDiagramsAsync(string ownerUserId, int limit, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<NaturalDiagramRecord>>(_diagrams.Values
-            .Where(record => record.OwnerUserId.Equals(ownerUserId, StringComparison.Ordinal) && record.ParentDiagramId is null)
+            .Where(record => record.OwnerUserId.Equals(ownerUserId, StringComparison.Ordinal))
+            .GroupBy(record => record.RootDiagramId ?? record.Id)
+            .Select(group => group.OrderByDescending(record => record.Revision).First())
             .OrderByDescending(record => record.CreatedAt)
             .Take(limit)
             .ToArray());
@@ -154,11 +157,32 @@ public sealed class InMemoryAppStore : IAppStore
     public Task<IReadOnlyList<NaturalDiagramRecord>> ListNaturalDiagramRevisionsAsync(Guid rootDiagramId, string ownerUserId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<NaturalDiagramRecord>>(_diagrams.Values
             .Where(record => record.OwnerUserId.Equals(ownerUserId, StringComparison.Ordinal) && (record.RootDiagramId ?? record.Id) == rootDiagramId)
-            .OrderBy(record => record.Diagram.Version)
+            .OrderBy(record => record.Revision)
+            .ToArray());
+
+    public Task SaveDiagramRevisionAsync(DiagramRevisionRecord record, CancellationToken cancellationToken)
+    {
+        _diagramRevisions[record.Id] = record;
+        return Task.CompletedTask;
+    }
+
+    public Task<DiagramRevisionRecord?> GetDiagramRevisionAsync(Guid id, CancellationToken cancellationToken)
+    {
+        _diagramRevisions.TryGetValue(id, out var record);
+        return Task.FromResult(record);
+    }
+
+    public Task<IReadOnlyList<DiagramRevisionRecord>> ListDiagramRevisionsAsync(Guid rootArtifactId, string ownerUserId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<DiagramRevisionRecord>>(_diagramRevisions.Values
+            .Where(record => record.RootArtifactId == rootArtifactId && record.OwnerUserId.Equals(ownerUserId, StringComparison.Ordinal))
+            .OrderBy(record => record.Version)
             .ToArray());
 
     public Task<IReadOnlyList<NaturalDiagramRecord>> ListAllNaturalDiagramsAsync(CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<NaturalDiagramRecord>>(_diagrams.Values.OrderBy(record => record.CreatedAt).ToArray());
+
+    public Task<IReadOnlyList<DiagramRevisionRecord>> ListAllDiagramRevisionsAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<DiagramRevisionRecord>>(_diagramRevisions.Values.OrderBy(record => record.CreatedAt).ToArray());
 
     public Task SaveAuditAsync(AuditEvent auditEvent, CancellationToken cancellationToken)
     {

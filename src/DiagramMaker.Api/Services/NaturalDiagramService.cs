@@ -17,23 +17,12 @@ public sealed class NaturalDiagramService(
     IOptions<LlmOptions> options,
     IWebHostEnvironment environment)
 {
-    public const string GeneratorVersion = "natural-v3";
+    public const string GeneratorVersion = "natural-v4";
     private readonly LlmOptions _options = options.Value;
 
     public async Task<NaturalDiagramRecord> GenerateAsync(NaturalDiagramRequest request, string ownerUserId, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(request.Prompt) || request.Prompt.Length > 10_000)
-        {
-            throw new ArgumentException("Prompt must contain between 1 and 10,000 characters.");
-        }
-
-        var resolvedType = NaturalDiagramTypeResolver.Resolve(request.DiagramType, request.Prompt);
-        if (!DiagramProjectionService.IsSupported(resolvedType))
-            throw new ArgumentException("DiagramType must be flowchart, sequence, class, or state.");
-        if (!presets.Contains(resolvedType, request.PresetId))
-            throw new ArgumentException($"Preset '{request.PresetId}' does not support {resolvedType}.");
-        var preset = presets.Resolve(resolvedType, request.PresetId);
-        var normalizedRequest = request with { DiagramType = resolvedType, PresetId = preset.Id };
+        var normalizedRequest = NormalizeRequest(request);
         var cacheKey = CreateCacheKey(normalizedRequest, ownerUserId);
         if (!request.ForceRegenerate && cache.TryGet(cacheKey, out var cachedId))
         {
@@ -51,19 +40,6 @@ public sealed class NaturalDiagramService(
                 if (cached is not null) return cached with { Reused = true };
             }
 
-            DiagramIr? ir = null;
-            if (llm.IsEnabled)
-                ir = await llm.GenerateNaturalDiagramAsync(
-                    normalizedRequest.Prompt,
-                    resolvedType,
-                    normalizedRequest.EnableThinking,
-                    preset,
-                    normalizedRequest.Style,
-                    cancellationToken);
-            if (ir is null && _options.AllowDevelopmentStub && environment.IsDevelopment()) ir = CreateDeterministicDiagram(normalizedRequest);
-            if (ir is null) throw new InvalidOperationException("The internal LLM is unavailable and no external fallback is permitted.");
-            ir = ApplyPreset(ir, preset, normalizedRequest.Style);
-
             NaturalDiagramRecord? parent = null;
             if (normalizedRequest.ParentDiagramId is { } parentId)
             {
@@ -71,13 +47,8 @@ public sealed class NaturalDiagramService(
                          ?? throw new ArgumentException("Parent diagram does not exist.");
                 if (!string.IsNullOrEmpty(parent.OwnerUserId) && !parent.OwnerUserId.Equals(ownerUserId, StringComparison.Ordinal)) throw new UnauthorizedAccessException();
             }
-            var now = DateTimeOffset.UtcNow;
-            var diagramId = Guid.NewGuid();
-            var version = (parent?.Diagram.Version ?? 0) + 1;
-            var artifact = new DiagramArtifact(diagramId, ir.Type, version, ir, compiler.Compile(ir), now);
-            var rootId = parent?.RootDiagramId ?? parent?.Id ?? diagramId;
-            var record = new NaturalDiagramRecord(diagramId, normalizedRequest with { ForceRegenerate = false }, artifact, now,
-                ownerUserId, rootId, parent?.Id, "generated", GeneratorVersion, false);
+            var requestedIds = normalizedRequest.EffectiveViews().Select(static view => view.Id).ToHashSet(StringComparer.Ordinal);
+            var record = await BuildRevisionAsync(normalizedRequest, parent, requestedIds, ownerUserId, cancellationToken);
             await store.SaveNaturalDiagramAsync(record, cancellationToken);
             cache.Set(cacheKey, record.Id);
             return record;
@@ -88,11 +59,132 @@ public sealed class NaturalDiagramService(
         }
     }
 
+    public async Task<NaturalDiagramRecord> ReviseViewsAsync(
+        NaturalDiagramRecord parent,
+        IReadOnlyList<DiagramViewSelection> views,
+        IReadOnlySet<string> regenerateViewIds,
+        string ownerUserId,
+        CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrEmpty(parent.OwnerUserId) && !parent.OwnerUserId.Equals(ownerUserId, StringComparison.Ordinal))
+            throw new UnauthorizedAccessException();
+        var primary = views.FirstOrDefault() ?? throw new ArgumentException("At least one diagram view is required.");
+        var request = NormalizeRequest(parent.Request with
+        {
+            ParentDiagramId = parent.Id,
+            DiagramType = primary.DiagramType,
+            PresetId = primary.PresetId,
+            Style = primary.Overrides,
+            Views = views,
+            ForceRegenerate = false
+        });
+        var record = await BuildRevisionAsync(request, parent, regenerateViewIds, ownerUserId, cancellationToken);
+        await store.SaveNaturalDiagramAsync(record, cancellationToken);
+        return record;
+    }
+
+    private NaturalDiagramRequest NormalizeRequest(NaturalDiagramRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Prompt) || request.Prompt.Length > 10_000)
+            throw new ArgumentException("Prompt must contain between 1 and 10,000 characters.");
+        var views = request.EffectiveViews();
+        if (views.Count is < 1 or > 4) throw new ArgumentException("One to four natural diagram views are required.");
+        var normalized = views.Select(view =>
+        {
+            var resolvedType = NaturalDiagramTypeResolver.Resolve(view.DiagramType, request.Prompt);
+            if (resolvedType is not ("flowchart" or "sequence" or "class" or "state"))
+                throw new ArgumentException("Natural diagram views must be flowchart, sequence, class, or state.");
+            if (!presets.Contains(resolvedType, view.PresetId))
+                throw new ArgumentException($"Preset '{view.PresetId}' does not support {resolvedType}.");
+            return DiagramViewSelectionService.Normalize(view with { DiagramType = resolvedType, PresetId = presets.Resolve(resolvedType, view.PresetId).Id });
+        }).ToArray();
+        if (normalized.Select(static view => view.Id).Distinct(StringComparer.Ordinal).Count() != normalized.Length)
+            throw new ArgumentException("Every diagram view must have a unique ID.");
+        if (normalized.Select(static view => view.DiagramType).Distinct(StringComparer.Ordinal).Count() != normalized.Length)
+            throw new ArgumentException("A diagram type can only be selected once per request.");
+        var primary = normalized[0];
+        return request with
+        {
+            DiagramType = primary.DiagramType,
+            PresetId = primary.PresetId,
+            Style = primary.Overrides,
+            Views = normalized
+        };
+    }
+
+    private async Task<NaturalDiagramRecord> BuildRevisionAsync(
+        NaturalDiagramRequest request,
+        NaturalDiagramRecord? parent,
+        IReadOnlySet<string> regenerateViewIds,
+        string ownerUserId,
+        CancellationToken cancellationToken)
+    {
+        var previous = EffectiveResults(parent).ToDictionary(static view => view.ViewId, StringComparer.Ordinal);
+        var results = new List<NaturalDiagramViewResult>();
+        Exception? firstFailure = null;
+        foreach (var view in request.EffectiveViews())
+        {
+            if (!regenerateViewIds.Contains(view.Id) && previous.TryGetValue(view.Id, out var unchanged) && unchanged.Selection == view)
+            {
+                results.Add(unchanged with { Reused = true });
+                continue;
+            }
+            previous.TryGetValue(view.Id, out var prior);
+            try
+            {
+                var artifact = await GenerateViewAsync(request, view, (prior?.Diagram?.Version ?? 0) + 1, cancellationToken);
+                results.Add(new NaturalDiagramViewResult(view.Id, view, artifact));
+            }
+            catch (Exception exception) when (exception is LlmClientException or InvalidOperationException or DiagramValidationException)
+            {
+                firstFailure ??= exception;
+                var fallback = prior?.Diagram ?? prior?.LastSuccessfulDiagram;
+                results.Add(new NaturalDiagramViewResult(view.Id, view, fallback, "Failed",
+                    exception is LlmClientException llmException ? llmException.Code : "DIAGRAM_GENERATION_FAILED",
+                    exception.Message, fallback));
+            }
+        }
+        var primaryArtifact = results.Select(static result => result.Diagram).FirstOrDefault(static diagram => diagram is not null);
+        if (primaryArtifact is null) throw firstFailure ?? new InvalidOperationException("No diagram view could be generated.");
+        var now = DateTimeOffset.UtcNow;
+        var recordId = Guid.NewGuid();
+        var rootId = parent?.RootDiagramId ?? parent?.Id ?? recordId;
+        return new NaturalDiagramRecord(recordId, request with { ForceRegenerate = false }, primaryArtifact, now,
+            ownerUserId, rootId, parent?.Id, "generated", GeneratorVersion, false, results, (parent?.Revision ?? 0) + 1);
+    }
+
+    private async Task<DiagramArtifact> GenerateViewAsync(
+        NaturalDiagramRequest request,
+        DiagramViewSelection view,
+        int version,
+        CancellationToken cancellationToken)
+    {
+        var preset = presets.Resolve(view.DiagramType, view.PresetId);
+        DiagramIr? ir = null;
+        if (llm.IsEnabled)
+            ir = await llm.GenerateNaturalDiagramAsync(request.Prompt, view.DiagramType, request.EnableThinking, preset, view.Overrides, cancellationToken);
+        if (ir is null && _options.AllowDevelopmentStub && environment.IsDevelopment())
+            ir = CreateDeterministicDiagram(request with { DiagramType = view.DiagramType, PresetId = view.PresetId, Style = view.Overrides });
+        if (ir is null) throw new InvalidOperationException("The internal LLM is unavailable and no external fallback is permitted.");
+        ir = ApplyPreset(ir, preset, view.Overrides);
+        return new DiagramArtifact(Guid.NewGuid(), ir.Type, version, ir, compiler.Compile(ir), DateTimeOffset.UtcNow);
+    }
+
+    private static IReadOnlyList<NaturalDiagramViewResult> EffectiveResults(NaturalDiagramRecord? record)
+    {
+        if (record is null) return [];
+        if (record.Views is { Count: > 0 }) return record.Views;
+        var selection = record.Request.EffectiveViews()[0];
+        return [new NaturalDiagramViewResult(selection.Id, selection, record.Diagram, Reused: record.Reused)];
+    }
+
     private string CreateCacheKey(NaturalDiagramRequest request, string ownerUserId)
     {
         var normalizedPrompt = string.Join(' ', request.Prompt.Normalize(NormalizationForm.FormKC)
             .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-        var value = $"{ownerUserId}\n{normalizedPrompt}\n{request.DiagramType}\n{request.PresetId}\n{request.Style?.Direction}\n{request.Style?.DetailLevel}\n{request.Style?.CallerDepth}\n{request.Style?.CalleeDepth}\n{request.Style?.RelationDepth}\n{request.EnableThinking}\n{request.ParentDiagramId}\n{_options.Model}\n{GeneratorVersion}";
+        var views = string.Join('\n', request.EffectiveViews().Select(static view =>
+            $"{view.Id}:{view.DiagramType}:{view.PresetId}:{view.Overrides?.Direction}:{view.Overrides?.DetailLevel}:{view.Overrides?.CallerDepth}:{view.Overrides?.CalleeDepth}:{view.Overrides?.RelationDepth}"));
+        var value = $"{ownerUserId}\n{normalizedPrompt}\n{views}\n{request.EnableThinking}\n{request.ParentDiagramId}\n{_options.Model}\n{GeneratorVersion}";
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
     }
 

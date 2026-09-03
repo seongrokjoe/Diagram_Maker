@@ -60,6 +60,16 @@ public sealed class PostgresAppStore : IAppStore
             ALTER TABLE natural_diagrams ADD COLUMN IF NOT EXISTS revision integer NOT NULL DEFAULT 1;
             CREATE INDEX IF NOT EXISTS ix_natural_diagrams_owner_created ON natural_diagrams (owner_user_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS ix_natural_diagrams_root_revision ON natural_diagrams (root_id, revision);
+            CREATE TABLE IF NOT EXISTS diagram_revisions (
+                id uuid PRIMARY KEY,
+                root_artifact_id uuid NOT NULL,
+                owner_user_id text NOT NULL,
+                revision integer NOT NULL,
+                payload jsonb NOT NULL,
+                created_at timestamptz NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_diagram_revisions_root_revision
+                ON diagram_revisions (root_artifact_id, owner_user_id, revision);
             CREATE TABLE IF NOT EXISTS audit_events (
                 id uuid PRIMARY KEY,
                 payload jsonb NOT NULL,
@@ -253,7 +263,7 @@ public sealed class PostgresAppStore : IAppStore
         command.Parameters.AddWithValue(record.OwnerUserId);
         command.Parameters.AddWithValue(record.RootDiagramId ?? record.Id);
         command.Parameters.AddWithValue(NpgsqlDbType.Uuid, (object?)record.ParentDiagramId ?? DBNull.Value);
-        command.Parameters.AddWithValue(record.Diagram.Version);
+        command.Parameters.AddWithValue(record.Revision);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -262,7 +272,13 @@ public sealed class PostgresAppStore : IAppStore
 
     public async Task<IReadOnlyList<NaturalDiagramRecord>> ListNaturalDiagramsAsync(string ownerUserId, int limit, CancellationToken cancellationToken)
     {
-        const string sql = "SELECT payload::text FROM natural_diagrams WHERE owner_user_id=$1 AND parent_id IS NULL ORDER BY created_at DESC LIMIT $2";
+        const string sql = """
+            SELECT payload::text FROM (
+                SELECT DISTINCT ON (COALESCE(root_id, id)) payload, created_at, revision
+                FROM natural_diagrams WHERE owner_user_id=$1
+                ORDER BY COALESCE(root_id, id), revision DESC
+            ) latest ORDER BY created_at DESC LIMIT $2
+            """;
         var result = new List<NaturalDiagramRecord>();
         await using var command = _dataSource.CreateCommand(sql);
         command.Parameters.AddWithValue(ownerUserId);
@@ -281,6 +297,38 @@ public sealed class PostgresAppStore : IAppStore
         command.Parameters.AddWithValue(ownerUserId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) result.Add(Deserialize<NaturalDiagramRecord>(reader.GetString(0)));
+        return result;
+    }
+
+    public async Task SaveDiagramRevisionAsync(DiagramRevisionRecord record, CancellationToken cancellationToken)
+    {
+        const string sql = """
+            INSERT INTO diagram_revisions (id, root_artifact_id, owner_user_id, revision, payload, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (id) DO UPDATE SET payload=EXCLUDED.payload, revision=EXCLUDED.revision
+            """;
+        await using var command = _dataSource.CreateCommand(sql);
+        command.Parameters.AddWithValue(record.Id);
+        command.Parameters.AddWithValue(record.RootArtifactId);
+        command.Parameters.AddWithValue(record.OwnerUserId);
+        command.Parameters.AddWithValue(record.Version);
+        command.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(record, JsonOptions));
+        command.Parameters.AddWithValue(record.CreatedAt);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public Task<DiagramRevisionRecord?> GetDiagramRevisionAsync(Guid id, CancellationToken cancellationToken) =>
+        GetByIdAsync<DiagramRevisionRecord>("diagram_revisions", "payload", id, cancellationToken);
+
+    public async Task<IReadOnlyList<DiagramRevisionRecord>> ListDiagramRevisionsAsync(Guid rootArtifactId, string ownerUserId, CancellationToken cancellationToken)
+    {
+        const string sql = "SELECT payload::text FROM diagram_revisions WHERE root_artifact_id=$1 AND owner_user_id=$2 ORDER BY revision";
+        var result = new List<DiagramRevisionRecord>();
+        await using var command = _dataSource.CreateCommand(sql);
+        command.Parameters.AddWithValue(rootArtifactId);
+        command.Parameters.AddWithValue(ownerUserId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) result.Add(Deserialize<DiagramRevisionRecord>(reader.GetString(0)));
         return result;
     }
 
@@ -303,6 +351,7 @@ public sealed class PostgresAppStore : IAppStore
             "analysis_jobs" when column == "payload" => true,
             "analysis_plans" when column == "payload" => true,
             "natural_diagrams" when column == "payload" => true,
+            "diagram_revisions" when column == "payload" => true,
             _ => false
         };
         if (!allowed)

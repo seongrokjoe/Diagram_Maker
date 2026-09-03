@@ -16,6 +16,7 @@ public sealed class LocalFileAppStore(string filePath) : IAppStore
     private readonly string _diagramFilePath = Path.ChangeExtension(Path.GetFullPath(filePath), ".diagrams.json");
     private readonly string _analysisDirectory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(filePath))!, "analysis-jobs");
     private readonly string _planDirectory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(filePath))!, "analysis-plans");
+    private readonly string _diagramRevisionDirectory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(filePath))!, "diagram-revisions");
 
     public async Task InitializeAsync(CancellationToken cancellationToken)
     {
@@ -43,6 +44,8 @@ public sealed class LocalFileAppStore(string filePath) : IAppStore
                 await _inner.SaveAnalysisAsync(Deserialize<AnalysisJob>(json), cancellationToken), cancellationToken);
             await LoadRecordsAsync(_planDirectory, async json =>
                 await _inner.SaveAnalysisPlanAsync(Deserialize<AnalysisPlan>(json), cancellationToken), cancellationToken);
+            await LoadRecordsAsync(_diagramRevisionDirectory, async json =>
+                await _inner.SaveDiagramRevisionAsync(Deserialize<DiagramRevisionRecord>(json), cancellationToken), cancellationToken);
         }
         catch (JsonException exception)
         {
@@ -103,6 +106,18 @@ public sealed class LocalFileAppStore(string filePath) : IAppStore
 
     public Task<IReadOnlyList<NaturalDiagramRecord>> ListNaturalDiagramRevisionsAsync(Guid rootDiagramId, string ownerUserId, CancellationToken cancellationToken) =>
         _inner.ListNaturalDiagramRevisionsAsync(rootDiagramId, ownerUserId, cancellationToken);
+
+    public async Task SaveDiagramRevisionAsync(DiagramRevisionRecord record, CancellationToken cancellationToken)
+    {
+        await _inner.SaveDiagramRevisionAsync(record, cancellationToken);
+        await PersistRecordAsync(_diagramRevisionDirectory, record.Id, record, cancellationToken);
+    }
+
+    public Task<DiagramRevisionRecord?> GetDiagramRevisionAsync(Guid id, CancellationToken cancellationToken) =>
+        _inner.GetDiagramRevisionAsync(id, cancellationToken);
+
+    public Task<IReadOnlyList<DiagramRevisionRecord>> ListDiagramRevisionsAsync(Guid rootArtifactId, string ownerUserId, CancellationToken cancellationToken) =>
+        _inner.ListDiagramRevisionsAsync(rootArtifactId, ownerUserId, cancellationToken);
 
     public Task SaveAuditAsync(AuditEvent auditEvent, CancellationToken cancellationToken) =>
         _inner.SaveAuditAsync(auditEvent, cancellationToken);

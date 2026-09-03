@@ -2,9 +2,11 @@ import { useEffect, useId, useState } from "react";
 
 type MermaidApi = {
   initialize: (configuration: Record<string, unknown>) => void;
+  parse: (source: string, options?: { suppressErrors?: boolean }) => Promise<unknown>;
   render: (id: string, source: string) => Promise<{ svg: string }>;
 };
 let mermaidPromise: Promise<MermaidApi> | undefined;
+let renderQueue: Promise<void> = Promise.resolve();
 
 function loadMermaid(): Promise<MermaidApi> {
   mermaidPromise ??= new Promise<MermaidApi>((resolve, reject) => {
@@ -33,10 +35,28 @@ function sanitizeSvg(svg: string): string {
     for (const attribute of [...element.attributes]) {
       const name = attribute.name.toLowerCase();
       const value = attribute.value.trim().toLowerCase();
-      if (name.startsWith("on") || name === "href" || name === "xlink:href" || value.startsWith("javascript:") || value.includes("url(")) element.removeAttribute(attribute.name);
+      const unsafeReference = (name === "href" || name === "xlink:href") && !value.startsWith("#");
+      const unsafeUrl = [...value.matchAll(/url\(([^)]+)\)/g)]
+        .some(([, reference]) => !reference.trim().replace(/^['"]|['"]$/g, "").startsWith("#"));
+      if (name.startsWith("on") || unsafeReference || value.startsWith("javascript:") || unsafeUrl) element.removeAttribute(attribute.name);
     }
   });
   return new XMLSerializer().serializeToString(document.documentElement);
+}
+
+function renderMermaid(mermaid: MermaidApi, id: string, source: string): Promise<{ svg: string }> {
+  const run = renderQueue.then(async () => {
+    try {
+      const parsed = await mermaid.parse(source, { suppressErrors: true });
+      if (parsed === false) throw new Error("Invalid Mermaid syntax.");
+      return await mermaid.render(id, source);
+    } finally {
+      document.getElementById(`d${id}`)?.remove();
+      document.querySelectorAll(`[data-mermaid-id="${id}"]`).forEach((element) => element.remove());
+    }
+  });
+  renderQueue = run.then(() => undefined, () => undefined);
+  return run;
 }
 
 type MermaidPreviewProps = {
@@ -67,8 +87,9 @@ export function MermaidPreview({ source, downloadName = "diagram", editable = fa
         setRendering(false);
         return;
       }
+      const renderId = `diagram_${id}_${Date.now()}`;
       void loadMermaid()
-        .then((mermaid) => mermaid.render(`diagram_${id}_${Date.now()}`, renderSource))
+        .then((mermaid) => renderMermaid(mermaid, renderId, renderSource))
         .then((result) => {
           if (!active) return;
           setSvg(sanitizeSvg(result.svg));
@@ -104,7 +125,7 @@ export function MermaidPreview({ source, downloadName = "diagram", editable = fa
     </div>}
     {editable && <label className="mermaid-editor-label">Mermaid DSL 편집<textarea className="mermaid-editor" rows={12} value={draft} spellCheck={false} onChange={(event) => setDraft(event.target.value)} /></label>}
     {rendering && !svg && <div className="empty-state"><p>Mermaid 렌더러를 불러오는 중…</p></div>}
-    {error && <div className="error-panel" role="alert">{error}</div>}
+    {error && <div className={`error-panel ${compact ? "compact-error" : ""}`} role="alert">{error}</div>}
     <div className={`diagram-canvas ${compact ? "compact" : ""}`} aria-label="생성된 다이어그램" dangerouslySetInnerHTML={{ __html: svg }} />
   </>;
 }

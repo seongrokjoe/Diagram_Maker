@@ -26,6 +26,9 @@ public sealed partial class MermaidDslRevisionService(
         var now = DateTimeOffset.UtcNow;
         var id = Guid.NewGuid();
         var artifact = new DiagramArtifact(id, ir.Type, parent.Diagram.Version + 1, ir, compiler.Compile(ir), now);
+        var views = parent.Views?.Select(view => view.Diagram?.Id == parent.Diagram.Id
+            ? view with { Diagram = artifact, LastSuccessfulDiagram = artifact, State = "Completed", ErrorCode = null, ErrorMessage = null }
+            : view).ToArray();
         var record = new NaturalDiagramRecord(
             id,
             parent.Request with { ParentDiagramId = parent.Id, ForceRegenerate = false },
@@ -36,7 +39,9 @@ public sealed partial class MermaidDslRevisionService(
             parent.Id,
             "manualDsl",
             NaturalDiagramService.GeneratorVersion,
-            false);
+            false,
+            views,
+            parent.Revision + 1);
         await store.SaveNaturalDiagramAsync(record, cancellationToken);
         return record;
     }

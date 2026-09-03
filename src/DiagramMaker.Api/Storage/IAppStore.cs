@@ -19,5 +19,8 @@ public interface IAppStore : IAsyncDisposable
     Task<NaturalDiagramRecord?> GetNaturalDiagramAsync(Guid id, CancellationToken cancellationToken);
     Task<IReadOnlyList<NaturalDiagramRecord>> ListNaturalDiagramsAsync(string ownerUserId, int limit, CancellationToken cancellationToken);
     Task<IReadOnlyList<NaturalDiagramRecord>> ListNaturalDiagramRevisionsAsync(Guid rootDiagramId, string ownerUserId, CancellationToken cancellationToken);
+    Task SaveDiagramRevisionAsync(DiagramRevisionRecord record, CancellationToken cancellationToken);
+    Task<DiagramRevisionRecord?> GetDiagramRevisionAsync(Guid id, CancellationToken cancellationToken);
+    Task<IReadOnlyList<DiagramRevisionRecord>> ListDiagramRevisionsAsync(Guid rootArtifactId, string ownerUserId, CancellationToken cancellationToken);
     Task SaveAuditAsync(AuditEvent auditEvent, CancellationToken cancellationToken);
 }

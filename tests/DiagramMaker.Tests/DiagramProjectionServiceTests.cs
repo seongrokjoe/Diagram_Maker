@@ -181,6 +181,39 @@ public sealed class DiagramProjectionServiceTests
         Assert.Contains(diagram.Nodes, node => node.Group == "Opr_Xfer");
         Assert.Contains(diagram.Edges, edge => edge.IsIndirect && edge.Label.Contains("RunFunction", StringComparison.Ordinal));
         var dsl = new MermaidCompiler(new DiagramValidator()).Compile(diagram);
-        Assert.Contains("-.->", dsl, StringComparison.Ordinal);
+        Assert.Contains("-. 간접 API: RunFunction .->", dsl, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_SequencePresets_ApplyDifferentEvidenceBoundDepths()
+    {
+        var repositoryId = Guid.NewGuid();
+        var sha = new string('b', 40);
+        var identities = new[]
+        {
+            new SymbolIdentity("caller", repositoryId, "cpp", "method", "function:A::Call()"),
+            new SymbolIdentity("changed", repositoryId, "cpp", "method", "function:B::Run()"),
+            new SymbolIdentity("callee", repositoryId, "cpp", "method", "function:C::Save()")
+        };
+        var versions = identities.Select((identity, index) => new SymbolVersion(
+            $"v{index}", identity.Id, sha, identity.SemanticKey, "void Method()", $"F{index}.cpp", 1, 2, $"h{index}")).ToArray();
+        var graph = new VersionedGraph(
+            identities, versions,
+            [
+                new GraphEdge("e1", "caller", "changed", "calls", "Run", Confidence.Exact, []),
+                new GraphEdge("e2", "changed", "callee", "calls", "Save", Confidence.Exact, [])
+            ],
+            [], [new SymbolChange("change", SymbolChangeKind.ModifyBody, "v1", "v1", Confidence.Exact, [])]);
+        var comparison = new GitComparison(new string('a', 40), sha, []);
+        var catalog = new DiagramPresetCatalog();
+        var projection = new DiagramProjectionService();
+
+        var focused = projection.Build("sample", graph, comparison, ["sequence"], 1, 1, false,
+            new HashSet<string>(["change"]), catalog.Resolve("sequence", "sequence-focused"));
+        var callerContext = projection.Build("sample", graph, comparison, ["sequence"], 1, 1, false,
+            new HashSet<string>(["change"]), catalog.Resolve("sequence", "sequence-caller-context"));
+
+        Assert.Equal(2, Assert.Single(focused.Artifacts).Ir.Nodes.Count);
+        Assert.Equal(3, Assert.Single(callerContext.Artifacts).Ir.Nodes.Count);
     }
 }

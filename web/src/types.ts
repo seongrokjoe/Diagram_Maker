@@ -63,12 +63,45 @@ export type DiagramPreset = {
 
 export type DiagramType = "flowchart" | "sequence" | "class" | "code-relation" | "state";
 
+export type DiagramViewSelection = {
+  id: string;
+  diagramType: DiagramType;
+  presetId: string;
+  overrides?: DiagramStyle;
+};
+
+export type DiagramNode = {
+  id: string;
+  label: string;
+  kind: string;
+  group?: string;
+  status: string;
+  confidence: string;
+  evidenceIds: string[];
+  shape?: string;
+  details?: string[];
+};
+
+export type DiagramEdge = {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  type: string;
+  label: string;
+  status: string;
+  confidence: string;
+  evidenceIds: string[];
+  sequenceIndex?: number;
+  isIndirect?: boolean;
+  viaApi?: string;
+};
+
 export type DiagramArtifact = {
   id: string;
   type: string;
   version: number;
   mermaidDsl: string;
-  ir: { type: string; title: string; notes: string[]; direction?: string };
+  ir: { type: string; title: string; notes: string[]; direction?: string; nodes: DiagramNode[]; edges: DiagramEdge[] };
   createdAt: string;
 };
 
@@ -91,6 +124,7 @@ export type NaturalDiagramRecord = {
     forceRegenerate: boolean;
     presetId: string;
     style?: DiagramStyle;
+    views?: DiagramViewSelection[];
   };
   diagram: DiagramArtifact;
   createdAt: string;
@@ -99,6 +133,19 @@ export type NaturalDiagramRecord = {
   parentDiagramId?: string;
   source: "generated" | "manualDsl" | string;
   generatorVersion: string;
+  reused: boolean;
+  views?: NaturalDiagramViewResult[];
+  revision: number;
+};
+
+export type NaturalDiagramViewResult = {
+  viewId: string;
+  selection: DiagramViewSelection;
+  diagram?: DiagramArtifact;
+  state: string;
+  errorCode?: string;
+  errorMessage?: string;
+  lastSuccessfulDiagram?: DiagramArtifact;
   reused: boolean;
 };
 
@@ -170,6 +217,7 @@ export type AnalysisGroupSelection = {
   diagramType: DiagramType;
   presetId: string;
   overrides?: DiagramStyle;
+  views?: DiagramViewSelection[];
 };
 
 export type AnalysisPlan = {
@@ -206,6 +254,8 @@ export type AnalysisPlan = {
   updatedAt: string;
   expiresAt: string;
   indexVersion?: string;
+  targetCommitMessage?: string;
+  notices?: Array<{ code: string; category: string; severity: string; message: string }>;
   exclusions?: {
     totalCount: number;
     fileCount: number;
@@ -228,6 +278,39 @@ export type AnalysisDiagramGroup = {
   diagram?: DiagramArtifact;
   narrative: Narrative;
   warnings: string[];
+  views?: AnalysisDiagramView[];
+};
+
+export type AnalysisDiagramView = {
+  viewId: string;
+  selection: DiagramViewSelection;
+  diagram?: DiagramArtifact;
+  warnings: string[];
+  state: string;
+  errorCode?: string;
+  errorMessage?: string;
+  reused: boolean;
+};
+
+export type DiagramEditDocument = {
+  title: string;
+  direction?: "LR" | "TB";
+  nodes: Array<{ id: string; label: string }>;
+  edges: Array<{ id: string; sourceId: string; targetId: string; label: string; type?: string }>;
+};
+
+export type DiagramRevisionRecord = {
+  id: string;
+  rootArtifactId: string;
+  sourceArtifactId: string;
+  parentRevisionId?: string;
+  sourceKind: string;
+  sourceId: string;
+  groupId?: string;
+  viewId: string;
+  version: number;
+  diagram: DiagramArtifact;
+  createdAt: string;
 };
 
 export type AnalysisResponse = {

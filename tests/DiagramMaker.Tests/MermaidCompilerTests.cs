@@ -99,9 +99,28 @@ public sealed class MermaidCompilerTests
 
         var result = _compiler.Compile(diagram);
 
-        Assert.Contains("loop index &lt; count", result, StringComparison.Ordinal);
+        Assert.Contains("loop index < count", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("&lt;", result, StringComparison.Ordinal);
         Assert.Contains("alt ready", result, StringComparison.Ordinal);
         Assert.Contains("-->>+n_target: 간접 API: RunFunction", result, StringComparison.Ordinal);
         Assert.Contains("-->>-n_source: return", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Compile_LabeledLoopBack_UsesMermaidElevenDottedLabelSyntax()
+    {
+        var diagram = new DiagramIr(
+            "flowchart", "Loop",
+            [
+                new DiagramNode("call", "호출", "call", null, "modified", Confidence.Exact, []),
+                new DiagramNode("loop", "반복", "loop", null, "modified", Confidence.Exact, [])
+            ],
+            [new DiagramEdge("e", "call", "loop", "loopBack", "다음 반복", "modified", Confidence.Exact, [])],
+            [], []);
+
+        var result = _compiler.Compile(diagram);
+
+        Assert.Contains("n_call -. 다음 반복 .-> n_loop", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("-.->|", result, StringComparison.Ordinal);
     }
 }

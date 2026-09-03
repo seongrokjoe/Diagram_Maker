@@ -3,7 +3,7 @@ Diagram Maker Windows x64 오프라인 설치
 
 1. 함께 제공된 .sha256 파일과 ZIP의 SHA-256을 비교한다.
 
-   certutil -hashfile DiagramMaker-0.1.0-offline.11-win-x64.zip SHA256
+   certutil -hashfile DiagramMaker-0.1.0-offline.13-win-x64.zip SHA256
 
 2. ZIP을 쓰기 가능한 로컬 폴더에 완전히 압축 해제한다.
    OneDrive 동기화 폴더보다 C:\Tools\DiagramMaker 같은 로컬 경로를 권장한다.

@@ -38,6 +38,7 @@ public sealed class AnalysisPlanProcessor(
             GitComparison comparison;
             VersionedGraph graph;
             var warnings = new List<string>();
+            var notices = new List<AnalysisNotice>();
             AnalysisExclusionSummary? exclusions = null;
             var cached = (await store.ListAnalysisPlansAsync(current.OwnerUserId, 50, cancellationToken))
                 .FirstOrDefault(plan => plan.Id != current.Id &&
@@ -53,6 +54,7 @@ public sealed class AnalysisPlanProcessor(
                 comparison = cached.Comparison!;
                 graph = cached.Graph!;
                 exclusions = cached.Exclusions;
+                notices.AddRange(cached.Notices ?? []);
                 warnings.Add("동일한 커밋 범위의 30일 인덱스 캐시를 재사용했습니다.");
                 if (current.Request.UseLlmGrouping && llm.IsEnabled)
                 {
@@ -65,7 +67,7 @@ public sealed class AnalysisPlanProcessor(
                 var prepared = await git.PrepareAsync(repository, baseCommit.Sha, target.Sha, cancellationToken);
                 comparison = prepared.Comparison;
                 graph = analyzer.Analyze(repository.Id, comparison, prepared.CppIndex);
-                warnings.AddRange(BuildIndexWarnings(prepared.CppIndex));
+                notices.AddRange(BuildIndexNotices(prepared.CppIndex));
                 exclusions = BuildExclusions(prepared.CppIndex);
             }
 
@@ -119,7 +121,8 @@ public sealed class AnalysisPlanProcessor(
                 group.Title,
                 group.ChangeIds,
                 group.SuggestedDiagramType,
-                "balanced")).ToArray();
+                "balanced",
+                Views: [new DiagramViewSelection($"{group.Id}-view", group.SuggestedDiagramType, "balanced")])).ToArray();
             await UpdateAsync(current with
             {
                 State = AnalysisPlanState.Ready,
@@ -136,7 +139,9 @@ public sealed class AnalysisPlanProcessor(
                 Revision = current.Revision + 1,
                 LeaseUntil = null,
                 IndexVersion = indexVersion,
-                Exclusions = exclusions
+                Exclusions = exclusions,
+                TargetCommitMessage = OneLine(target.Message),
+                Notices = notices
             }, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -297,13 +302,23 @@ public sealed class AnalysisPlanProcessor(
         return graph.Edges.Any(edge => edge.Type == "calls" && ids.Contains(edge.FromIdentityId) && ids.Contains(edge.ToIdentityId));
     }
 
-    private static IEnumerable<string> BuildIndexWarnings(CppSourceIndex index)
+    private static IEnumerable<AnalysisNotice> BuildIndexNotices(CppSourceIndex index)
     {
         if (index.Truncated)
-            yield return $"C++ 인덱스가 안전 한도에서 잘렸습니다. {index.IndexedFileCount:N0}개 파일만 분석했습니다.";
+            yield return new AnalysisNotice("CPP_INDEX_TRUNCATED", "cpp-index", "warning",
+                $"C++ 인덱스가 안전 한도에서 잘렸습니다. {index.IndexedFileCount:N0}개 파일만 분석했습니다.");
         if (index.ExcludedCallCount > 0)
-            yield return $"해석이 모호한 C++ 호출 {index.ExcludedCallCount:N0}개는 다이어그램 관계에서 제외했습니다.";
-        foreach (var diagnostic in index.Diagnostics.Take(20)) yield return diagnostic;
+            yield return new AnalysisNotice("CPP_CALLS_EXCLUDED", "cpp-exclusion", "info",
+                $"해석이 모호한 C++ 호출 {index.ExcludedCallCount:N0}개는 다이어그램 관계에서 제외했습니다.");
+        foreach (var diagnostic in index.Diagnostics.Take(20))
+            yield return new AnalysisNotice("CPP_PARSER_DIAGNOSTIC", "cpp-diagnostic", "warning", diagnostic);
+    }
+
+    private static string OneLine(string message)
+    {
+        var value = string.Join(' ', message.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        if (string.IsNullOrWhiteSpace(value)) return "메시지 없음";
+        return value.Length <= 160 ? value : value[..157] + "...";
     }
 
     private static AnalysisExclusionSummary? BuildExclusions(CppSourceIndex index)

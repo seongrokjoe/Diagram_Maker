@@ -107,6 +107,7 @@ textarea { resize: vertical; line-height: 1.55; }
 .progress-meta { display: flex; justify-content: space-between; margin-bottom: 9px; color: #4b617c; }
 .progress-track { height: 9px; background: #e3eaf2; overflow: hidden; }
 .progress-track span { height: 100%; display: block; background: #2f7ddb; transition: width .3s ease; }
+.running-action { display: block; min-width: 240px; margin: -38px auto 35px; }
 .summary-card { border-left: 4px solid #2f7ddb; padding: 14px 16px; background: #f0f6fd; }
 .summary-card p { margin: 6px 0 0; line-height: 1.55; }
 .warning { background: #fff7df; border-left: 3px solid #d99b18; padding: 10px 13px; font-size: 12px; }
@@ -189,6 +190,32 @@ pre { overflow: auto; max-height: 260px; padding: 14px; background: #101c2d; col
 .diagram-canvas.compact { min-height: 110px; height: 110px; padding: 5px; overflow: hidden; pointer-events: none; }
 .diagram-canvas.compact svg { max-height: 98px; }
 .preset-card .empty-state { min-height: 110px; }
+.compact-error { min-height: 110px; margin: 0; padding: 10px; display: grid; place-items: center; font-size: 10px; line-height: 1.4; word-break: keep-all; }
+.view-editor-heading, .editor-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.view-editor-heading .secondary, .editor-section-heading .secondary { padding: 8px 11px; font-size: 11px; }
+.diagram-view-editor { min-width: 0; margin: 8px 0; padding: 12px; border: 1px solid #ccd8e4; background: #f9fbfd; }
+.diagram-view-editor legend { padding: 0 6px; color: #3c526e; font-size: 12px; font-weight: 800; }
+.diagram-view-editor .preset-grid { margin-bottom: 8px; }
+.effective-options { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0; padding: 9px 10px; border-left: 3px solid #2f7ddb; background: #edf5ff; color: #48627e; font-size: 10px; }
+.effective-options strong { color: #194f89; margin-right: 3px; }
+.effective-options span { padding: 3px 6px; border: 1px solid #c8d9ea; background: white; }
+.effective-options .override-chip { border-color: #e0bc58; background: #fff6d9; color: #805b00; font-weight: 800; }
+.diagnostic-panel { min-height: 0; margin: 12px 0; padding: 14px 18px; box-shadow: none; }
+.diagnostic-panel > summary { color: #805b00; }
+.diagnostic-panel ul { display: grid; gap: 6px; margin: 10px 0 0; padding-left: 20px; color: #596d84; font-size: 11px; }
+.tab-label { margin: 17px 0 -16px; color: #71849b; font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
+.structured-diagram-editor { margin-top: 12px; }
+.structure-editor-panel { display: grid; gap: 12px; margin-top: 14px; padding: 16px; border: 1px solid #bdcde0; background: #f8fbff; }
+.structure-editor-panel .panel-heading { margin: 0 0 4px; }
+.structure-editor-panel h3, .structure-editor-panel h4 { margin: 0; }
+.inline-select { flex-direction: row; align-items: center; gap: 7px; white-space: nowrap; }
+.inline-select select { width: auto; padding: 7px 9px; }
+.edit-list { display: grid; gap: 6px; }
+.edit-row { display: grid; grid-template-columns: minmax(100px, .6fr) minmax(180px, 1.5fr) auto auto auto; align-items: center; gap: 6px; padding: 7px; border: 1px solid #d7e1eb; background: white; }
+.edit-row code { overflow: hidden; text-overflow: ellipsis; font-size: 10px; }
+.edit-row input, .edit-row select { padding: 7px 8px; }
+.edge-edit-row { grid-template-columns: minmax(120px, 1fr) auto minmax(120px, 1fr) minmax(140px, 1fr) auto auto auto; }
+.text-button.danger { color: #a3332c; }
 .analysis-output { min-height: 420px; }
 .analysis-output > .secondary { margin-top: 20px; }
 

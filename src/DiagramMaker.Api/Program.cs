@@ -62,6 +62,7 @@ builder.Services.AddSingleton<DiagramPresetCatalog>();
 builder.Services.AddSingleton<SourceGraphAnalyzer>();
 builder.Services.AddSingleton<NaturalDiagramSessionCache>();
 builder.Services.AddScoped<MermaidDslRevisionService>();
+builder.Services.AddScoped<DiagramRevisionService>();
 builder.Services.AddSingleton(services => new VllmClient(
     services.GetRequiredService<IOptions<LlmOptions>>().Value,
     services.GetRequiredService<ILogger<VllmClient>>()));
@@ -411,12 +412,19 @@ api.MapPut("/analysis-plans/{id:guid}/selection", async (
 
     var updated = plan with
     {
-        Selections = request.Groups.Select(group => group with
+        Selections = request.Groups.Select(group =>
         {
-            Id = group.Id.Trim(),
-            Title = group.Title.Trim(),
-            DiagramType = group.DiagramType.ToLowerInvariant(),
-            PresetId = group.PresetId.Trim()
+            var views = group.EffectiveViews().Select(DiagramViewSelectionService.Normalize).ToArray();
+            var primary = views[0];
+            return group with
+            {
+                Id = group.Id.Trim(),
+                Title = group.Title.Trim(),
+                DiagramType = primary.DiagramType,
+                PresetId = primary.PresetId,
+                Overrides = primary.Overrides,
+                Views = views
+            };
         }).ToArray(),
         Revision = plan.Revision + 1,
         UpdatedAt = DateTimeOffset.UtcNow
@@ -441,19 +449,34 @@ api.MapPost("/analysis-plans/{id:guid}/generate", async (
     if (plan.Selections.Count == 0)
         return Results.BadRequest(new { error = "Select at least one change group." });
 
+    var planViewIds = plan.Selections.SelectMany(static group => group.EffectiveViews())
+        .Select(static view => view.Id).ToHashSet(StringComparer.Ordinal);
+    if (request.RequestedViewIds?.Any(viewId => !planViewIds.Contains(viewId)) == true)
+        return Results.BadRequest(new { error = "RequestedViewIds contains a view that is not in this plan." });
+
+    if (request.SourceAnalysisId is { } sourceAnalysisId)
+    {
+        var source = await AuthorizedJob(sourceAnalysisId, context, store, cancellationToken);
+        if (source?.Result is null || source.Request.AnalysisPlanId != plan.Id)
+            return Results.BadRequest(new { error = "The source analysis is not a reusable result for this plan." });
+    }
+
     var now = DateTimeOffset.UtcNow;
     var analyzeRequest = new AnalyzeRequest(
         plan.Request.RepositoryId,
         plan.BaseSha,
         plan.TargetSha,
         "direct",
-        plan.Selections.Select(static group => group.DiagramType).Distinct(StringComparer.Ordinal).ToArray(),
+        plan.Selections.SelectMany(static group => group.EffectiveViews()).Select(static view => view.DiagramType)
+            .Distinct(StringComparer.Ordinal).ToArray(),
         1,
         1,
         true,
         plan.Request.EnableThinking,
         plan.Id,
-        plan.Selections);
+        plan.Selections,
+        request.SourceAnalysisId,
+        request.RequestedViewIds);
     var job = new AnalysisJob(Guid.NewGuid(), analyzeRequest, AnalysisState.Queued, plan.BaseSha, plan.TargetSha, 0, "Queued", null, null, null, now, now, null);
     await store.SaveAnalysisAsync(job, cancellationToken);
     await store.SaveAuditAsync(new AuditEvent(Guid.NewGuid(), context.GetInternalIdentity().UserId, "analysis-plan.generate", plan.Request.RepositoryId, "allowed", now), cancellationToken);
@@ -741,12 +764,136 @@ api.MapPost("/natural-diagrams/{id:guid}/regenerate", async (
     }
 });
 
+api.MapPost("/natural-diagrams/{id:guid}/views/revise", async (
+    Guid id,
+    ReviseNaturalDiagramViewsRequest request,
+    HttpContext context,
+    NaturalDiagramService service,
+    IAppStore store,
+    CancellationToken cancellationToken) =>
+{
+    var parent = await store.GetNaturalDiagramAsync(id, cancellationToken);
+    if (parent is null) return Results.NotFound();
+    var identity = context.GetInternalIdentity();
+    if (!CanAccessNaturalDiagram(parent, identity.UserId)) return Results.Forbid();
+    if (request.Views is null || request.Views.Count is < 1 or > 4)
+        return Results.BadRequest(new { error = "One to four diagram views are required." });
+    var requested = request.RegenerateViewIds?.ToHashSet(StringComparer.Ordinal) ?? [];
+    if (request.RegenerateViewIds?.Any(viewId => request.Views.All(view => view.Id != viewId)) == true)
+        return Results.BadRequest(new { error = "RegenerateViewIds contains an unknown view." });
+    try
+    {
+        var record = await service.ReviseViewsAsync(parent, request.Views, requested, identity.UserId, cancellationToken);
+        return Results.Created($"/api/v1/natural-diagrams/{record.Id}", record);
+    }
+    catch (ArgumentException exception)
+    {
+        return Results.BadRequest(new { error = exception.Message });
+    }
+    catch (InvalidOperationException exception)
+    {
+        return Results.Json(new { error = exception.Message }, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+    catch (LlmClientException exception)
+    {
+        return LlmFailure(exception);
+    }
+});
+
+api.MapGet("/diagram-artifacts/{rootArtifactId:guid}/revisions", async (
+    Guid rootArtifactId,
+    HttpContext context,
+    IAppStore store,
+    CancellationToken cancellationToken) =>
+{
+    var identity = context.GetInternalIdentity();
+    return Results.Ok(await store.ListDiagramRevisionsAsync(rootArtifactId, identity.UserId, cancellationToken));
+});
+
+api.MapPost("/natural-diagrams/{id:guid}/views/{viewId}/edits", async (
+    Guid id,
+    string viewId,
+    SaveDiagramEditRequest request,
+    HttpContext context,
+    IAppStore store,
+    DiagramRevisionService service,
+    CancellationToken cancellationToken) =>
+{
+    var record = await store.GetNaturalDiagramAsync(id, cancellationToken);
+    if (record is null) return Results.NotFound();
+    var identity = context.GetInternalIdentity();
+    if (!CanAccessNaturalDiagram(record, identity.UserId)) return Results.Forbid();
+    var artifact = FindNaturalDiagramArtifact(record, viewId);
+    if (artifact is null) return Results.NotFound(new { error = "The diagram view does not exist." });
+    try
+    {
+        var revision = await service.SaveAsync(artifact, request, identity.UserId, "natural", record.Id,
+            null, viewId, cancellationToken);
+        return Results.Created($"/api/v1/diagram-artifacts/{artifact.Id}/revisions/{revision.Id}", revision);
+    }
+    catch (DiagramRevisionConflictException exception)
+    {
+        return Results.Conflict(new { errorCode = "DIAGRAM_REVISION_CONFLICT", error = exception.Message, currentVersion = exception.CurrentVersion });
+    }
+    catch (Exception exception) when (exception is ArgumentException or DiagramValidationException)
+    {
+        return Results.BadRequest(new { error = exception.Message });
+    }
+});
+
+api.MapPost("/analyses/{id:guid}/groups/{groupId}/views/{viewId}/edits", async (
+    Guid id,
+    string groupId,
+    string viewId,
+    SaveDiagramEditRequest request,
+    HttpContext context,
+    IAppStore store,
+    DiagramRevisionService service,
+    CancellationToken cancellationToken) =>
+{
+    var job = await AuthorizedJob(id, context, store, cancellationToken);
+    if (job is null) return Results.NotFound();
+    var artifact = FindAnalysisDiagramArtifact(job, groupId, viewId);
+    if (artifact is null) return Results.NotFound(new { error = "The diagram view does not exist." });
+    var identity = context.GetInternalIdentity();
+    try
+    {
+        var revision = await service.SaveAsync(artifact, request, identity.UserId, "analysis", job.Id,
+            groupId, viewId, cancellationToken);
+        return Results.Created($"/api/v1/diagram-artifacts/{artifact.Id}/revisions/{revision.Id}", revision);
+    }
+    catch (DiagramRevisionConflictException exception)
+    {
+        return Results.Conflict(new { errorCode = "DIAGRAM_REVISION_CONFLICT", error = exception.Message, currentVersion = exception.CurrentVersion });
+    }
+    catch (Exception exception) when (exception is ArgumentException or DiagramValidationException)
+    {
+        return Results.BadRequest(new { error = exception.Message });
+    }
+});
+
 app.MapFallbackToFile("index.html", new StaticFileOptions { FileProvider = staticFiles });
 
 app.Run();
 
 static bool CanAccessNaturalDiagram(NaturalDiagramRecord record, string userId) =>
     string.IsNullOrEmpty(record.OwnerUserId) || string.Equals(record.OwnerUserId, userId, StringComparison.Ordinal);
+
+static DiagramArtifact? FindNaturalDiagramArtifact(NaturalDiagramRecord record, string viewId)
+{
+    if (record.Views is { Count: > 0 })
+        return record.Views.FirstOrDefault(view => view.ViewId == viewId)?.Diagram;
+    return record.Request.EffectiveViews()[0].Id == viewId ? record.Diagram : null;
+}
+
+static DiagramArtifact? FindAnalysisDiagramArtifact(AnalysisJob job, string groupId, string viewId)
+{
+    var group = job.Result?.DiagramGroups?.FirstOrDefault(item => item.GroupId == groupId);
+    if (group is null) return null;
+    if (group.Views is { Count: > 0 })
+        return group.Views.FirstOrDefault(view => view.ViewId == viewId)?.Diagram;
+    return $"{group.GroupId}-view" == viewId ? group.Diagram : null;
+}
 
 static object ToAnalysisResponse(AnalysisJob job) => new
 {
@@ -792,7 +939,9 @@ static object ToAnalysisPlanResponse(AnalysisPlan plan) => new
     plan.UpdatedAt,
     plan.ExpiresAt,
     plan.IndexVersion,
-    plan.Exclusions
+    plan.Exclusions,
+    plan.TargetCommitMessage,
+    plan.Notices
 };
 
 static string? ValidateIndirectCallRules(IReadOnlyList<IndirectCallRule>? rules)
@@ -836,22 +985,33 @@ static string? ValidatePlanSelections(
     var candidateIds = candidates.Select(static candidate => candidate.Id).ToHashSet(StringComparer.Ordinal);
     var usedChanges = new HashSet<string>(StringComparer.Ordinal);
     var usedGroups = new HashSet<string>(StringComparer.Ordinal);
+    var usedViews = new HashSet<string>(StringComparer.Ordinal);
     foreach (var group in groups)
     {
         if (string.IsNullOrWhiteSpace(group.Id) || !usedGroups.Add(group.Id.Trim())) return "Every group must have a unique ID.";
         if (string.IsNullOrWhiteSpace(group.Title) || group.Title.Trim().Length > 120) return "Group titles must contain 1-120 characters.";
         if (group.ChangeIds is null || group.ChangeIds.Count == 0) return "Every group must contain at least one change.";
-        if (!DiagramProjectionService.IsSupported(group.DiagramType)) return $"Unsupported diagram type: {group.DiagramType}";
-        if (!catalog.Contains(group.DiagramType, group.PresetId)) return $"The preset '{group.PresetId}' does not support {group.DiagramType}.";
+        var views = group.EffectiveViews();
+        if (views.Count is < 1 or > 4) return "Every group must contain one to four diagram views.";
+        if (views.Select(static view => view.Id).Distinct(StringComparer.Ordinal).Count() != views.Count)
+            return "Every diagram view in a group must have a unique ID.";
+        if (views.Select(static view => view.DiagramType).Distinct(StringComparer.OrdinalIgnoreCase).Count() != views.Count)
+            return "A diagram type can only be selected once per group.";
+        foreach (var view in views)
+        {
+            if (string.IsNullOrWhiteSpace(view.Id) || !usedViews.Add(view.Id.Trim())) return "Every diagram view must have a globally unique ID.";
+            if (!DiagramProjectionService.IsSupported(view.DiagramType)) return $"Unsupported diagram type: {view.DiagramType}";
+            if (!catalog.Contains(view.DiagramType, view.PresetId)) return $"The preset '{view.PresetId}' does not support {view.DiagramType}.";
+            if (view.Overrides?.CallerDepth is < 0 or > 3 || view.Overrides?.CalleeDepth is < 0 or > 3 || view.Overrides?.RelationDepth is < 0 or > 3)
+                return "Depth overrides must be between 0 and 3.";
+            if (view.Overrides?.Direction is { } viewDirection && viewDirection is not ("LR" or "TB"))
+                return "Direction must be LR or TB.";
+        }
         foreach (var changeId in group.ChangeIds)
         {
             if (!candidateIds.Contains(changeId)) return $"Unknown change ID: {changeId}";
             if (!usedChanges.Add(changeId)) return $"Change '{changeId}' is assigned to more than one group.";
         }
-        if (group.Overrides?.CallerDepth is < 0 or > 3 || group.Overrides?.CalleeDepth is < 0 or > 3 || group.Overrides?.RelationDepth is < 0 or > 3)
-            return "Depth overrides must be between 0 and 3.";
-        if (group.Overrides?.Direction is { } direction && direction is not ("LR" or "TB"))
-            return "Direction must be LR or TB.";
     }
     return null;
 }

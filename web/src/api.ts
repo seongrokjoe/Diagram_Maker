@@ -3,8 +3,11 @@ import type {
   AnalysisPlan,
   AnalysisResponse,
   DiagramPreset,
+  DiagramEditDocument,
+  DiagramRevisionRecord,
   DiagramStyle,
   DiagramType,
+  DiagramViewSelection,
   EvidenceSnippet,
   GitCommit,
   IndirectCallRule,
@@ -73,10 +76,16 @@ export const api = {
     enableThinking: boolean;
     presetId: string;
     style?: DiagramStyle;
+    views?: DiagramViewSelection[];
     forceRegenerate?: boolean;
   }) => request<NaturalDiagramRecord>("/api/v1/natural-diagrams", { method: "POST", body: JSON.stringify(input) }),
   regenerateNaturalDiagram: (id: string) =>
     request<NaturalDiagramRecord>(`/api/v1/natural-diagrams/${id}/regenerate`, { method: "POST" }),
+  reviseNaturalDiagramViews: (id: string, views: DiagramViewSelection[], regenerateViewIds: string[]) =>
+    request<NaturalDiagramRecord>(`/api/v1/natural-diagrams/${id}/views/revise`, {
+      method: "POST",
+      body: JSON.stringify({ views, regenerateViewIds }),
+    }),
   saveNaturalDiagramDslRevision: (id: string, mermaidDsl: string) =>
     request<NaturalDiagramRecord>(`/api/v1/natural-diagrams/${id}/dsl-revisions`, { method: "POST", body: JSON.stringify({ mermaidDsl }) }),
 
@@ -96,12 +105,25 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ expectedRevision, groups }),
     }),
-  generateAnalysisPlan: (id: string, expectedRevision: number) =>
+  generateAnalysisPlan: (id: string, expectedRevision: number, sourceAnalysisId?: string, requestedViewIds?: string[]) =>
     request<AnalysisResponse>(`/api/v1/analysis-plans/${id}/generate`, {
       method: "POST",
-      body: JSON.stringify({ expectedRevision }),
+      body: JSON.stringify({ expectedRevision, sourceAnalysisId, requestedViewIds }),
     }),
   getAnalysis: (id: string) => request<AnalysisResponse>(`/api/v1/analyses/${id}`),
+
+  listDiagramRevisions: (rootArtifactId: string) =>
+    request<DiagramRevisionRecord[]>(`/api/v1/diagram-artifacts/${rootArtifactId}/revisions`),
+  saveNaturalDiagramEdit: (recordId: string, viewId: string, input: {
+    rootArtifactId: string; parentRevisionId?: string; expectedVersion: number; document: DiagramEditDocument;
+  }) => request<DiagramRevisionRecord>(`/api/v1/natural-diagrams/${recordId}/views/${encodeURIComponent(viewId)}/edits`, {
+    method: "POST", body: JSON.stringify(input),
+  }),
+  saveAnalysisDiagramEdit: (analysisId: string, groupId: string, viewId: string, input: {
+    rootArtifactId: string; parentRevisionId?: string; expectedVersion: number; document: DiagramEditDocument;
+  }) => request<DiagramRevisionRecord>(`/api/v1/analyses/${analysisId}/groups/${encodeURIComponent(groupId)}/views/${encodeURIComponent(viewId)}/edits`, {
+    method: "POST", body: JSON.stringify(input),
+  }),
 
   testLlmConnection: () => request<LlmConnectionTestResult>("/api/v1/llm/tests/connection", { method: "POST" }),
   testLlmDiagramContract: () => request<LlmContractTestResult>("/api/v1/llm/tests/diagram-contract", { method: "POST" }),
