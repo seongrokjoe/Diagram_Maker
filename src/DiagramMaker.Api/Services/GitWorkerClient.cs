@@ -118,6 +118,7 @@ public sealed class GitWorkerClient : IGitWorkerClient
             repositoryPath,
             backend = _options.Backend,
             gitExecutable = _options.GitExecutable,
+            revision = repository.DefaultBranch,
             query,
             skip,
             limit
@@ -137,6 +138,7 @@ public sealed class GitWorkerClient : IGitWorkerClient
             backend = _options.Backend,
             gitExecutable = _options.GitExecutable,
             revision,
+            exactRevision = true,
             limit = 1,
             skip = 0
         }, cancellationToken);

@@ -60,17 +60,92 @@ function countArguments(node) {
   return children(argumentsNode).filter((child) => child.type !== "comment").length;
 }
 
-function countParameters(declarator) {
+function functionDeclarator(declarator) {
   let current = declarator;
   while (current) {
-    if (current.type === "function_declarator") {
-      const parameters = field(current, "parameters");
-      if (!parameters) return 0;
-      return children(parameters).filter((child) => child.type === "parameter_declaration" || child.type === "optional_parameter_declaration").length;
-    }
+    if (current.type === "function_declarator") return current;
     current = field(current, "declarator") ?? current.namedChild(0);
   }
-  return 0;
+  return null;
+}
+
+function declaratorIdentifier(declarator) {
+  if (!declarator) return null;
+  if (["identifier", "field_identifier", "operator_name", "destructor_name", "qualified_identifier"].includes(declarator.type)) {
+    return declarator;
+  }
+  const nested = field(declarator, "declarator");
+  if (nested && nested !== declarator) {
+    const result = declaratorIdentifier(nested);
+    if (result) return result;
+  }
+  for (const child of children(declarator)) {
+    const result = declaratorIdentifier(child);
+    if (result) return result;
+  }
+  return null;
+}
+
+function removeUtf8Ranges(node, ranges) {
+  const bytes = Buffer.from(node.text, "utf8");
+  const normalized = ranges
+    .map(({ startIndex, endIndex }) => ({
+      start: Math.max(0, startIndex - node.startIndex),
+      end: Math.min(bytes.length, endIndex - node.startIndex),
+    }))
+    .filter((range) => range.end > range.start)
+    .sort((left, right) => left.start - right.start);
+  const chunks = [];
+  let offset = 0;
+  for (const range of normalized) {
+    if (range.start > offset) chunks.push(bytes.subarray(offset, range.start));
+    offset = Math.max(offset, range.end);
+  }
+  if (offset < bytes.length) chunks.push(bytes.subarray(offset));
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+function canonicalType(value) {
+  return value.normalize("NFKC")
+    .replace(/\s+/g, " ")
+    .replace(/\s*([*&<>,()[\]])\s*/g, "$1")
+    .trim();
+}
+
+function parameterTypes(declarator) {
+  const functionNode = functionDeclarator(declarator);
+  const parameters = functionNode ? field(functionNode, "parameters") : null;
+  if (!parameters) return [];
+  const values = children(parameters)
+    .filter((child) => child.type === "parameter_declaration" || child.type === "optional_parameter_declaration")
+    .map((parameter) => {
+      const ranges = [];
+      const parameterDeclarator = field(parameter, "declarator");
+      const identifier = declaratorIdentifier(parameterDeclarator);
+      if (identifier) ranges.push(identifier);
+      const defaultValue = field(parameter, "default_value");
+      if (defaultValue) {
+        const prefix = Buffer.from(parameter.text, "utf8").subarray(0, defaultValue.startIndex - parameter.startIndex);
+        const equalsAt = prefix.lastIndexOf("=".charCodeAt(0));
+        ranges.push({
+          startIndex: equalsAt >= 0 ? parameter.startIndex + equalsAt : defaultValue.startIndex,
+          endIndex: defaultValue.endIndex,
+        });
+      }
+      return canonicalType(removeUtf8Ranges(parameter, ranges));
+    })
+    .filter(Boolean);
+  return values.length === 1 && values[0] === "void" ? [] : values;
+}
+
+function functionQualifiers(declarator) {
+  const functionNode = functionDeclarator(declarator);
+  if (!functionNode) return "";
+  const values = children(functionNode)
+    .filter((child) => child.type === "type_qualifier" || child.type === "ref_qualifier")
+    .map((child) => canonicalType(child.text))
+    .filter((value) => value === "const" || value === "volatile" || value === "&" || value === "&&");
+  return values.length > 0 ? ` ${values.join(" ").replace(/\s+([&])/g, "$1")}` : "";
 }
 
 function declaratorName(declarator) {
@@ -179,9 +254,11 @@ export async function parseCppFile(filepath, content, projectPath = null) {
         const qualifiedName = alreadyQualified
           ? [...namespaceParts, declared].filter(Boolean).join("::")
           : [...namespaceParts, ...ownerParts, declared].join("::");
-        const parameterCount = countParameters(declarator);
+        const parameters = parameterTypes(declarator);
+        const parameterCount = parameters.length;
+        const qualifiers = functionQualifiers(declarator);
         const symbol = {
-          semanticKey: `function:${qualifiedName}/${parameterCount}`,
+          semanticKey: `function:${qualifiedName}(${parameters.join(",")})${qualifiers}`,
           qualifiedName,
           simpleName: lastName(declared),
           kind: ownerParts.length > 0 || alreadyQualified ? "method" : "function",
@@ -222,7 +299,10 @@ export function resolveCppCalls(files) {
   const byQualified = new Map();
   const bySimple = new Map();
   for (const symbol of symbols) {
-    byQualified.set(`${symbol.qualifiedName}/${symbol.parameterCount ?? "type"}`, symbol);
+    const qualifiedKey = `${symbol.qualifiedName}/${symbol.parameterCount ?? "type"}`;
+    const qualifiedValues = byQualified.get(qualifiedKey) ?? [];
+    qualifiedValues.push(symbol);
+    byQualified.set(qualifiedKey, qualifiedValues);
     const key = `${symbol.simpleName}/${symbol.parameterCount ?? "type"}`;
     const values = bySimple.get(key) ?? [];
     values.push(symbol);
@@ -235,10 +315,15 @@ export function resolveCppCalls(files) {
     for (const call of source.calls) {
       const exactName = call.expression.replaceAll(".", "::").replaceAll("->", "::");
       const ownerCandidate = [ownerName(source.qualifiedName), call.name].filter(Boolean).join("::");
-      let target = byQualified.get(`${exactName}/${call.argumentCount}`)
-        ?? byQualified.get(`${ownerCandidate}/${call.argumentCount}`);
+      const qualifiedCandidates = [
+        ...(byQualified.get(`${exactName}/${call.argumentCount}`) ?? []),
+        ...(exactName === ownerCandidate ? [] : (byQualified.get(`${ownerCandidate}/${call.argumentCount}`) ?? [])),
+      ].filter((candidate, index, all) => all.indexOf(candidate) === index);
+      let target = qualifiedCandidates.length === 1 ? qualifiedCandidates[0] : null;
       let confidence = "Exact";
-      if (!target) {
+      if (qualifiedCandidates.length > 1) {
+        ambiguousCallCount += 1;
+      } else if (!target) {
         const candidates = bySimple.get(`${call.name}/${call.argumentCount}`) ?? [];
         if (candidates.length === 1) {
           [target] = candidates;

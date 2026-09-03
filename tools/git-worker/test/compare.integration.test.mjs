@@ -28,12 +28,12 @@ async function createRepository(t, name) {
   return dir;
 }
 
-async function commitFile(dir, filepath, content, message) {
+async function commitFile(dir, filepath, content, message, commitAuthor = author) {
   const absolutePath = path.join(dir, filepath);
   fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
   fs.writeFileSync(absolutePath, content);
   await git.add({ fs, dir, filepath });
-  return git.commit({ fs, dir, message, author });
+  return git.commit({ fs, dir, message, author: commitAuthor });
 }
 
 test("native Git compares immutable commits and auto falls back only when Git is missing", async (t) => {
@@ -175,6 +175,8 @@ test("prepares a Visual Studio C++ project with resolved calls and commit metada
   assert.equal(commits[0].sha, target);
   assert.deepEqual(commits[0].parentShas, [base]);
   assert.equal(commits[0].message, "call Save");
+  assert.equal(commits[0].authorName, author.name);
+  assert.equal(commits[0].authorEmail, author.email);
 
   const evidence = await readEvidence({
     repositoryPath: dir,
@@ -191,6 +193,51 @@ test("prepares a Visual Studio C++ project with resolved calls and commit metada
     readEvidence({ repositoryPath: dir, backend: "native", revision: target, filePath: "../secret.txt" }),
     (error) => error?.errorCode === "GIT_OBJECT_UNREADABLE",
   );
+});
+
+test("lists and searches commits beyond the initial page on both Git backends", async (t) => {
+  const dir = await createRepository(t, "commit-pages");
+  const shas = [];
+  let historicSha = "";
+  for (let index = 0; index < 65; index += 1) {
+    const historic = index === 4;
+    const commitAuthor = historic
+      ? { name: "Archive User", email: "archive@internal" }
+      : author;
+    const sha = await commitFile(
+      dir,
+      "history.txt",
+      `${index}\n`,
+      historic ? "historic architecture needle" : `routine change ${index}`,
+      commitAuthor,
+    );
+    shas.push(sha);
+    if (historic) historicSha = sha;
+  }
+
+  for (const backend of ["native", "isomorphic"]) {
+    const older = await listCommits({ repositoryPath: dir, backend, revision: "main", skip: 50, limit: 10 });
+    assert.equal(older.length, 10);
+    assert.equal(older[0].sha, shas[14]);
+
+    const byMessage = await listCommits({ repositoryPath: dir, backend, revision: "main", query: "architecture needle", limit: 5 });
+    assert.deepEqual(byMessage.map((commit) => commit.sha), [historicSha]);
+
+    const byAuthor = await listCommits({ repositoryPath: dir, backend, revision: "main", query: "archive@internal", limit: 5 });
+    assert.deepEqual(byAuthor.map((commit) => commit.sha), [historicSha]);
+
+    const bySha = await listCommits({ repositoryPath: dir, backend, revision: "main", query: historicSha.slice(0, 12), limit: 5 });
+    assert.deepEqual(bySha.map((commit) => commit.sha), [historicSha]);
+  }
+
+  const resolved = await listCommits({
+    repositoryPath: dir,
+    backend: "native",
+    revision: historicSha.slice(0, 12),
+    exactRevision: true,
+    limit: 1,
+  });
+  assert.equal(resolved[0].sha, historicSha);
 });
 
 test("does not index unrelated C++ projects for a non-C++ change", async (t) => {

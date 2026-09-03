@@ -33,7 +33,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\stop-local.ps1
 ## Git 변경 분석 사용법
 
 1. **저장소 관리**에서 `C:\Work\Git\MyRepository` 같은 로컬 저장소 루트를 연결 테스트 후 등록합니다.
-2. **Git 변경 분석**에서 저장소와 Target 커밋을 선택하고 사전 분석을 시작합니다.
+2. **Git 변경 분석**에서 저장소를 고른 뒤 최근 목록, 메시지·SHA·작성자 검색 또는 SHA 직접 입력으로 Target 커밋을 선택합니다. `이전 커밋 50개 더 보기`로 기본 브랜치의 오래된 이력을 계속 탐색할 수 있으며 Base 직접 지정에도 같은 선택기를 사용합니다.
 3. 표시할 변경 심볼을 체크하고, 드롭다운으로 그룹을 이동하거나 여러 그룹을 병합합니다.
 4. 그룹별 다이어그램 형식과 샘플을 선택합니다. 필요할 때만 방향과 caller/callee 깊이를 덮어씁니다.
 5. 다이어그램을 생성한 뒤 그룹 탭에서 결과와 한국어 설명을 확인하고 SVG/PNG로 저장합니다.
@@ -72,7 +72,7 @@ Windows x64 오프라인 패키지 생성:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1
 ```
 
-결과는 `artifacts/release/DiagramMaker-0.1.0-offline.10-win-x64.zip`과 SHA-256 파일입니다. 회사 정책상 GitHub Release 다운로드가 막힌 환경을 위해 이 두 파일은 소스 ZIP에도 포함되도록 관리합니다.
+결과는 `artifacts/release/DiagramMaker-0.1.0-offline.11-win-x64.zip`과 SHA-256 파일입니다. 회사 정책상 GitHub Release 다운로드가 막힌 환경을 위해 이 두 파일은 소스 ZIP에도 포함되도록 관리합니다.
 
 ## 현재 제한
 

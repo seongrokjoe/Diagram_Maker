@@ -135,7 +135,9 @@ public sealed record GitCommitSummary(
     string Sha,
     IReadOnlyList<string> ParentShas,
     DateTimeOffset AuthoredAt,
-    string Message);
+    string Message,
+    string AuthorName,
+    string AuthorEmail);
 
 public sealed record EvidenceSnippet(
     string RevisionSha,
@@ -388,7 +390,8 @@ public sealed record AnalysisPlan(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     DateTimeOffset ExpiresAt,
-    DateTimeOffset? LeaseUntil);
+    DateTimeOffset? LeaseUntil,
+    string? IndexVersion = null);
 
 public sealed record UpdateAnalysisPlanSelectionRequest(
     int ExpectedRevision,

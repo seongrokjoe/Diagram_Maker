@@ -43,6 +43,7 @@ public sealed class AnalysisPlanProcessor(
                                         plan.Request.RepositoryId == repository.Id &&
                                         plan.BaseSha == baseCommit.Sha &&
                                         plan.TargetSha == target.Sha &&
+                                        plan.IndexVersion == SourceGraphAnalyzer.IndexVersion &&
                                         plan.Comparison is not null && plan.Graph is not null &&
                                         plan.ExpiresAt > DateTimeOffset.UtcNow);
             if (cached is not null)
@@ -129,7 +130,8 @@ public sealed class AnalysisPlanProcessor(
                 Selections = selections,
                 Warnings = warnings,
                 Revision = current.Revision + 1,
-                LeaseUntil = null
+                LeaseUntil = null,
+                IndexVersion = SourceGraphAnalyzer.IndexVersion
             }, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -188,7 +190,9 @@ public sealed class AnalysisPlanProcessor(
     {
         if (candidates.Count == 0) return [];
         var parent = candidates.ToDictionary(static candidate => candidate.Id, static candidate => candidate.Id, StringComparer.Ordinal);
-        var candidateByIdentity = candidates.ToDictionary(static candidate => candidate.IdentityId, StringComparer.Ordinal);
+        var candidatesByIdentity = candidates
+            .GroupBy(static candidate => candidate.IdentityId, StringComparer.Ordinal)
+            .ToDictionary(static group => group.Key, static group => group.ToArray(), StringComparer.Ordinal);
 
         string Find(string id)
         {
@@ -207,10 +211,16 @@ public sealed class AnalysisPlanProcessor(
             if (leftRoot != rightRoot) parent[rightRoot] = leftRoot;
         }
 
+        foreach (var identityCandidates in candidatesByIdentity.Values)
+        {
+            for (var index = 1; index < identityCandidates.Length; index++)
+                Union(identityCandidates[0].Id, identityCandidates[index].Id);
+        }
+
         foreach (var edge in graph.Edges.Where(static edge => edge.Type is "calls" or "inherits"))
         {
-            if (candidateByIdentity.TryGetValue(edge.FromIdentityId, out var left) &&
-                candidateByIdentity.TryGetValue(edge.ToIdentityId, out var right)) Union(left.Id, right.Id);
+            if (candidatesByIdentity.TryGetValue(edge.FromIdentityId, out var left) &&
+                candidatesByIdentity.TryGetValue(edge.ToIdentityId, out var right)) Union(left[0].Id, right[0].Id);
         }
         foreach (var fileGroup in candidates.GroupBy(static candidate => candidate.FilePath, StringComparer.OrdinalIgnoreCase))
         {

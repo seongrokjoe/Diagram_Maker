@@ -238,9 +238,33 @@ api.MapGet("/repositories/{id:guid}/commits", async (
         return Results.Ok(await gitWorker.ListCommitsAsync(
             repository,
             query,
-            Math.Clamp(skip ?? 0, 0, 10_000),
+            Math.Max(skip ?? 0, 0),
             Math.Clamp(limit ?? 50, 1, 100),
             cancellationToken));
+    }
+    catch (GitWorkerException exception)
+    {
+        return Results.BadRequest(new { errorCode = exception.ErrorCode, error = exception.UserMessage });
+    }
+});
+
+api.MapGet("/repositories/{id:guid}/commits/resolve", async (
+    Guid id,
+    string? revision,
+    HttpContext context,
+    IAppStore store,
+    IGitWorkerClient gitWorker,
+    CancellationToken cancellationToken) =>
+{
+    var repository = await store.GetRepositoryAsync(id, cancellationToken);
+    if (repository is null) return Results.NotFound();
+    if (!context.GetInternalIdentity().CanAccess(repository)) return Results.Forbid();
+    var normalized = revision?.Trim() ?? string.Empty;
+    if (normalized.Length is < 7 or > 64 || normalized.Any(static value => !Uri.IsHexDigit(value)))
+        return Results.BadRequest(new { errorCode = "GIT_REVISION_INVALID", error = "Enter a 7 to 64 character hexadecimal commit SHA." });
+    try
+    {
+        return Results.Ok(await gitWorker.GetCommitAsync(repository, normalized, cancellationToken));
     }
     catch (GitWorkerException exception)
     {
@@ -277,7 +301,7 @@ api.MapPost("/analysis-plans", async (
     var plan = new AnalysisPlan(
         Guid.NewGuid(), identity.UserId, normalized, AnalysisPlanState.Queued,
         null, null, 0, "Queued", null, null, [], [], [], [], null, null, 0,
-        now, now, now.AddDays(30), null);
+        now, now, now.AddDays(30), null, SourceGraphAnalyzer.IndexVersion);
     await store.SaveAnalysisPlanAsync(plan, cancellationToken);
     await store.SaveAuditAsync(new AuditEvent(Guid.NewGuid(), identity.UserId, "analysis-plan.create", repository.Id, "allowed", now), cancellationToken);
     return Results.Accepted($"/api/v1/analysis-plans/{plan.Id}", ToAnalysisPlanResponse(plan));
@@ -733,7 +757,8 @@ static object ToAnalysisPlanResponse(AnalysisPlan plan) => new
     plan.Revision,
     plan.CreatedAt,
     plan.UpdatedAt,
-    plan.ExpiresAt
+    plan.ExpiresAt,
+    plan.IndexVersion
 };
 
 static string? ValidatePlanSelections(

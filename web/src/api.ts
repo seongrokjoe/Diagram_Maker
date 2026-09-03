@@ -54,6 +54,8 @@ export const api = {
     request<Repository>("/api/v1/repositories", { method: "POST", body: JSON.stringify(input) }),
   listCommits: (repositoryId: string, query = "", skip = 0, limit = 50) =>
     request<GitCommit[]>(`/api/v1/repositories/${repositoryId}/commits?query=${encodeURIComponent(query)}&skip=${skip}&limit=${limit}`),
+  resolveCommit: (repositoryId: string, revision: string) =>
+    request<GitCommit>(`/api/v1/repositories/${repositoryId}/commits/resolve?revision=${encodeURIComponent(revision)}`),
   listPresets: (type?: DiagramType) =>
     request<DiagramPreset[]>(`/api/v1/diagram-presets${type ? `?type=${type}` : ""}`),
 

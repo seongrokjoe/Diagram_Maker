@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
+import { CommitPicker } from "./CommitPicker";
 import { MermaidPreview } from "./MermaidPreview";
 import { PresetPicker } from "./PresetPicker";
 import type {
@@ -26,10 +27,11 @@ export function AnalysisWorkspace({ repositories, reportError }: {
   reportError: (message: string) => void;
 }) {
   const [repositoryId, setRepositoryId] = useState("");
-  const [commits, setCommits] = useState<GitCommit[]>([]);
   const [targetRevision, setTargetRevision] = useState("");
+  const [targetCommit, setTargetCommit] = useState<GitCommit | null>(null);
   const [advancedBase, setAdvancedBase] = useState(false);
   const [baseRevision, setBaseRevision] = useState("");
+  const [baseCommit, setBaseCommit] = useState<GitCommit | null>(null);
   const [useLlmGrouping, setUseLlmGrouping] = useState(true);
   const [enableThinking, setEnableThinking] = useState(false);
   const [plan, setPlan] = useState<AnalysisPlan | null>(null);
@@ -47,13 +49,6 @@ export function AnalysisWorkspace({ repositories, reportError }: {
       .then(([plans, presetList]) => { setRecentPlans(plans); setPresets(presetList); })
       .catch((reason: unknown) => reportError(messageOf(reason, "초안 목록을 불러오지 못했습니다.")));
   }, [reportError]);
-
-  useEffect(() => {
-    if (!repositoryId) { setCommits([]); setTargetRevision(""); return; }
-    void api.listCommits(repositoryId)
-      .then((items) => { setCommits(items); setTargetRevision(items[0]?.sha ?? ""); })
-      .catch((reason: unknown) => reportError(messageOf(reason, "커밋 목록을 불러오지 못했습니다.")));
-  }, [repositoryId, reportError]);
 
   useEffect(() => {
     if (!plan || ["Ready", "Failed", "Expired"].includes(plan.state)) return;
@@ -87,6 +82,8 @@ export function AnalysisWorkspace({ repositories, reportError }: {
     groups.forEach((group) => group.changeIds.forEach((changeId) => result.set(changeId, group.id)));
     return result;
   }, [groups]);
+  const selectedRepository = repositories.find((repository) => repository.id === repositoryId);
+  const revisionsMatch = advancedBase && Boolean(baseRevision) && baseRevision === targetRevision;
 
   async function createPlan(event: FormEvent) {
     event.preventDefault();
@@ -196,23 +193,38 @@ export function AnalysisWorkspace({ repositories, reportError }: {
           <p className="section-label">STEP 1 · IMMUTABLE REVISION</p>
           <h2>분석할 커밋 선택</h2>
           <label>저장소
-            <select required value={repositoryId} onChange={(event) => setRepositoryId(event.target.value)}>
+            <select required value={repositoryId} onChange={(event) => {
+              setRepositoryId(event.target.value);
+              setTargetRevision("");
+              setTargetCommit(null);
+              setBaseRevision("");
+              setBaseCommit(null);
+            }}>
               <option value="">저장소 선택</option>
               {repositories.map((repository) => <option key={repository.id} value={repository.id}>{repository.name}</option>)}
             </select>
           </label>
-          <label>Target 커밋
-            <select required value={targetRevision} onChange={(event) => setTargetRevision(event.target.value)}>
-              <option value="">커밋 선택</option>
-              {commits.map((commit) => <option key={commit.sha} value={commit.sha}>{commit.sha.slice(0, 10)} · {oneLine(commit.message)}</option>)}
-            </select>
-          </label>
+          <CommitPicker
+            repositoryId={repositoryId}
+            defaultBranch={selectedRepository?.defaultBranch ?? ""}
+            label="Target 커밋"
+            value={targetRevision}
+            autoSelectFirst
+            onSelect={(commit) => { setTargetCommit(commit); setTargetRevision(commit?.sha ?? ""); }}
+          />
           <label className="checkbox"><input type="checkbox" checked={advancedBase} onChange={(event) => setAdvancedBase(event.target.checked)} /> Base 커밋 직접 지정</label>
-          {advancedBase && <label>Base revision<input value={baseRevision} onChange={(event) => setBaseRevision(event.target.value)} placeholder="커밋 SHA 또는 브랜치" /></label>}
-          {!advancedBase && <p className="help">Base는 Target의 첫 번째 부모 커밋으로 자동 선택합니다.</p>}
+          {advancedBase && <CommitPicker
+            repositoryId={repositoryId}
+            defaultBranch={selectedRepository?.defaultBranch ?? ""}
+            label="Base 커밋"
+            value={baseRevision}
+            onSelect={(commit) => { setBaseCommit(commit); setBaseRevision(commit?.sha ?? ""); }}
+          />}
+          {!advancedBase && <p className="help">Base는 Target의 첫 번째 부모 커밋으로 자동 선택합니다.{targetCommit && (targetCommit.parentShas[0] ? ` (${targetCommit.parentShas[0].slice(0, 12)})` : " 선택한 Target은 부모가 없는 최초 커밋입니다.")}</p>}
+          {revisionsMatch && <p className="error-text">Base와 Target은 서로 다른 커밋이어야 합니다.</p>}
           <label className="checkbox"><input type="checkbox" checked={useLlmGrouping} onChange={(event) => setUseLlmGrouping(event.target.checked)} /> 내부 LLM의 그룹 제안 사용</label>
           <label className="checkbox"><input type="checkbox" disabled={!useLlmGrouping} checked={enableThinking} onChange={(event) => setEnableThinking(event.target.checked)} /> 그룹 제안에 Thinking 사용</label>
-          <button className="primary" disabled={busy || !targetRevision}>변경점 사전 분석</button>
+          <button className="primary" disabled={busy || !targetRevision || (advancedBase && (!baseCommit || revisionsMatch))}>변경점 사전 분석</button>
         </form>
         <section className="panel">
           <p className="section-label">30-DAY DRAFTS</p><h2>최근 분석 초안</h2>
@@ -299,6 +311,5 @@ function Progress({ value, label }: { value: number; label: string }) {
 }
 
 function EmptyState({ text }: { text: string }) { return <div className="empty-state"><p>{text}</p></div>; }
-function oneLine(value: string) { return value.split(/\r?\n/, 1)[0]; }
 function messageOf(reason: unknown, fallback: string) { return reason instanceof Error ? reason.message : fallback; }
 function defaultPreset(type: DiagramType, presets: DiagramPreset[]) { return presets.find((preset) => preset.type === type && preset.detailLevel === "balanced")?.id ?? presets.find((preset) => preset.type === type)?.id ?? "balanced"; }

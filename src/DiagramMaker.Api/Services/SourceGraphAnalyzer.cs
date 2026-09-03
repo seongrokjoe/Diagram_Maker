@@ -10,6 +10,8 @@ namespace DiagramMaker.Services;
 
 public sealed partial class SourceGraphAnalyzer
 {
+    public const string IndexVersion = "source-graph-v2";
+
     private sealed record ParsedSymbol(
         SymbolIdentity Identity,
         SymbolVersion Version,
@@ -123,7 +125,12 @@ public sealed partial class SourceGraphAnalyzer
         var identityBySemanticKey = targetSymbols
             .GroupBy(static symbol => symbol.Identity.SemanticKey)
             .ToDictionary(static group => group.Key, static group => group.First().Identity.Id, StringComparer.Ordinal);
-        var evidenceByIdentity = targetSymbols.ToDictionary(static symbol => symbol.Identity.Id, static symbol => symbol.Evidence.Id, StringComparer.Ordinal);
+        var evidenceByIdentity = targetSymbols
+            .GroupBy(static symbol => symbol.Identity.Id, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => group.Select(static symbol => symbol.Evidence.Id).Distinct(StringComparer.Ordinal).ToArray(),
+                StringComparer.Ordinal);
         var edges = new List<GraphEdge>();
         foreach (var edge in index.TargetEdges)
         {
@@ -136,7 +143,7 @@ public sealed partial class SourceGraphAnalyzer
                 edge.Type,
                 edge.Label,
                 edge.Confidence,
-                evidenceByIdentity.TryGetValue(sourceId, out var evidenceId) ? [evidenceId] : [],
+                evidenceByIdentity.TryGetValue(sourceId, out var evidenceIds) ? evidenceIds : [],
                 edge.SequenceIndex));
         }
 
@@ -152,7 +159,7 @@ public sealed partial class SourceGraphAnalyzer
                     !identityBySemanticKey.TryGetValue(matches[0].SemanticKey, out var targetId)) continue;
                 edges.Add(new GraphEdge(
                     StableIds.Create(repositoryId, sourceId, targetId, "inherits"), sourceId, targetId, "inherits", "inherits",
-                    Confidence.Inferred, evidenceByIdentity.TryGetValue(sourceId, out var evidenceId) ? [evidenceId] : []));
+                    Confidence.Inferred, evidenceByIdentity.TryGetValue(sourceId, out var evidenceIds) ? evidenceIds : []));
             }
         }
         return edges;

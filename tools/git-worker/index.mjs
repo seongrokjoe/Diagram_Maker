@@ -152,6 +152,120 @@ async function runGit(input, dir, args, options = {}) {
   return result;
 }
 
+function normalizePageNumber(value, fallback, maximum = Number.MAX_SAFE_INTEGER) {
+  const number = Number(value ?? fallback);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(0, Math.min(Math.trunc(number), maximum));
+}
+
+function parseCommitRecord(record) {
+  const normalized = record.replace(/^\r?\n/, "").trim();
+  if (!normalized) return null;
+  const [sha, parents, authoredAt, message, authorName, authorEmail] = normalized.split("\x1f");
+  if (!sha) return null;
+  return {
+    sha,
+    parentShas: parents ? parents.split(" ").filter(Boolean) : [],
+    authoredAt,
+    message: message ?? "",
+    authorName: authorName ?? "",
+    authorEmail: authorEmail ?? "",
+  };
+}
+
+function normalizedSearchValue(value) {
+  return String(value ?? "").normalize("NFKC").toLocaleLowerCase();
+}
+
+function commitMatches(commit, query) {
+  const needle = normalizedSearchValue(query);
+  return [commit.sha, commit.message, commit.authorName, commit.authorEmail]
+    .some((value) => normalizedSearchValue(value).includes(needle));
+}
+
+function searchCommitsNative(input, dir, revision, query, skip, limit) {
+  const executable = input.gitExecutable || "git";
+  const args = [
+    "-C", dir, "log", "--date=iso-strict",
+    "--format=%H%x1f%P%x1f%aI%x1f%s%x1f%an%x1f%ae%x1e",
+    "--end-of-options", revision,
+  ];
+  const environment = {
+    ...process.env,
+    GIT_OPTIONAL_LOCKS: "0",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_NO_REPLACE_OBJECTS: "1",
+  };
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = spawn(executable, args, {
+        env: environment,
+        shell: false,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      reject(processError(error, executable));
+      return;
+    }
+
+    const matches = [];
+    const stderrChunks = [];
+    let stderrLength = 0;
+    let pending = "";
+    let matchedCount = 0;
+    let stoppedAfterLimit = false;
+    let processFailure = null;
+
+    function accept(record) {
+      const commit = parseCommitRecord(record);
+      if (!commit || !commitMatches(commit, query)) return;
+      if (matchedCount >= skip) matches.push(commit);
+      matchedCount += 1;
+      if (matches.length >= limit && !stoppedAfterLimit) {
+        stoppedAfterLimit = true;
+        child.kill();
+      }
+    }
+
+    child.on("error", (error) => { processFailure ??= processError(error, executable); });
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      if (stoppedAfterLimit) return;
+      pending += chunk;
+      let separator = pending.indexOf("\x1e");
+      while (separator >= 0) {
+        accept(pending.slice(0, separator));
+        pending = pending.slice(separator + 1);
+        if (stoppedAfterLimit) break;
+        separator = pending.indexOf("\x1e");
+      }
+    });
+    child.stderr.on("data", (chunk) => {
+      if (stderrLength >= MAX_GIT_STDERR) return;
+      const remaining = MAX_GIT_STDERR - stderrLength;
+      const value = chunk.length <= remaining ? chunk : chunk.subarray(0, remaining);
+      stderrChunks.push(value);
+      stderrLength += value.length;
+    });
+    child.on("close", (exitCode) => {
+      if (processFailure) {
+        reject(processFailure);
+        return;
+      }
+      if (!stoppedAfterLimit && pending) accept(pending);
+      if (!stoppedAfterLimit && exitCode !== 0) {
+        const detail = Buffer.concat(stderrChunks, stderrLength).toString("utf8").trim()
+          || `Git exited with code ${exitCode ?? -1}.`;
+        reject(new WorkerError("GIT_REVISION_NOT_FOUND", detail, "native"));
+        return;
+      }
+      resolve(matches.slice(0, limit));
+    });
+  });
+}
+
 async function resolveRevisionNative(input, dir, revision) {
   if (!revision || typeof revision !== "string") {
     throw new WorkerError("GIT_REVISION_NOT_FOUND", "Revision is required.", "native");
@@ -488,7 +602,7 @@ async function buildCppIndexNative(input, dir, comparison) {
     .filter(isCppSourceFile);
   if (changedCppPaths.length === 0) {
     return {
-      parserVersion: "tree-sitter-cpp-0.23.4/index-v1",
+      parserVersion: "tree-sitter-cpp-0.23.4/index-v2",
       targetSymbols: [],
       targetEdges: [],
       beforeChangedSymbols: [],
@@ -560,7 +674,7 @@ async function buildCppIndexNative(input, dir, comparison) {
   }
 
   return {
-    parserVersion: "tree-sitter-cpp-0.23.4/index-v1",
+    parserVersion: "tree-sitter-cpp-0.23.4/index-v2",
     targetSymbols: target.symbols,
     targetEdges: target.edges,
     beforeChangedSymbols: parsedBefore.flatMap((file) => file.symbols),
@@ -582,16 +696,17 @@ async function prepareNative(input) {
 
 async function listCommitsNative(input) {
   const dir = validateRepositoryDirectory(input.repositoryPath);
-  const limit = Math.max(1, Math.min(Number(input.limit ?? 50), 100));
-  const skip = Math.max(0, Number(input.skip ?? 0));
-  const args = ["log", `--max-count=${limit}`, `--skip=${skip}`, "--date=iso-strict", "--format=%H%x1f%P%x1f%aI%x1f%s%x1e"];
-  if (input.query) args.splice(1, 0, "--regexp-ignore-case", `--grep=${String(input.query).slice(0, 200)}`);
-  args.push(input.revision || "HEAD");
+  const limit = Math.max(1, normalizePageNumber(input.limit, 50, 100));
+  const skip = normalizePageNumber(input.skip, 0);
+  const revision = input.exactRevision
+    ? await resolveRevisionNative(input, dir, input.revision)
+    : (input.revision || "HEAD");
+  const query = String(input.query ?? "").trim().slice(0, 200);
+  if (query) return searchCommitsNative(input, dir, revision, query, skip, limit);
+  const args = ["log", `--max-count=${limit}`, `--skip=${skip}`, "--date=iso-strict", "--format=%H%x1f%P%x1f%aI%x1f%s%x1f%an%x1f%ae%x1e"];
+  args.push("--end-of-options", revision);
   const result = await runGit(input, dir, args, { errorCode: "GIT_REVISION_NOT_FOUND", maxOutputBytes: 2_000_000 });
-  return result.stdout.toString("utf8").split("\x1e").map((record) => record.trim()).filter(Boolean).map((record) => {
-    const [sha, parents, authoredAt, message] = record.split("\x1f");
-    return { sha, parentShas: parents ? parents.split(" ").filter(Boolean) : [], authoredAt, message };
-  });
+  return result.stdout.toString("utf8").split("\x1e").map(parseCommitRecord).filter(Boolean);
 }
 
 async function readEvidenceNative(input) {
@@ -869,13 +984,30 @@ export async function listCommits(input) {
   return executeWithBackend(input, listCommitsNative, async (fallbackInput) => {
     const dir = validateRepositoryDirectory(fallbackInput.repositoryPath);
     const gitdir = resolveGitdir(dir);
-    const values = await git.log({ fs, dir, gitdir, ref: fallbackInput.revision || "HEAD", depth: Math.max(1, Math.min(Number(fallbackInput.limit ?? 50), 100)) });
-    return values.map((item) => ({
+    const limit = Math.max(1, normalizePageNumber(fallbackInput.limit, 50, 100));
+    const skip = normalizePageNumber(fallbackInput.skip, 0);
+    const ref = fallbackInput.exactRevision
+      ? await resolveRevisionIsomorphic(dir, gitdir, fallbackInput.revision)
+      : (fallbackInput.revision || "HEAD");
+    const query = String(fallbackInput.query ?? "").trim().slice(0, 200);
+    let depth = Math.max(skip + limit, 200);
+    let values;
+    let mapped;
+    do {
+      values = await git.log({ fs, dir, gitdir, ref, depth });
+      mapped = values.map((item) => ({
       sha: item.oid,
       parentShas: item.commit.parent,
       authoredAt: new Date(item.commit.author.timestamp * 1000).toISOString(),
       message: item.commit.message.trim().split(/\r?\n/, 1)[0] ?? "",
-    }));
+        authorName: item.commit.author.name ?? "",
+        authorEmail: item.commit.author.email ?? "",
+      }));
+      if (!query || mapped.filter((commit) => commitMatches(commit, query)).length >= skip + limit || values.length < depth) break;
+      depth = Math.min(depth * 2, Number.MAX_SAFE_INTEGER);
+    } while (true);
+    const filtered = query ? mapped.filter((commit) => commitMatches(commit, query)) : mapped;
+    return filtered.slice(skip, skip + limit);
   });
 }
 

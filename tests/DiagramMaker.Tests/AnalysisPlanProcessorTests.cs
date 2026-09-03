@@ -61,4 +61,26 @@ public sealed class AnalysisPlanProcessorTests
         Assert.Equal(candidates.Count, groupedIds.Length);
         Assert.Equal(groupedIds.Length, groupedIds.Distinct(StringComparer.Ordinal).Count());
     }
+
+    [Fact]
+    public void StaticGrouping_AllowsMultipleChangesForTheSameIdentity()
+    {
+        var candidates = new[]
+        {
+            Candidate("change-a1", "identity-a", "A.First"),
+            Candidate("change-a2", "identity-a", "A.Second"),
+            Candidate("change-b", "identity-b", "B.Run")
+        };
+        var graph = new VersionedGraph(
+            [], [], [new GraphEdge("ab", "identity-a", "identity-b", "calls", "calls", Confidence.Exact, [])], [], []);
+
+        var groups = AnalysisPlanProcessor.BuildStaticGroups(candidates, graph);
+
+        var group = Assert.Single(groups);
+        Assert.Equal(candidates.Select(static candidate => candidate.Id).Order(), group.ChangeIds.Order());
+    }
+
+    private static ChangeCandidate Candidate(string id, string identityId, string name) => new(
+        id, identityId, name, "function", SymbolChangeKind.ModifyBody, $"{name}.cpp", 1, 2,
+        $"void {name}()", Confidence.Exact, 0, 0, []);
 }

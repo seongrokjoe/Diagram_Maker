@@ -21,6 +21,8 @@ export type GitCommit = {
   parentShas: string[];
   authoredAt: string;
   message: string;
+  authorName: string;
+  authorEmail: string;
 };
 
 export type DiagramStyle = {
@@ -190,6 +192,7 @@ export type AnalysisPlan = {
   createdAt: string;
   updatedAt: string;
   expiresAt: string;
+  indexVersion?: string;
 };
 
 export type AnalysisDiagramGroup = {
