@@ -89,6 +89,29 @@ test("C++ indexer preserves method control flow and indirect API calls", async (
   assert.equal(resolved.excludedCallCount, 0);
 });
 
+test("C++ control flow preserves assignments, suppresses nested calls, and groups adjacent simple assignments", async () => {
+  const parsed = await parseCppFile("Service.cpp", `
+    struct Service {
+      const char* GetCJInfo(int value) { return "value"; }
+      void Execute(int temp) {
+        auto cjData = GetCJInfo(temp);
+        WRITE_LOG(true, "TEST %s", cjData.c_str());
+        int a = 0;
+        int b = 1;
+        int c = 10;
+      }
+    };
+  `);
+
+  const execute = parsed.symbols.find((symbol) => symbol.qualifiedName === "Service::Execute");
+  assert.ok(execute);
+  const labels = execute.controlNodes.map((node) => node.label);
+  assert.ok(labels.includes("auto cjData = GetCJInfo(temp);"));
+  assert.ok(labels.includes('WRITE_LOG(true, "TEST %s", cjData.c_str());'));
+  assert.ok(!labels.some((label) => label === "GetCJInfo(temp)" || label === "cjData.c_str()"));
+  assert.ok(labels.includes("int a = 0;\nint b = 1;\nint c = 10;"));
+});
+
 test("indirect API uses an explicit alias and reports unresolved targets", async () => {
   const parsed = await parseCppFile("Service.cpp", `
     struct Opr_Xfer { void runOrgReturn() {} };

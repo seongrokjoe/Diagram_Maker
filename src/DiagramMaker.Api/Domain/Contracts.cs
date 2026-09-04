@@ -467,7 +467,8 @@ public sealed record AnalysisDiagramViewResult(
     string State = "Completed",
     string? ErrorCode = null,
     string? ErrorMessage = null,
-    bool Reused = false);
+    bool Reused = false,
+    DiagramArtifact? ComparisonBaseDiagram = null);
 
 public sealed record DiagramStyleOverrides(
     string? Direction = null,
@@ -480,7 +481,9 @@ public sealed record DiagramViewSelection(
     string Id,
     string DiagramType,
     string PresetId,
-    DiagramStyleOverrides? Overrides = null);
+    DiagramStyleOverrides? Overrides = null,
+    bool FocusOnChanges = false,
+    bool CompareRevisions = false);
 
 public sealed record AnalysisGroupSelection(
     string Id,

@@ -71,6 +71,25 @@ public sealed class DiagramRevisionServiceTests
             Guid.NewGuid(), "group", "flow", CancellationToken.None));
     }
 
+    [Fact]
+    public async Task PreviewAsync_AcceptsGroupedStatementNodeUpToEditorLimit()
+    {
+        await using var store = new InMemoryAppStore();
+        var validator = new DiagramValidator();
+        var service = new DiagramRevisionService(store, validator, new MermaidCompiler(validator));
+        var artifact = Artifact();
+        var groupedStatements = string.Join('\n', Enumerable.Range(1, 20).Select(index => $"int value{index} = {index};"));
+        var document = new DiagramEditDocument("그룹 대입", "LR",
+            [new EditableDiagramNode("a", groupedStatements), new EditableDiagramNode("b", "완료")],
+            [new EditableDiagramEdge("e", "a", "b", "다음")]);
+
+        var preview = await service.PreviewAsync(artifact,
+            new SaveDiagramEditRequest(artifact.Id, null, artifact.Version, document), "reviewer", CancellationToken.None);
+
+        Assert.Equal(groupedStatements, preview.Ir.Nodes[0].Label);
+        Assert.Contains("int value20 = 20;", preview.MermaidDsl, StringComparison.Ordinal);
+    }
+
     private static DiagramArtifact Artifact()
     {
         var ir = new DiagramIr(

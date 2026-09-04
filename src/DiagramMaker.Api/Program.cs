@@ -857,15 +857,17 @@ api.MapPost("/analyses/{id:guid}/groups/{groupId}/views/{viewId}/edit-preview", 
     Guid id,
     string groupId,
     string viewId,
+    string? revisionSide,
     SaveDiagramEditRequest request,
     HttpContext context,
     IAppStore store,
     DiagramRevisionService service,
     CancellationToken cancellationToken) =>
 {
+    if (!ValidRevisionSide(revisionSide)) return Results.BadRequest(new { error = "revisionSide must be base or target." });
     var job = await AuthorizedJob(id, context, store, cancellationToken);
     if (job is null) return Results.NotFound();
-    var artifact = FindAnalysisDiagramArtifact(job, groupId, viewId);
+    var artifact = FindAnalysisDiagramArtifact(job, groupId, viewId, revisionSide);
     if (artifact is null) return Results.NotFound(new { error = "The diagram view does not exist." });
     var identity = context.GetInternalIdentity();
     try
@@ -917,21 +919,24 @@ api.MapPost("/analyses/{id:guid}/groups/{groupId}/views/{viewId}/edits", async (
     Guid id,
     string groupId,
     string viewId,
+    string? revisionSide,
     SaveDiagramEditRequest request,
     HttpContext context,
     IAppStore store,
     DiagramRevisionService service,
     CancellationToken cancellationToken) =>
 {
+    if (!ValidRevisionSide(revisionSide)) return Results.BadRequest(new { error = "revisionSide must be base or target." });
     var job = await AuthorizedJob(id, context, store, cancellationToken);
     if (job is null) return Results.NotFound();
-    var artifact = FindAnalysisDiagramArtifact(job, groupId, viewId);
+    var artifact = FindAnalysisDiagramArtifact(job, groupId, viewId, revisionSide);
     if (artifact is null) return Results.NotFound(new { error = "The diagram view does not exist." });
     var identity = context.GetInternalIdentity();
     try
     {
         var revision = await service.SaveAsync(artifact, request, identity.UserId, "analysis", job.Id,
-            groupId, viewId, cancellationToken);
+            groupId, revisionSide?.Equals("base", StringComparison.OrdinalIgnoreCase) == true ? $"{viewId}:base" : viewId,
+            cancellationToken);
         return Results.Created($"/api/v1/diagram-artifacts/{artifact.Id}/revisions/{revision.Id}", revision);
     }
     catch (DiagramRevisionConflictException exception)
@@ -958,14 +963,22 @@ static DiagramArtifact? FindNaturalDiagramArtifact(NaturalDiagramRecord record, 
     return record.Request.EffectiveViews()[0].Id == viewId ? record.Diagram : null;
 }
 
-static DiagramArtifact? FindAnalysisDiagramArtifact(AnalysisJob job, string groupId, string viewId)
+static DiagramArtifact? FindAnalysisDiagramArtifact(AnalysisJob job, string groupId, string viewId, string? revisionSide = null)
 {
     var group = job.Result?.DiagramGroups?.FirstOrDefault(item => item.GroupId == groupId);
     if (group is null) return null;
     if (group.Views is { Count: > 0 })
-        return group.Views.FirstOrDefault(view => view.ViewId == viewId)?.Diagram;
+    {
+        var view = group.Views.FirstOrDefault(item => item.ViewId == viewId);
+        return revisionSide?.Equals("base", StringComparison.OrdinalIgnoreCase) == true
+            ? view?.ComparisonBaseDiagram
+            : view?.Diagram;
+    }
     return $"{group.GroupId}-view" == viewId ? group.Diagram : null;
 }
+
+static bool ValidRevisionSide(string? value) => string.IsNullOrWhiteSpace(value) ||
+    value.Equals("base", StringComparison.OrdinalIgnoreCase) || value.Equals("target", StringComparison.OrdinalIgnoreCase);
 
 static object ToAnalysisResponse(AnalysisJob job) => new
 {

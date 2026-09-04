@@ -640,7 +640,7 @@ async function buildCppIndexNative(input, dir, comparison) {
     .filter(isCppSourceFile);
   if (changedCppPaths.length === 0) {
     return {
-      parserVersion: "tree-sitter-cpp-0.23.4/index-v3",
+      parserVersion: "tree-sitter-cpp-0.23.4/index-v4",
       targetSymbols: [],
       targetEdges: [],
       baseEdges: [],
@@ -724,7 +724,7 @@ async function buildCppIndexNative(input, dir, comparison) {
     .filter(isCppSourceFile));
 
   return {
-    parserVersion: "tree-sitter-cpp-0.23.4/index-v3",
+    parserVersion: "tree-sitter-cpp-0.23.4/index-v4",
     targetSymbols: target.symbols,
     targetEdges: target.edges,
     baseEdges: base.edges,

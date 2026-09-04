@@ -126,8 +126,8 @@ public sealed partial class DiagramRevisionService(
             throw new ArgumentException("A diagram must contain 1-100 nodes.");
         if (document.Edges is null || document.Edges.Count > 200)
             throw new ArgumentException("A diagram may contain at most 200 edges.");
-        if (document.Nodes.Any(static node => string.IsNullOrWhiteSpace(node.Id) || !SafeId().IsMatch(node.Id) || string.IsNullOrWhiteSpace(node.Label) || node.Label.Trim().Length > 240))
-            throw new ArgumentException("Node IDs and labels must be valid and no longer than 240 characters.");
+        if (document.Nodes.Any(static node => string.IsNullOrWhiteSpace(node.Id) || !SafeId().IsMatch(node.Id) || string.IsNullOrWhiteSpace(node.Label) || node.Label.Trim().Length > DiagramValidator.MaximumNodeLabelLength))
+            throw new ArgumentException($"Node IDs and labels must be valid and no longer than {DiagramValidator.MaximumNodeLabelLength} characters.");
         if (document.Edges.Any(static edge => string.IsNullOrWhiteSpace(edge.Id) || !SafeId().IsMatch(edge.Id) || string.IsNullOrWhiteSpace(edge.SourceId) || string.IsNullOrWhiteSpace(edge.TargetId) || edge.Label is null || edge.Label.Length > 240))
             throw new ArgumentException("Edge IDs, endpoints, and labels must be valid and no longer than 240 characters.");
         if (document.Nodes.Select(static node => node.Id).Distinct(StringComparer.Ordinal).Count() != document.Nodes.Count)

@@ -13,6 +13,7 @@ public sealed class DiagramValidator
 {
     public const int MaximumNodes = 500;
     public const int MaximumEdges = 500;
+    public const int MaximumNodeLabelLength = 1000;
 
     public void Validate(DiagramIr diagram)
     {
@@ -36,7 +37,7 @@ public sealed class DiagramValidator
             return new ValidationFailure("DuplicateNodeId", "Diagram contains duplicate node IDs.");
         if (diagram.Nodes.Any(static node => string.IsNullOrWhiteSpace(node.Id) ||
                                              string.IsNullOrWhiteSpace(node.Label) ||
-                                             node.Id.Length > 120 || node.Label.Length > 240))
+                                             node.Id.Length > 120 || node.Label.Length > MaximumNodeLabelLength))
             return new ValidationFailure("InvalidNode", "Diagram contains an invalid node.");
         if (diagram.Edges.Any(edge => string.IsNullOrWhiteSpace(edge.Id) || edge.Id.Length > 120 ||
                                       !nodeIds.Contains(edge.SourceId) || !nodeIds.Contains(edge.TargetId)))

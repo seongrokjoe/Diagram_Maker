@@ -10,7 +10,7 @@ namespace DiagramMaker.Services;
 
 public sealed partial class SourceGraphAnalyzer
 {
-    public const string IndexVersion = "source-graph-v4";
+    public const string IndexVersion = "source-graph-v5";
 
     private sealed record ParsedCall(string Name, int StartLine, int EndLine, EvidenceRef Evidence);
 

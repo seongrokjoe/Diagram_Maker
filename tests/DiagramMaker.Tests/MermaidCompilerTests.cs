@@ -8,7 +8,7 @@ public sealed class MermaidCompilerTests
     private readonly MermaidCompiler _compiler = new(new DiagramValidator());
 
     [Fact]
-    public void Compile_ChangeMarker_EmitsStableEdgeIdBadgeAndRedStyle()
+    public void Compile_ChangeMarker_UsesPlainLabelAndKindSpecificColor()
     {
         var marker = new DiagramChangeMarker(DiagramChangeKind.Modified, DiagramChangePrecision.Exact,
             "Service.cs", 5, 5, ["evidence"]);
@@ -22,9 +22,27 @@ public sealed class MermaidCompilerTests
 
         var result = _compiler.Compile(diagram);
 
-        Assert.Contains("A · ~ 수정", result, StringComparison.Ordinal);
+        Assert.Contains("[\"A\"]", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("수정", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("심볼 수준", result, StringComparison.Ordinal);
         Assert.Contains("n_edge@-->", result, StringComparison.Ordinal);
-        Assert.Contains("stroke:#dc2626", result, StringComparison.Ordinal);
+        Assert.Contains("stroke:#16a34a", result, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(DiagramChangeKind.Added, "#2563eb")]
+    [InlineData(DiagramChangeKind.Modified, "#16a34a")]
+    [InlineData(DiagramChangeKind.Deleted, "#dc2626")]
+    public void Compile_ChangeKinds_UseDistinctColors(DiagramChangeKind kind, string color)
+    {
+        var marker = new DiagramChangeMarker(kind, DiagramChangePrecision.Exact, "Service.cs", 1, 1, []);
+        var diagram = new DiagramIr("flowchart", "Changed",
+            [new DiagramNode("a", "A", "method", null, kind.ToString(), Confidence.Exact, [], ChangeMarker: marker)],
+            [], [], []);
+
+        var result = _compiler.Compile(diagram);
+
+        Assert.Contains($"stroke:{color}", result, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -98,6 +116,28 @@ public sealed class MermaidCompilerTests
 
         Assert.Contains("n_caller --> n_callee", result, StringComparison.Ordinal);
         Assert.DoesNotContain("n_callee --> n_caller", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Compile_ClassRelation_NormalizesCharactersRejectedByMermaidClassParser()
+    {
+        var diagram = new DiagramIr(
+            "class", "Classes",
+            [
+                new DiagramNode("caller", "Caller<T>", "class", null, "modified", Confidence.Exact, []),
+                new DiagramNode("callee", "Callee", "class", null, "unchanged", Confidence.Exact, [])
+            ],
+            [new DiagramEdge("e", "caller", "callee", "calls", "간접 API: Factory::Run; next", "unchanged", Confidence.Exact, [])],
+            [], []);
+
+        var result = _compiler.Compile(diagram);
+        var relation = Assert.Single(result.Split('\n'), line => line.Contains("n_caller --> n_callee", StringComparison.Ordinal));
+        var label = relation[(relation.IndexOf(" : ", StringComparison.Ordinal) + 3)..];
+
+        Assert.DoesNotContain(':', label);
+        Assert.DoesNotContain(';', label);
+        Assert.Equal("간접 API∶ Factory∶∶Run； next", label);
+        Assert.Contains("Caller‹T›", result, StringComparison.Ordinal);
     }
 
     [Fact]

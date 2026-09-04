@@ -1,5 +1,8 @@
-import { useEffect, useId, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type MouseEvent, type WheelEvent } from "react";
 import type { DiagramArtifact } from "./types";
+
+export type DiagramSelection = { kind: "node" | "edge"; id: string };
+export type DiagramInlineEdit = DiagramSelection & { value: string };
 
 type MermaidApi = {
   initialize: (configuration: Record<string, unknown>) => void;
@@ -8,6 +11,7 @@ type MermaidApi = {
 };
 let mermaidPromise: Promise<MermaidApi> | undefined;
 let renderQueue: Promise<void> = Promise.resolve();
+const emptySelections: DiagramSelection[] = [];
 
 function loadMermaid(): Promise<MermaidApi> {
   mermaidPromise ??= new Promise<MermaidApi>((resolve, reject) => {
@@ -66,15 +70,22 @@ type MermaidPreviewProps = {
   downloadName?: string;
   editable?: boolean;
   compact?: boolean;
+  zoomable?: boolean;
   interactive?: boolean;
-  selected?: { kind: "node" | "edge"; id: string } | null;
-  onSelect?: (selection: { kind: "node" | "edge"; id: string } | null) => void;
+  selected?: DiagramSelection[];
+  inlineEdit?: DiagramInlineEdit | null;
+  onSelect?: (selection: DiagramSelection | null, additive: boolean) => void;
+  onEditRequest?: (selection: DiagramSelection) => void;
+  onInlineEditChange?: (value: string) => void;
+  onInlineEditCommit?: () => void;
+  onInlineEditCancel?: () => void;
   onInteractionReady?: (available: boolean) => void;
   onSaveRevision?: (source: string) => Promise<void>;
 };
 
 export function MermaidPreview({ source, artifact, downloadName = "diagram", editable = false, compact = false,
-  interactive = false, selected, onSelect, onInteractionReady, onSaveRevision }: MermaidPreviewProps) {
+  zoomable = false, interactive = false, selected = emptySelections, inlineEdit, onSelect, onEditRequest, onInlineEditChange,
+  onInlineEditCommit, onInlineEditCancel, onInteractionReady, onSaveRevision }: MermaidPreviewProps) {
   const id = useId().replaceAll(":", "_");
   const canvasRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState(source);
@@ -82,8 +93,11 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
   const [error, setError] = useState("");
   const [rendering, setRendering] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [editAnchor, setEditAnchor] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
 
   useEffect(() => setDraft(source), [source]);
+  useEffect(() => { setZoom(1); setEditAnchor(null); }, [artifact?.id, artifact?.version]);
 
   useEffect(() => {
     let active = true;
@@ -100,7 +114,7 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
         .then((mermaid) => renderMermaid(mermaid, renderId, renderSource))
         .then((result) => {
           if (!active) return;
-          const decorated = decorateSvg(sanitizeSvg(result.svg), artifact, selected ?? null);
+          const decorated = decorateSvg(sanitizeSvg(result.svg), artifact, selected);
           setSvg(decorated.svg);
           onInteractionReady?.(interactive && decorated.mappingComplete);
           setError("");
@@ -114,13 +128,54 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
     return () => { active = false; window.clearTimeout(timer); };
   }, [artifact, draft, editable, id, interactive, onInteractionReady, selected, source]);
 
+  function selectionFromTarget(target: EventTarget | null): { selection: DiagramSelection; element: Element } | null {
+    const element = target instanceof Element ? target.closest("[data-ir-id]") : null;
+    if (!element || !canvasRef.current?.contains(element)) return null;
+    const kind = element.getAttribute("data-ir-kind");
+    const itemId = element.getAttribute("data-ir-id");
+    return (kind === "node" || kind === "edge") && itemId ? { selection: { kind, id: itemId }, element } : null;
+  }
+
   function selectRenderedElement(event: MouseEvent<HTMLDivElement>) {
     if (!interactive || !onSelect) return;
-    const target = event.target instanceof Element ? event.target.closest("[data-ir-id]") : null;
-    if (!target || !canvasRef.current?.contains(target)) { onSelect(null); return; }
-    const kind = target.getAttribute("data-ir-kind");
-    const itemId = target.getAttribute("data-ir-id");
-    if ((kind === "node" || kind === "edge") && itemId) onSelect({ kind, id: itemId });
+    const matched = selectionFromTarget(event.target);
+    onSelect(matched?.selection ?? null, event.shiftKey);
+  }
+
+  function editRenderedElement(event: MouseEvent<HTMLDivElement>) {
+    if (!interactive || !onEditRequest) return;
+    const matched = selectionFromTarget(event.target);
+    if (!matched || !canvasRef.current) return;
+    event.preventDefault();
+    const elementBounds = matched.element.getBoundingClientRect();
+    const canvasBounds = canvasRef.current.getBoundingClientRect();
+    setEditAnchor({
+      left: elementBounds.left - canvasBounds.left + canvasRef.current.scrollLeft,
+      top: elementBounds.top - canvasBounds.top + canvasRef.current.scrollTop,
+      width: Math.max(180, elementBounds.width),
+      height: Math.max(matched.selection.kind === "node" ? 72 : 34, elementBounds.height),
+    });
+    onEditRequest(matched.selection);
+  }
+
+  function zoomDiagram(event: WheelEvent<HTMLDivElement>) {
+    if (!zoomable || compact || !svg) return;
+    event.preventDefault();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const next = clampZoom(zoom + (event.deltaY < 0 ? 0.1 : -0.1));
+    if (next === zoom) return;
+    const bounds = canvas.getBoundingClientRect();
+    const pointerX = event.clientX - bounds.left;
+    const pointerY = event.clientY - bounds.top;
+    const contentX = canvas.scrollLeft + pointerX;
+    const contentY = canvas.scrollTop + pointerY;
+    const ratio = next / zoom;
+    setZoom(next);
+    window.requestAnimationFrame(() => {
+      canvas.scrollLeft = contentX * ratio - pointerX;
+      canvas.scrollTop = contentY * ratio - pointerY;
+    });
   }
 
   async function saveRevision() {
@@ -137,6 +192,7 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
 
   return <>
     {!compact && <div className="diagram-actions">
+      {zoomable && <><span className="zoom-status">{Math.round(zoom * 100)}%</span><button type="button" className="secondary" disabled={zoom === 1} onClick={() => setZoom(1)}>100%로 초기화</button></>}
       <button type="button" className="secondary" disabled={!svg} onClick={() => downloadSvg(svg, `${downloadName}.svg`)}>SVG 다운로드</button>
       <button type="button" className="secondary" disabled={!svg} onClick={() => void downloadPng(svg, `${downloadName}.png`)}>PNG 다운로드</button>
       {editable && <button type="button" className="secondary" disabled={draft === source || saving} onClick={() => setDraft(source)}>편집 취소</button>}
@@ -145,12 +201,28 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
     {editable && <label className="mermaid-editor-label">Mermaid DSL 편집<textarea className="mermaid-editor" rows={12} value={draft} spellCheck={false} onChange={(event) => setDraft(event.target.value)} /></label>}
     {rendering && !svg && <div className="empty-state"><p>Mermaid 렌더러를 불러오는 중…</p></div>}
     {error && <div className={`error-panel ${compact ? "compact-error" : ""}`} role="alert">{error}</div>}
-    <div ref={canvasRef} className={`diagram-canvas ${compact ? "compact" : ""} ${interactive ? "interactive" : ""}`}
-      aria-label="생성된 다이어그램" onClick={selectRenderedElement} dangerouslySetInnerHTML={{ __html: svg }} />
+    <div ref={canvasRef} className={`diagram-canvas ${compact ? "compact" : ""} ${interactive ? "interactive" : ""} ${zoomable ? "zoomable" : ""}`}
+      aria-label="생성된 다이어그램" onClick={selectRenderedElement} onDoubleClick={editRenderedElement} onWheel={zoomDiagram}>
+      <div className="diagram-zoom-layer" style={{ zoom } as CSSProperties} dangerouslySetInnerHTML={{ __html: svg }} />
+      {inlineEdit && editAnchor && <div className={`diagram-inline-editor ${inlineEdit.kind}`} style={editAnchor}
+        onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
+        {inlineEdit.kind === "node"
+          ? <textarea autoFocus maxLength={1000} value={inlineEdit.value} onChange={(event) => onInlineEditChange?.(event.target.value)}
+            onBlur={() => onInlineEditCommit?.()} onKeyDown={(event) => {
+              if (event.key === "Escape") { event.preventDefault(); onInlineEditCancel?.(); }
+              else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); onInlineEditCommit?.(); }
+            }} />
+          : <input autoFocus maxLength={240} value={inlineEdit.value} onChange={(event) => onInlineEditChange?.(event.target.value)}
+            onBlur={() => onInlineEditCommit?.()} onKeyDown={(event) => {
+              if (event.key === "Escape") { event.preventDefault(); onInlineEditCancel?.(); }
+              else if (event.key === "Enter") { event.preventDefault(); onInlineEditCommit?.(); }
+            }} />}
+      </div>}
+    </div>
   </>;
 }
 
-function decorateSvg(svg: string, artifact: DiagramArtifact | undefined, selected: MermaidPreviewProps["selected"]): { svg: string; mappingComplete: boolean } {
+function decorateSvg(svg: string, artifact: DiagramArtifact | undefined, selected: DiagramSelection[]): { svg: string; mappingComplete: boolean } {
   if (!artifact) return { svg, mappingComplete: false };
   const parser = new DOMParser();
   const document = parser.parseFromString(svg, "image/svg+xml");
@@ -168,21 +240,28 @@ function decorateSvg(svg: string, artifact: DiagramArtifact | undefined, selecte
   }
 
   const remainingMessages = [...root.querySelectorAll('[data-et="message"]')];
+  const remainingMessageLabels = [...root.querySelectorAll("text.messageText, g.messageText")];
   const genericEdges = uniqueRoots(root.querySelectorAll("g.edgePath, .edgePaths > path, path.relation, line.messageLine0, line.messageLine1"), "edge")
     .filter((element) => !used.has(element));
+  const genericLabels = uniqueRoots(root.querySelectorAll("g.edgeLabel, g[class*='edgeLabel']"), "edge");
   let genericIndex = 0;
-  for (const edge of artifact.ir.edges) {
+  for (const [edgeOrdinal, edge] of artifact.ir.edges.entries()) {
     let candidates = rootsForDataId(root, alias(edge.id), "edge");
     if (candidates.length === 0 && artifact.type === "sequence") {
       const source = alias(edge.sourceId);
       const target = alias(edge.targetId);
       const index = remainingMessages.findIndex((element) =>
         element.getAttribute("data-from") === source && element.getAttribute("data-to") === target);
-      if (index >= 0) candidates = [remainingMessages.splice(index, 1)[0]];
+      if (index >= 0) {
+        candidates = [remainingMessages.splice(index, 1)[0]];
+        const label = remainingMessageLabels.splice(index, 1)[0];
+        if (label) candidates.push(label);
+      }
     }
     if (candidates.length === 0 && genericEdges.length === artifact.ir.edges.length) {
       candidates = [genericEdges[genericIndex++]];
     }
+    if (genericLabels.length === artifact.ir.edges.length && genericLabels[edgeOrdinal]) candidates.push(genericLabels[edgeOrdinal]);
     if (candidates.length === 0) continue;
     candidates.forEach((element) => tag(element, "edge", edge.id, selected, edge.changeMarker));
     mappedEdges++;
@@ -209,41 +288,42 @@ function uniqueRoots(elements: Iterable<Element>, kind: "node" | "edge"): Elemen
   return [...new Set([...elements].map((element) => element.closest(selector) ?? element))];
 }
 
-function tag(element: Element, kind: "node" | "edge", id: string, selected: MermaidPreviewProps["selected"], marker?: DiagramArtifact["ir"]["nodes"][number]["changeMarker"]) {
+function tag(element: Element, kind: "node" | "edge", id: string, selected: DiagramSelection[], marker?: DiagramArtifact["ir"]["nodes"][number]["changeMarker"]) {
   element.setAttribute("data-ir-kind", kind);
   element.setAttribute("data-ir-id", id);
   element.setAttribute("tabindex", "0");
   element.setAttribute("role", "button");
   element.setAttribute("style", `${element.getAttribute("style") ?? ""};cursor:pointer;`);
-  if (marker) applyMarkerStyle(element, marker.kind === "Deleted" || marker.precision === "Symbol");
-  if (selected?.kind === kind && selected.id === id) {
+  if (marker) applyMarkerStyle(element, marker.kind);
+  if (selected.some((item) => item.kind === kind && item.id === id)) {
     element.setAttribute("style", `${element.getAttribute("style") ?? ""};filter:drop-shadow(0 0 5px #2563eb);`);
   }
 }
 
-function applyMarkerStyle(element: Element, dashed: boolean) {
+function applyMarkerStyle(element: Element, kind: "Added" | "Modified" | "Deleted") {
+  const colors = markerColors(kind);
   const targets = [element, ...element.querySelectorAll("path, line, polygon, rect, circle, ellipse")];
   for (const target of targets) {
     const name = target.tagName.toLowerCase();
-    const style = `${target.getAttribute("style") ?? ""};stroke:#dc2626;stroke-width:3px;${dashed ? "stroke-dasharray:6 4;" : ""}`;
-    target.setAttribute("style", name === "rect" || name === "circle" || name === "ellipse" ? `${style}fill:#fee2e2;` : style);
-    recolorMarker(target);
+    const style = `${target.getAttribute("style") ?? ""};stroke:${colors.stroke};stroke-width:3px;`;
+    target.setAttribute("style", name === "rect" || name === "circle" || name === "ellipse" ? `${style}fill:${colors.fill};` : style);
+    recolorMarker(target, colors.stroke, kind.toLowerCase());
   }
 }
 
-function recolorMarker(element: Element) {
+function recolorMarker(element: Element, color: string, suffix: string) {
   const value = element.getAttribute("marker-end");
   const markerId = value?.match(/^url\(["']?#([^"')]+)["']?\)$/)?.[1];
   if (!markerId) return;
   const document = element.ownerDocument;
   const original = [...document.querySelectorAll("marker")].find((marker) => marker.id === markerId);
   if (!original) return;
-  const cloneId = `${markerId}-changed`;
+  const cloneId = `${markerId}-${suffix}`;
   const existing = [...document.querySelectorAll("marker")].find((marker) => marker.id === cloneId);
   if (!existing) {
     const cloned = original.cloneNode(true) as SVGMarkerElement;
     cloned.id = cloneId;
-    cloned.querySelectorAll("path, polygon").forEach((part) => part.setAttribute("style", "fill:#dc2626;stroke:#dc2626"));
+    cloned.querySelectorAll("path, polygon").forEach((part) => part.setAttribute("style", `fill:${color};stroke:${color}`));
     original.parentElement?.appendChild(cloned);
   }
   element.setAttribute("marker-end", `url(#${cloneId})`);
@@ -259,19 +339,43 @@ function appendLegend(document: Document, root: Element) {
   group.setAttribute("data-diagram-legend", "git-changes");
   group.setAttribute("transform", `translate(${x + 8} ${y + height + 12})`);
   const background = document.createElementNS(ns, "rect");
-  background.setAttribute("width", String(Math.min(Math.max(width - 16, 420), 720)));
+  background.setAttribute("width", String(Math.min(Math.max(width - 16, 360), 640)));
   background.setAttribute("height", "36");
   background.setAttribute("rx", "6");
-  background.setAttribute("style", "fill:#fff7f7;stroke:#fecaca");
+  background.setAttribute("style", "fill:#f8fafc;stroke:#cbd5e1");
   group.appendChild(background);
-  const text = document.createElementNS(ns, "text");
-  text.setAttribute("x", "12");
-  text.setAttribute("y", "23");
-  text.setAttribute("style", "font:600 12px Arial,sans-serif;fill:#991b1b");
-  text.textContent = "+ 추가   ~ 수정   − 삭제(점선)   심볼 수준(점선)";
-  group.appendChild(text);
+  const entries: Array<{ label: string; color: string }> = [
+    { label: "추가", color: "#2563eb" },
+    { label: "수정", color: "#16a34a" },
+    { label: "삭제", color: "#dc2626" },
+  ];
+  entries.forEach((entry, index) => {
+    const offset = 14 + index * 92;
+    const swatch = document.createElementNS(ns, "rect");
+    swatch.setAttribute("x", String(offset));
+    swatch.setAttribute("y", "10");
+    swatch.setAttribute("width", "18");
+    swatch.setAttribute("height", "16");
+    swatch.setAttribute("rx", "3");
+    swatch.setAttribute("style", `fill:${entry.color}22;stroke:${entry.color};stroke-width:2px`);
+    group.appendChild(swatch);
+    const text = document.createElementNS(ns, "text");
+    text.setAttribute("x", String(offset + 25));
+    text.setAttribute("y", "23");
+    text.setAttribute("style", "font:600 12px Arial,sans-serif;fill:#334155");
+    text.textContent = entry.label;
+    group.appendChild(text);
+  });
   root.appendChild(group);
 }
+
+function markerColors(kind: "Added" | "Modified" | "Deleted") {
+  if (kind === "Added") return { stroke: "#2563eb", fill: "#dbeafe" };
+  if (kind === "Modified") return { stroke: "#16a34a", fill: "#dcfce7" };
+  return { stroke: "#dc2626", fill: "#fee2e2" };
+}
+
+function clampZoom(value: number) { return Math.min(3, Math.max(0.5, Math.round(value * 10) / 10)); }
 
 function alias(id: string) { return `n_${id.replace(/[^a-zA-Z0-9_]/g, "_")}`; }
 

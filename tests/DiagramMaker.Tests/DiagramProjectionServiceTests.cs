@@ -226,7 +226,10 @@ public sealed class DiagramProjectionServiceTests
         };
         var graph = new VersionedGraph(
             identities, versions,
-            [new GraphEdge("edge", "method-a", "method-b", "calls", "runOrgReturn", Confidence.Inferred, [], 1, true, "RunFunction")],
+            [
+                new GraphEdge("edge-1", "method-a", "method-b", "calls", "runOrgReturn", Confidence.Inferred, ["call-1"], 1, true, "RunFunction"),
+                new GraphEdge("edge-2", "method-a", "method-b", "calls", "runOrgReturn", Confidence.Exact, ["call-2"], 2, true, "RunFunction")
+            ],
             [], [new SymbolChange("change", SymbolChangeKind.ModifyBody, "vma", "vma", Confidence.Exact, [])]);
         var comparison = new GitComparison(new string('a', 40), sha, []);
         var preset = new DiagramPresetCatalog().Resolve("code-relation", "code-class-grouped");
@@ -237,9 +240,66 @@ public sealed class DiagramProjectionServiceTests
 
         Assert.Contains(diagram.Nodes, node => node.Group == "InterfaceCustom");
         Assert.Contains(diagram.Nodes, node => node.Group == "Opr_Xfer");
-        Assert.Contains(diagram.Edges, edge => edge.IsIndirect && edge.Label.Contains("RunFunction", StringComparison.Ordinal));
+        var relationship = Assert.Single(diagram.Edges);
+        Assert.True(relationship.IsIndirect);
+        Assert.Contains("RunFunction", relationship.Label, StringComparison.Ordinal);
+        Assert.Equal(["call-1", "call-2"], relationship.EvidenceIds);
+        Assert.Equal(Confidence.Exact, relationship.Confidence);
         var dsl = new MermaidCompiler(new DiagramValidator()).Compile(diagram);
         Assert.Contains("-. 간접 API: RunFunction .->", dsl, StringComparison.Ordinal);
+
+        var classDiagram = Assert.Single(new DiagramProjectionService().Build("sample", graph, comparison, ["class"], 1, 1, false,
+            new HashSet<string>(["change"], StringComparer.Ordinal),
+            new DiagramPresetCatalog().Resolve("class", "class-related")).Artifacts).Ir;
+        Assert.Equal("InterfaceCustom", Assert.Single(classDiagram.Nodes, node => node.Id == "type-a").Label);
+        Assert.DoesNotContain(classDiagram.Nodes, node => node.Label.Contains("변경:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Build_RevisionSides_UseTheMatchingVersionsAndChangeColors()
+    {
+        var repositoryId = Guid.NewGuid();
+        var baseSha = new string('a', 40);
+        var targetSha = new string('b', 40);
+        var identities = new[]
+        {
+            new SymbolIdentity("source", repositoryId, "cpp", "method", "function:Service::Run()"),
+            new SymbolIdentity("target", repositoryId, "cpp", "method", "function:Store::Save()")
+        };
+        var versions = new[]
+        {
+            new SymbolVersion("source-base", "source", baseSha, "Service::RunOld", "void Run()", "Service.cpp", 1, 8, "old"),
+            new SymbolVersion("source-target", "source", targetSha, "Service::RunNew", "void Run()", "Service.cpp", 1, 8, "new"),
+            new SymbolVersion("target-base", "target", baseSha, "Store::Save", "void Save()", "Store.cpp", 1, 4, "same"),
+            new SymbolVersion("target-target", "target", targetSha, "Store::Save", "void Save()", "Store.cpp", 1, 4, "same")
+        };
+        var edges = new[]
+        {
+            new GraphEdge("base-call", "source", "target", "calls", "Save", Confidence.Exact, [], RevisionSha: baseSha,
+                FilePath: "Service.cpp", StartLine: 4, EndLine: 4),
+            new GraphEdge("target-call", "source", "target", "calls", "Save", Confidence.Exact, [], RevisionSha: targetSha,
+                FilePath: "Service.cpp", StartLine: 5, EndLine: 5)
+        };
+        var graph = new VersionedGraph(identities, versions, edges, [],
+            [new SymbolChange("change", SymbolChangeKind.ModifyBody, "source-base", "source-target", Confidence.Exact, [])]);
+        var comparison = new GitComparison(baseSha, targetSha,
+            [new ChangedFile("Service.cpp", null, ChangeKind.Modified, "old", "new",
+                [new DiffHunk(4, 1, 5, 1, "@@", [new DiffChangedRange(4, 1, 5, 1)])])]);
+        var projection = new DiagramProjectionService();
+
+        var baseDiagram = Assert.Single(projection.Build("sample", graph, comparison, ["sequence"], 1, 1, false,
+            new HashSet<string>(["change"]), focusOnChanges: true, revisionSide: DiagramRevisionSide.Base).Artifacts).Ir;
+        var targetDiagram = Assert.Single(projection.Build("sample", graph, comparison, ["sequence"], 1, 1, false,
+            new HashSet<string>(["change"]), focusOnChanges: true, revisionSide: DiagramRevisionSide.Target).Artifacts).Ir;
+
+        Assert.Contains(baseDiagram.Nodes, node => node.Label == "Service::RunOld");
+        Assert.DoesNotContain(baseDiagram.Nodes, node => node.Label == "Service::RunNew");
+        Assert.Contains(targetDiagram.Nodes, node => node.Label == "Service::RunNew");
+        Assert.DoesNotContain(targetDiagram.Nodes, node => node.Label == "Service::RunOld");
+        Assert.Equal(DiagramChangeKind.Modified, Assert.Single(baseDiagram.Edges).ChangeMarker?.Kind);
+        Assert.Equal(DiagramChangeKind.Modified, Assert.Single(targetDiagram.Edges).ChangeMarker?.Kind);
+        Assert.Contains("Base", baseDiagram.Title, StringComparison.Ordinal);
+        Assert.Contains("Target", targetDiagram.Title, StringComparison.Ordinal);
     }
 
     [Fact]

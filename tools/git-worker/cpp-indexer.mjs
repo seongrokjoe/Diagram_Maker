@@ -190,10 +190,11 @@ function conditionLabel(node) {
 function collectCalls(node) {
   const calls = [];
   let order = 0;
-  function visit(current, controlPath = []) {
+  function visit(current, controlPath = [], parentOrder = null) {
     if (current !== node && current.type === "function_definition") return;
     if (current.type === "call_expression") {
       const expression = cleanName(field(current, "function")?.text ?? "");
+      const currentOrder = ++order;
       if (expression) {
         calls.push({
           expression,
@@ -201,12 +202,13 @@ function collectCalls(node) {
           argumentCount: countArguments(current),
           line: current.startPosition.row + 1,
           endLine: current.endPosition.row + 1,
-          order: ++order,
+          order: currentOrder,
+          parentOrder,
           arguments: callArguments(current),
           controlPath,
         });
       }
-      for (const child of children(current)) visit(child, controlPath);
+      for (const child of children(current)) visit(child, controlPath, currentOrder);
       return;
     }
     if (current.type === "if_statement") {
@@ -236,8 +238,8 @@ function collectCalls(node) {
 }
 
 function compactStatement(node, fallback) {
-  const value = node.text.replace(/\s+/g, " ").trim().replace(/[;{]\s*$/, "");
-  return (value || fallback).slice(0, 140);
+  const value = node.text.replace(/\s+/g, " ").trim();
+  return (value || fallback).slice(0, 1000);
 }
 
 function buildControlFlow(functionNode, calls) {
@@ -248,7 +250,7 @@ function buildControlFlow(functionNode, calls) {
     const item = {
       id: `c${++nextId}`,
       kind,
-      label: label.slice(0, 160),
+      label: label.slice(0, 1000),
       startLine: syntaxNode?.startPosition.row + 1 || functionNode.startPosition.row + 1,
       endLine: syntaxNode?.endPosition.row + 1 || functionNode.endPosition.row + 1,
       callOrder,
@@ -273,10 +275,26 @@ function buildControlFlow(functionNode, calls) {
 
   function processSequence(statements, incoming, loopNode = null) {
     let pending = incoming;
-    for (const statement of statements) {
+    for (let index = 0; index < statements.length; index++) {
+      const statement = statements[index];
       const halted = pending.filter((item) => item.breakLoop);
       const active = pending.filter((item) => !item.breakLoop);
-      pending = [...halted, ...processStatement(statement, active, loopNode)];
+      if (isSimpleAssignment(statement)) {
+        const grouped = [statement];
+        while (index + 1 < statements.length && isSimpleAssignment(statements[index + 1]) &&
+          statements[index + 1].startPosition.row <= grouped.at(-1).endPosition.row + 1) {
+          grouped.push(statements[++index]);
+        }
+        const label = grouped.map((item) => compactStatement(item, "처리")).join("\n").slice(0, 1000);
+        const operation = addNode("operation", label, {
+          startPosition: grouped[0].startPosition,
+          endPosition: grouped.at(-1).endPosition,
+        });
+        connect(active, operation);
+        pending = [...halted, { id: operation.id }];
+      } else {
+        pending = [...halted, ...processStatement(statement, active, loopNode)];
+      }
     }
     return pending;
   }
@@ -286,6 +304,17 @@ function buildControlFlow(functionNode, calls) {
       const line = call.line;
       return line >= statement.startPosition.row + 1 && line <= statement.endPosition.row + 1;
     });
+  }
+
+  function topLevelCalls(statement) {
+    return directCalls(statement).filter((call) => call.parentOrder === null);
+  }
+
+  function isSimpleAssignment(statement) {
+    if (!statement || topLevelCalls(statement).length > 0) return false;
+    if (statement.type === "declaration") return statement.text.includes("=");
+    if (statement.type !== "expression_statement") return false;
+    return children(statement).some((child) => child.type === "assignment_expression");
   }
 
   function processStatement(statement, incoming, loopNode) {
@@ -314,18 +343,9 @@ function buildControlFlow(functionNode, calls) {
       return [{ id: loop.id, label: "종료" }, ...bodyExit.filter((item) => item.breakLoop).map((item) => ({ id: item.id, label: "break" }))];
     }
     if (statement.type === "return_statement") {
-      let pending = incoming;
-      for (const call of directCalls(statement)) {
-        const callNode = addNode("call", `${call.expression}(${(call.arguments ?? []).join(", ")})`, {
-          startPosition: { row: call.line - 1 },
-          endPosition: { row: (call.endLine ?? call.line) - 1 },
-        }, call.order);
-        connect(pending, callNode);
-        pending = [{ id: callNode.id }];
-      }
-      const value = statement.text.replace(/^\s*return\s*/, "").replace(/;\s*$/, "").trim();
-      const returned = addNode("return", value ? `return ${value}` : "return", statement);
-      connect(pending, returned);
+      const [call] = topLevelCalls(statement);
+      const returned = addNode("return", compactStatement(statement, "return"), statement, call?.order ?? null);
+      connect(incoming, returned);
       edges.push({ sourceId: returned.id, targetId: exit.id, type: "return", label: "리턴" });
       return [];
     }
@@ -341,18 +361,11 @@ function buildControlFlow(functionNode, calls) {
       return [{ id: broken.id, breakLoop: true }];
     }
 
-    const statementCalls = directCalls(statement);
+    const statementCalls = topLevelCalls(statement);
     if (statementCalls.length > 0) {
-      let pending = incoming;
-      for (const call of statementCalls) {
-        const callNode = addNode("call", `${call.expression}(${(call.arguments ?? []).join(", ")})`, {
-          startPosition: { row: call.line - 1 },
-          endPosition: { row: (call.endLine ?? call.line) - 1 },
-        }, call.order);
-        connect(pending, callNode);
-        pending = [{ id: callNode.id }];
-      }
-      return pending;
+      const callNode = addNode("call", compactStatement(statement, "호출"), statement, statementCalls[0].order);
+      connect(incoming, callNode);
+      return [{ id: callNode.id }];
     }
     if (["declaration", "expression_statement", "throw_statement"].includes(statement.type)) {
       const operation = addNode("operation", compactStatement(statement, "처리"), statement);

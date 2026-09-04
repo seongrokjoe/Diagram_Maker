@@ -68,6 +68,8 @@ export type DiagramViewSelection = {
   diagramType: DiagramType;
   presetId: string;
   overrides?: DiagramStyle;
+  focusOnChanges?: boolean;
+  compareRevisions?: boolean;
 };
 
 export type DiagramNode = {
@@ -305,6 +307,7 @@ export type AnalysisDiagramView = {
   errorCode?: string;
   errorMessage?: string;
   reused: boolean;
+  comparisonBaseDiagram?: DiagramArtifact;
 };
 
 export type DiagramEditDocument = {

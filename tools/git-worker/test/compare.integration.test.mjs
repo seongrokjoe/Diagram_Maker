@@ -186,7 +186,7 @@ test("prepares a Visual Studio C++ project with resolved calls and commit metada
   assert.ok(result.cppIndex.targetSymbols.some((symbol) => symbol.qualifiedName.endsWith("Service::Run")));
   assert.ok(result.cppIndex.targetEdges.some((edge) => edge.type === "calls"));
   assert.ok(result.cppIndex.baseEdges.some((edge) => edge.type === "calls"));
-  assert.match(result.cppIndex.parserVersion, /index-v3$/);
+  assert.match(result.cppIndex.parserVersion, /index-v4$/);
   assert.equal(result.cppIndex.ambiguousCallCount, 0);
 
   const commits = await listCommits({ repositoryPath: dir, backend: "native", limit: 2 });

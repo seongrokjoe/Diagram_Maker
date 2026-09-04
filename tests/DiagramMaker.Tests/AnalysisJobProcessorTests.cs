@@ -159,6 +159,45 @@ public sealed class AnalysisJobProcessorTests
         Assert.False(secondViews.Single(view => view.ViewId == "class-view").Reused);
     }
 
+    [Fact]
+    public async Task ProcessAsync_CompareView_ProducesEditableBaseAndTargetArtifacts()
+    {
+        await using var store = new InMemoryAppStore();
+        var repositoryId = Guid.NewGuid();
+        var planId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        var baseSha = new string('a', 40);
+        var targetSha = new string('b', 40);
+        await store.SaveRepositoryAsync(
+            new RepositoryDefinition(repositoryId, "Sample", Path.GetTempPath(), "main", ["Reviewer"], now),
+            CancellationToken.None);
+        var graph = CreateComparisonGraph(repositoryId, baseSha, targetSha);
+        var comparison = new GitComparison(baseSha, targetSha, []);
+        var view = new DiagramViewSelection("compare-view", "sequence", "sequence-focused",
+            FocusOnChanges: true, CompareRevisions: true);
+        var group = new AnalysisGroupSelection("group", "비교 그룹", ["change"],
+            "sequence", "sequence-focused", Views: [view]);
+        await store.SaveAnalysisPlanAsync(new AnalysisPlan(
+            planId, "reviewer", new AnalysisPlanRequest(repositoryId, targetSha, baseSha, false), AnalysisPlanState.Ready,
+            baseSha, targetSha, 100, "Ready", comparison, graph, [], [], [group], [], null, null, 1,
+            now, now, now.AddDays(1), null), CancellationToken.None);
+        var job = new AnalysisJob(Guid.NewGuid(), new AnalyzeRequest(repositoryId, baseSha, targetSha,
+            IncludeLlmSummary: false, AnalysisPlanId: planId, Groups: [group]), AnalysisState.Queued,
+            null, null, 0, "Queued", null, null, null, now, now, null);
+        await store.SaveAnalysisAsync(job, CancellationToken.None);
+
+        await CreateProcessor(store).ProcessAsync(job, CancellationToken.None);
+
+        var completed = (await store.GetAnalysisAsync(job.Id, CancellationToken.None))!;
+        Assert.Equal(AnalysisState.Completed, completed.State);
+        Assert.Equal(2, completed.Result!.Diagrams.Count);
+        var resultView = Assert.Single(completed.Result.DiagramGroups!.Single().Views!);
+        Assert.NotNull(resultView.ComparisonBaseDiagram);
+        Assert.NotNull(resultView.Diagram);
+        Assert.Contains("Base", resultView.ComparisonBaseDiagram!.Ir.Title, StringComparison.Ordinal);
+        Assert.Contains("Target", resultView.Diagram!.Ir.Title, StringComparison.Ordinal);
+    }
+
     private static AnalysisJobProcessor CreateProcessor(InMemoryAppStore store) => new(
         store, new FailingGitWorker(), new SourceGraphAnalyzer(), new DisabledLlmClient(),
         new MermaidCompiler(new DiagramValidator()), new DiagramProjectionService(), new DiagramPresetCatalog(),
@@ -184,6 +223,29 @@ public sealed class AnalysisJobProcessorTests
             identities, versions,
             [new GraphEdge("call", "method-a", "method-b", "calls", "Save", Confidence.Exact, [])],
             [], [new SymbolChange("change", SymbolChangeKind.ModifyBody, "vma", "vma", Confidence.Exact, [])]);
+    }
+
+    private static VersionedGraph CreateComparisonGraph(Guid repositoryId, string baseSha, string targetSha)
+    {
+        var identities = new[]
+        {
+            new SymbolIdentity("source", repositoryId, "cpp", "method", "function:A::Run()"),
+            new SymbolIdentity("target", repositoryId, "cpp", "method", "function:B::Save()")
+        };
+        var versions = new[]
+        {
+            new SymbolVersion("source-base", "source", baseSha, "A::RunOld", "void Run()", "A.cpp", 1, 5, "old"),
+            new SymbolVersion("source-target", "source", targetSha, "A::RunNew", "void Run()", "A.cpp", 1, 5, "new"),
+            new SymbolVersion("target-base", "target", baseSha, "B::Save", "void Save()", "B.cpp", 1, 3, "same"),
+            new SymbolVersion("target-target", "target", targetSha, "B::Save", "void Save()", "B.cpp", 1, 3, "same")
+        };
+        var edges = new[]
+        {
+            new GraphEdge("base-call", "source", "target", "calls", "Save", Confidence.Exact, [], RevisionSha: baseSha),
+            new GraphEdge("target-call", "source", "target", "calls", "Save", Confidence.Exact, [], RevisionSha: targetSha)
+        };
+        return new VersionedGraph(identities, versions, edges, [],
+            [new SymbolChange("change", SymbolChangeKind.ModifyBody, "source-base", "source-target", Confidence.Exact, [])]);
     }
 
     private sealed class FailingGitWorker : IGitWorkerClient

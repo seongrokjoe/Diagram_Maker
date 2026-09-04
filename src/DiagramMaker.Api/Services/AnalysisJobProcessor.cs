@@ -234,13 +234,13 @@ public sealed class AnalysisJobProcessor(
                 .GroupBy(static item => item.ViewId, StringComparer.Ordinal)
                 .ToDictionary(
                     static group => group.Key,
-                    static group => group.OrderByDescending(static item => item.Diagram is not null)
+                    static group => group.OrderByDescending(static item => item.Diagram is not null || item.ComparisonBaseDiagram is not null)
                         .ThenByDescending(static item => item.State.Equals("Completed", StringComparison.OrdinalIgnoreCase))
                         .First(),
                     StringComparer.Ordinal);
             foreach (var view in group.EffectiveViews())
             {
-                expectedCount++;
+                expectedCount += view.CompareRevisions ? 2 : 1;
                 sourceViews.TryGetValue(view.Id, out var sourceView);
                 var shouldRender = sourceView is null || sourceView.Selection != view ||
                                    requested is null || requested.Contains(view.Id);
@@ -249,6 +249,7 @@ public sealed class AnalysisJobProcessor(
                     var reused = sourceView with { Reused = true };
                     viewResults.Add(reused);
                     artifacts.Add(reused.Diagram);
+                    if (reused.ComparisonBaseDiagram is not null) artifacts.Add(reused.ComparisonBaseDiagram);
                     availability.Add(new DiagramAvailability(view.DiagramType, true, null));
                     continue;
                 }
@@ -256,25 +257,59 @@ public sealed class AnalysisJobProcessor(
                 try
                 {
                     var preset = presets.Resolve(view.DiagramType, view.PresetId);
+                    var targetSide = view.CompareRevisions ? DiagramRevisionSide.Target : DiagramRevisionSide.Combined;
                     var projected = projection.Build(
                         repositoryName, graph, comparison, [view.DiagramType],
                         preset.CallerDepth, preset.CalleeDepth, comparison.ContextFilesTruncated,
-                        group.ChangeIds.ToHashSet(StringComparer.Ordinal), preset, view.Overrides);
+                        group.ChangeIds.ToHashSet(StringComparer.Ordinal), preset, view.Overrides,
+                        view.FocusOnChanges, targetSide);
                     availability.AddRange(projected.Availability);
-                    if (projected.Artifacts.FirstOrDefault() is { } artifact)
+                    var targetArtifact = projected.Artifacts.FirstOrDefault() is { } artifact
+                        ? artifact with { MermaidDsl = compiler.Compile(artifact.Ir) }
+                        : null;
+                    DiagramArtifact? baseArtifact = null;
+                    string? baseMessage = null;
+                    if (view.CompareRevisions)
                     {
-                        var compiledArtifact = artifact with { MermaidDsl = compiler.Compile(artifact.Ir) };
-                        artifacts.Add(compiledArtifact);
-                        viewResults.Add(new AnalysisDiagramViewResult(view.Id, view, compiledArtifact, [], "Completed"));
+                        var baseProjection = projection.Build(
+                            repositoryName, graph, comparison, [view.DiagramType],
+                            preset.CallerDepth, preset.CalleeDepth, comparison.ContextFilesTruncated,
+                            group.ChangeIds.ToHashSet(StringComparer.Ordinal), preset, view.Overrides,
+                            view.FocusOnChanges, DiagramRevisionSide.Base);
+                        availability.AddRange(baseProjection.Availability);
+                        baseArtifact = baseProjection.Artifacts.FirstOrDefault() is { } baseValue
+                            ? baseValue with { MermaidDsl = compiler.Compile(baseValue.Ir) }
+                            : null;
+                        baseMessage = baseProjection.Availability.FirstOrDefault(static item => !item.Available)?.Reason;
                     }
-                    else
+
+                    if (targetArtifact is not null) artifacts.Add(targetArtifact);
+                    if (baseArtifact is not null) artifacts.Add(baseArtifact);
+                    if (!view.CompareRevisions && targetArtifact is not null)
                     {
-                        var message = projected.Availability.FirstOrDefault()?.Reason
-                                      ?? "선택한 변경점으로 다이어그램을 만들 수 없습니다.";
-                        groupWarnings.Add(message);
-                        viewResults.Add(new AnalysisDiagramViewResult(view.Id, view, null, [message], "Failed",
-                            "DIAGRAM_NO_VALID_OUTPUT", message));
+                        viewResults.Add(new AnalysisDiagramViewResult(view.Id, view, targetArtifact, [], "Completed",
+                            ComparisonBaseDiagram: baseArtifact));
+                        continue;
                     }
+                    if (view.CompareRevisions && (targetArtifact is not null || baseArtifact is not null))
+                    {
+                        if (targetArtifact is null || baseArtifact is null) expectedCount--;
+                        var sideNotice = targetArtifact is null
+                            ? "Target revision에는 선택 변경 요소가 없습니다."
+                            : baseArtifact is null ? "Base revision에는 선택 변경 요소가 없습니다." : null;
+                        viewResults.Add(new AnalysisDiagramViewResult(view.Id, view, targetArtifact,
+                            sideNotice is null ? [] : [sideNotice], "Completed", ComparisonBaseDiagram: baseArtifact));
+                        continue;
+                    }
+
+                    var targetMessage = projected.Availability.FirstOrDefault(static item => !item.Available)?.Reason;
+                    var message = view.CompareRevisions
+                        ? targetMessage ?? baseMessage ?? "두 revision 모두에서 선택 변경 요소를 찾을 수 없습니다."
+                        : targetMessage ?? "선택한 변경점으로 다이어그램을 만들 수 없습니다.";
+                    groupWarnings.Add(message);
+                    viewResults.Add(new AnalysisDiagramViewResult(view.Id, view, targetArtifact, [message],
+                        targetArtifact is null ? "Failed" : "Partial", "DIAGRAM_NO_VALID_OUTPUT", message,
+                        ComparisonBaseDiagram: baseArtifact));
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {
@@ -305,7 +340,7 @@ public sealed class AnalysisJobProcessor(
         if (group is null) return [];
         if (group.Views is { Count: > 0 }) return group.Views
             .GroupBy(static view => view.ViewId, StringComparer.Ordinal)
-            .Select(static views => views.OrderByDescending(static view => view.Diagram is not null)
+            .Select(static views => views.OrderByDescending(static view => view.Diagram is not null || view.ComparisonBaseDiagram is not null)
                 .ThenByDescending(static view => view.State.Equals("Completed", StringComparison.OrdinalIgnoreCase))
                 .First())
             .ToArray();

@@ -66,10 +66,9 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
             builder.AppendLine("    linkStyle default stroke:#365f91,stroke-width:2px");
         foreach (var (edge, index) in diagram.Edges.Select(static (edge, index) => (edge, index)).Where(static item => item.edge.ChangeMarker is not null))
         {
-            var dash = edge.ChangeMarker!.Kind == DiagramChangeKind.Deleted || edge.ChangeMarker.Precision == DiagramChangePrecision.Symbol
-                ? ",stroke-dasharray:6 4" : string.Empty;
-            builder.Append("    linkStyle ").Append(index).Append(" stroke:#dc2626,stroke-width:3px,color:#991b1b")
-                .Append(dash).Append('\n');
+            var (stroke, color) = MarkerColors(edge.ChangeMarker!.Kind);
+            builder.Append("    linkStyle ").Append(index).Append(" stroke:").Append(stroke)
+                .Append(",stroke-width:3px,color:").Append(color).Append('\n');
         }
         return builder.ToString();
     }
@@ -131,7 +130,7 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
         var aliases = diagram.Nodes.ToDictionary(static node => node.Id, static node => Alias(node.Id));
         foreach (var node in diagram.Nodes)
         {
-            builder.Append("    class ").Append(aliases[node.Id]).Append("[\"").Append(Escape(DisplayLabel(node.Label, node.ChangeMarker))).Append("\"]\n");
+            builder.Append("    class ").Append(aliases[node.Id]).Append("[\"").Append(EscapeClassNodeLabel(node.Label)).Append("\"]\n");
         }
 
         foreach (var edge in diagram.Edges)
@@ -142,7 +141,7 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
                 builder.Append("    ").Append(aliases[edge.SourceId]).Append(edge.IsIndirect ? " ..> " : " --> ").Append(aliases[edge.TargetId]);
             if (!string.IsNullOrWhiteSpace(edge.Label))
             {
-                builder.Append(" : ").Append(Escape(DisplayLabel(edge.Label, edge.ChangeMarker)));
+                builder.Append(" : ").Append(EscapeClassRelationLabel(edge.Label));
             }
 
             builder.Append('\n');
@@ -177,24 +176,17 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
 
     private static void AppendStyles(StringBuilder builder, DiagramIr diagram, IReadOnlyDictionary<string, string> aliases)
     {
-        var markerAware = diagram.Nodes.Any(static node => node.ChangeMarker is not null) || diagram.Edges.Any(static edge => edge.ChangeMarker is not null);
-        builder.AppendLine(markerAware
-            ? "    classDef added fill:#fee2e2,stroke:#dc2626,stroke-width:3px,color:#991b1b"
-            : "    classDef added fill:#dcfce7,stroke:#16a34a,color:#14532d");
-        builder.AppendLine(markerAware
-            ? "    classDef modified fill:#fee2e2,stroke:#dc2626,stroke-width:3px,color:#991b1b"
-            : "    classDef modified fill:#fef3c7,stroke:#d97706,color:#78350f");
-        builder.AppendLine("    classDef deleted fill:#fee2e2,stroke:#dc2626,stroke-width:3px,stroke-dasharray:6 4,color:#991b1b");
-        builder.AppendLine("    classDef symbol fill:#fff1f2,stroke:#dc2626,stroke-width:3px,stroke-dasharray:5 3,color:#991b1b");
-        builder.AppendLine("    classDef unchanged fill:#eff6ff,stroke:#3b82f6,color:#1e3a8a");
+        builder.AppendLine("    classDef added fill:#dbeafe,stroke:#2563eb,stroke-width:3px,color:#1e3a8a");
+        builder.AppendLine("    classDef modified fill:#dcfce7,stroke:#16a34a,stroke-width:3px,color:#14532d");
+        builder.AppendLine("    classDef deleted fill:#fee2e2,stroke:#dc2626,stroke-width:3px,color:#991b1b");
+        builder.AppendLine("    classDef unchanged fill:#f8fafc,stroke:#94a3b8,color:#334155");
         foreach (var node in diagram.Nodes)
         {
-            var style = node.ChangeMarker?.Precision == DiagramChangePrecision.Symbol ? "symbol" : node.ChangeMarker?.Kind switch
+            var style = node.ChangeMarker?.Kind switch
             {
                 DiagramChangeKind.Added => "added",
                 DiagramChangeKind.Modified => "modified",
                 DiagramChangeKind.Deleted => "deleted",
-                _ when markerAware => "unchanged",
                 _ => node.Status.ToLowerInvariant() switch
                 {
                     "added" => "added",
@@ -207,20 +199,7 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
         }
     }
 
-    private static string DisplayLabel(string value, DiagramChangeMarker? marker) => marker is null
-        ? value
-        : $"{value} · {MarkerBadge(marker)}";
-
-    private static string MarkerBadge(DiagramChangeMarker marker)
-    {
-        var kind = marker.Kind switch
-        {
-            DiagramChangeKind.Added => "+ 추가",
-            DiagramChangeKind.Modified => "~ 수정",
-            _ => "− 삭제"
-        };
-        return marker.Precision == DiagramChangePrecision.Symbol ? $"{kind} · 심볼 수준" : kind;
-    }
+    private static string DisplayLabel(string value, DiagramChangeMarker? marker) => value;
 
     private static string Escape(string value) => value
         .Replace("%%", string.Empty, StringComparison.Ordinal)
@@ -228,8 +207,28 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
         .Replace(">", "&gt;", StringComparison.Ordinal)
         .Replace("\"", "'", StringComparison.Ordinal)
         .Replace("\r", " ", StringComparison.Ordinal)
+        .Replace("\n", "\\n", StringComparison.Ordinal)
+        .Trim();
+
+    private static string EscapeClassNodeLabel(string value) => value
+        .Replace("%%", string.Empty, StringComparison.Ordinal)
+        .Replace("<", "‹", StringComparison.Ordinal)
+        .Replace(">", "›", StringComparison.Ordinal)
+        .Replace("\"", "'", StringComparison.Ordinal)
+        .Replace("\r", " ", StringComparison.Ordinal)
         .Replace("\n", " ", StringComparison.Ordinal)
         .Trim();
+
+    private static string EscapeClassRelationLabel(string value) => EscapeClassNodeLabel(value)
+        .Replace(":", "∶", StringComparison.Ordinal)
+        .Replace(";", "；", StringComparison.Ordinal);
+
+    private static (string Stroke, string Color) MarkerColors(DiagramChangeKind kind) => kind switch
+    {
+        DiagramChangeKind.Added => ("#2563eb", "#1e3a8a"),
+        DiagramChangeKind.Modified => ("#16a34a", "#14532d"),
+        _ => ("#dc2626", "#991b1b")
+    };
 
     private static string EscapeSequence(string value) => value
         .Replace("%%", string.Empty, StringComparison.Ordinal)
