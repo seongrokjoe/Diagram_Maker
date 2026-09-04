@@ -10,7 +10,9 @@ namespace DiagramMaker.Services;
 
 public sealed partial class SourceGraphAnalyzer
 {
-    public const string IndexVersion = "source-graph-v3";
+    public const string IndexVersion = "source-graph-v4";
+
+    private sealed record ParsedCall(string Name, int StartLine, int EndLine, EvidenceRef Evidence);
 
     private sealed record ParsedSymbol(
         SymbolIdentity Identity,
@@ -18,7 +20,8 @@ public sealed partial class SourceGraphAnalyzer
         EvidenceRef Evidence,
         string Body,
         IReadOnlyList<string> CalledNames,
-        IReadOnlyList<string> BaseTypeNames);
+        IReadOnlyList<string> BaseTypeNames,
+        IReadOnlyList<ParsedCall>? CallSites = null);
 
     public VersionedGraph Analyze(Guid repositoryId, GitComparison comparison) => Analyze(repositoryId, comparison, null);
 
@@ -53,7 +56,7 @@ public sealed partial class SourceGraphAnalyzer
         var beforeByIdentity = before.GroupBy(static symbol => symbol.Identity.Id).ToDictionary(static group => group.Key, static group => group.First());
         var afterByIdentity = after.GroupBy(static symbol => symbol.Identity.Id).ToDictionary(static group => group.Key, static group => group.First());
         var changes = BuildChanges(beforeByIdentity, afterByIdentity).ToList();
-        var edges = BuildEdges(after).ToList();
+        var edges = BuildEdges(after).Concat(BuildEdges(before)).ToList();
         var allSymbols = before.Concat(after).ToList();
         var controlFlows = new List<MethodControlFlow>();
 
@@ -70,10 +73,13 @@ public sealed partial class SourceGraphAnalyzer
             var cppBeforeByIdentity = cppBefore.GroupBy(static symbol => symbol.Identity.Id).ToDictionary(static group => group.Key, static group => group.First());
             var cppTargetByIdentity = changedCppTarget.GroupBy(static symbol => symbol.Identity.Id).ToDictionary(static group => group.Key, static group => group.First());
             changes.AddRange(BuildChanges(cppBeforeByIdentity, cppTargetByIdentity));
-            edges.AddRange(BuildCppEdges(repositoryId, cppIndex, cppTarget));
-            controlFlows.AddRange(BuildCppControlFlows(
-                cppIndex.TargetSymbols.Concat(cppIndex.BeforeChangedSymbols).DistinctBy(static fact => fact.SemanticKey).ToArray(),
-                cppTarget.Concat(cppBefore).DistinctBy(static symbol => symbol.Identity.Id).ToArray()));
+            var cppSymbols = cppTarget.Concat(cppBefore).ToArray();
+            edges.AddRange(BuildCppEdges(repositoryId, cppIndex.TargetEdges, cppIndex.TargetSymbols, cppSymbols,
+                comparison.TargetSha, includeInheritance: true));
+            edges.AddRange(BuildCppEdges(repositoryId, cppIndex.BaseEdges ?? [], [], cppSymbols,
+                comparison.BaseSha, includeInheritance: false));
+            controlFlows.AddRange(BuildCppControlFlows(cppIndex.TargetSymbols, cppSymbols, comparison.TargetSha));
+            controlFlows.AddRange(BuildCppControlFlows(cppIndex.BeforeChangedSymbols, cppSymbols, comparison.BaseSha));
             allSymbols.AddRange(cppBefore);
             allSymbols.AddRange(cppTarget);
         }
@@ -82,7 +88,9 @@ public sealed partial class SourceGraphAnalyzer
             allSymbols.Select(static symbol => symbol.Identity).DistinctBy(static identity => identity.Id).ToArray(),
             allSymbols.Select(static symbol => symbol.Version).DistinctBy(static version => version.Id).ToArray(),
             edges.DistinctBy(static edge => edge.Id).ToArray(),
-            allSymbols.Select(static symbol => symbol.Evidence).DistinctBy(static evidence => evidence.Id).ToArray(),
+            allSymbols.Select(static symbol => symbol.Evidence)
+                .Concat(allSymbols.SelectMany(static symbol => symbol.CallSites ?? []).Select(static call => call.Evidence))
+                .DistinctBy(static evidence => evidence.Id).ToArray(),
             changes.DistinctBy(static change => change.Id).ToArray(),
             controlFlows);
     }
@@ -124,25 +132,29 @@ public sealed partial class SourceGraphAnalyzer
 
     private static IReadOnlyList<GraphEdge> BuildCppEdges(
         Guid repositoryId,
-        CppSourceIndex index,
-        IReadOnlyList<ParsedSymbol> targetSymbols)
+        IReadOnlyList<CppEdgeFact> edgeFacts,
+        IReadOnlyList<CppSymbolFact> typeSourceFacts,
+        IReadOnlyList<ParsedSymbol> symbols,
+        string revisionSha,
+        bool includeInheritance)
     {
-        var identityBySemanticKey = targetSymbols
+        var identityBySemanticKey = symbols
             .GroupBy(static symbol => symbol.Identity.SemanticKey)
             .ToDictionary(static group => group.Key, static group => group.First().Identity.Id, StringComparer.Ordinal);
-        var evidenceByIdentity = targetSymbols
+        var evidenceByIdentity = symbols
             .GroupBy(static symbol => symbol.Identity.Id, StringComparer.Ordinal)
             .ToDictionary(
                 static group => group.Key,
-                static group => group.Select(static symbol => symbol.Evidence.Id).Distinct(StringComparer.Ordinal).ToArray(),
+                group => group.OrderByDescending(symbol => symbol.Version.RevisionSha == revisionSha)
+                    .Select(static symbol => symbol.Evidence.Id).Distinct(StringComparer.Ordinal).ToArray(),
                 StringComparer.Ordinal);
         var edges = new List<GraphEdge>();
-        foreach (var edge in index.TargetEdges)
+        foreach (var edge in edgeFacts)
         {
             if (!identityBySemanticKey.TryGetValue(edge.SourceSemanticKey, out var sourceId) ||
                 !identityBySemanticKey.TryGetValue(edge.TargetSemanticKey, out var targetId)) continue;
             edges.Add(new GraphEdge(
-                StableIds.Create(repositoryId, sourceId, targetId, edge.Type, edge.Line, edge.SequenceIndex, edge.ViaApi),
+                StableIds.Create(repositoryId, revisionSha, sourceId, targetId, edge.Type, edge.Line, edge.SequenceIndex, edge.ViaApi),
                 sourceId,
                 targetId,
                 edge.Type,
@@ -152,10 +164,15 @@ public sealed partial class SourceGraphAnalyzer
                 edge.SequenceIndex,
                 edge.IsIndirect,
                 edge.ViaApi,
-                edge.ControlPath));
+                edge.ControlPath,
+                revisionSha,
+                edge.FilePath,
+                edge.Line,
+                edge.EndLine ?? edge.Line));
         }
 
-        var typeFacts = index.TargetSymbols.Where(static fact => fact.Kind is "class" or "type").ToArray();
+        if (!includeInheritance) return edges;
+        var typeFacts = typeSourceFacts.Where(static fact => fact.Kind is "class" or "type").ToArray();
         foreach (var source in typeFacts)
         {
             foreach (var baseName in source.Bases)
@@ -166,8 +183,9 @@ public sealed partial class SourceGraphAnalyzer
                 if (matches.Length != 1 || !identityBySemanticKey.TryGetValue(source.SemanticKey, out var sourceId) ||
                     !identityBySemanticKey.TryGetValue(matches[0].SemanticKey, out var targetId)) continue;
                 edges.Add(new GraphEdge(
-                    StableIds.Create(repositoryId, sourceId, targetId, "inherits"), sourceId, targetId, "inherits", "inherits",
-                    Confidence.Inferred, evidenceByIdentity.TryGetValue(sourceId, out var evidenceIds) ? evidenceIds : []));
+                    StableIds.Create(repositoryId, revisionSha, sourceId, targetId, "inherits"), sourceId, targetId, "inherits", "inherits",
+                    Confidence.Inferred, evidenceByIdentity.TryGetValue(sourceId, out var evidenceIds) ? evidenceIds : [],
+                    RevisionSha: revisionSha, FilePath: source.FilePath, StartLine: source.StartLine, EndLine: source.EndLine));
             }
         }
         return edges;
@@ -175,12 +193,13 @@ public sealed partial class SourceGraphAnalyzer
 
     private static IReadOnlyList<MethodControlFlow> BuildCppControlFlows(
         IReadOnlyList<CppSymbolFact> facts,
-        IReadOnlyList<ParsedSymbol> targetSymbols)
+        IReadOnlyList<ParsedSymbol> symbols,
+        string revisionSha)
     {
-        var identityBySemanticKey = targetSymbols
+        var identityBySemanticKey = symbols
             .GroupBy(static symbol => symbol.Identity.SemanticKey, StringComparer.Ordinal)
             .ToDictionary(static group => group.Key, static group => group.First().Identity.Id, StringComparer.Ordinal);
-        var evidenceByIdentity = targetSymbols
+        var evidenceByIdentity = symbols
             .GroupBy(static symbol => symbol.Identity.Id, StringComparer.Ordinal)
             .ToDictionary(static group => group.Key, static group => group.Select(static value => value.Evidence.Id).Distinct(StringComparer.Ordinal).ToArray(), StringComparer.Ordinal);
         var result = new List<MethodControlFlow>();
@@ -190,7 +209,7 @@ public sealed partial class SourceGraphAnalyzer
             var controlNodes = fact.ControlNodes!;
             var localIds = controlNodes.ToDictionary(
                 static node => node.Id,
-                node => StableIds.Create(identityId, node.Id),
+                node => StableIds.Create(identityId, revisionSha, fact.FilePath, node.Id),
                 StringComparer.Ordinal);
             var evidence = evidenceByIdentity.GetValueOrDefault(identityId, []);
             var nodes = controlNodes.Select(node => new ControlFlowNode(
@@ -199,7 +218,7 @@ public sealed partial class SourceGraphAnalyzer
                 node.IsIndirect, node.ViaApi)).ToArray();
             var edges = (fact.ControlEdges ?? []).Where(edge => localIds.ContainsKey(edge.SourceId) && localIds.ContainsKey(edge.TargetId))
                 .Select(edge => new ControlFlowEdge(localIds[edge.SourceId], localIds[edge.TargetId], edge.Type, edge.Label)).ToArray();
-            result.Add(new MethodControlFlow(identityId, nodes, edges));
+            result.Add(new MethodControlFlow(identityId, nodes, edges, revisionSha, fact.FilePath));
         }
         return result;
     }
@@ -252,19 +271,11 @@ public sealed partial class SourceGraphAnalyzer
             var name = method.Identifier.ValueText;
             var qualifiedName = GetQualifiedName(method, name);
             var semanticKey = $"method:{qualifiedName}/{method.ParameterList.Parameters.Count}";
-            var calls = method.DescendantNodes().OfType<InvocationExpressionSyntax>()
-                .Select(static invocation => invocation.Expression switch
-                {
-                    IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
-                    MemberAccessExpressionSyntax member => member.Name.Identifier.ValueText,
-                    _ => invocation.Expression.ToString()
-                })
-                .Where(static called => !string.IsNullOrWhiteSpace(called))
-                .Distinct(StringComparer.Ordinal)
-                .ToArray();
+            var callSites = ParseCSharpCalls(method, tree, revisionSha, blobOid, path);
+            var calls = callSites.Select(static call => call.Name).Distinct(StringComparer.Ordinal).ToArray();
             symbols.Add(CreateSymbol(
                 repositoryId, revisionSha, blobOid, path, content, "csharp", "method",
-                semanticKey, qualifiedName, method.ToString(), method.Span, calls, [], tree));
+                semanticKey, qualifiedName, method.ToString(), method.Span, calls, [], tree, callSites));
         }
 
         foreach (var constructor in root.DescendantNodes().OfType<ConstructorDeclarationSyntax>())
@@ -272,13 +283,11 @@ public sealed partial class SourceGraphAnalyzer
             var name = constructor.Identifier.ValueText;
             var qualifiedName = GetQualifiedName(constructor, name);
             var semanticKey = $"ctor:{qualifiedName}/{constructor.ParameterList.Parameters.Count}";
-            var calls = constructor.DescendantNodes().OfType<InvocationExpressionSyntax>()
-                .Select(static invocation => invocation.Expression.ToString().Split('.').Last())
-                .Distinct(StringComparer.Ordinal)
-                .ToArray();
+            var callSites = ParseCSharpCalls(constructor, tree, revisionSha, blobOid, path);
+            var calls = callSites.Select(static call => call.Name).Distinct(StringComparer.Ordinal).ToArray();
             symbols.Add(CreateSymbol(
                 repositoryId, revisionSha, blobOid, path, content, "csharp", "constructor",
-                semanticKey, qualifiedName, constructor.ToString(), constructor.Span, calls, [], tree));
+                semanticKey, qualifiedName, constructor.ToString(), constructor.Span, calls, [], tree, callSites));
         }
 
         return symbols.Count == 0 ? [CreateFileSymbol(repositoryId, revisionSha, blobOid, path, content)] : symbols;
@@ -326,6 +335,28 @@ public sealed partial class SourceGraphAnalyzer
         return symbols.Count == 0 ? [CreateFileSymbol(repositoryId, revisionSha, blobOid, path, content)] : symbols;
     }
 
+    private static IReadOnlyList<ParsedCall> ParseCSharpCalls(
+        SyntaxNode declaration, SyntaxTree tree, string revisionSha, string blobOid, string path) =>
+        declaration.DescendantNodes().OfType<InvocationExpressionSyntax>()
+            .Select(invocation =>
+            {
+                var name = invocation.Expression switch
+                {
+                    IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
+                    MemberAccessExpressionSyntax member => member.Name.Identifier.ValueText,
+                    _ => invocation.Expression.ToString().Split('.').Last()
+                };
+                var span = tree.GetLineSpan(invocation.Span);
+                var startLine = span.StartLinePosition.Line + 1;
+                var endLine = span.EndLinePosition.Line + 1;
+                var evidence = new EvidenceRef(
+                    StableIds.Create(revisionSha, blobOid, path, startLine, endLine, "csharp-call"),
+                    revisionSha, blobOid, path, startLine, endLine, "RoslynInvocation", Confidence.Exact);
+                return new ParsedCall(name, startLine, endLine, evidence);
+            })
+            .Where(static call => !string.IsNullOrWhiteSpace(call.Name))
+            .ToArray();
+
     private static ParsedSymbol CreateSymbol(
         Guid repositoryId,
         string revisionSha,
@@ -340,11 +371,12 @@ public sealed partial class SourceGraphAnalyzer
         Microsoft.CodeAnalysis.Text.TextSpan span,
         IReadOnlyList<string> calls,
         IReadOnlyList<string> bases,
-        SyntaxTree tree)
+        SyntaxTree tree,
+        IReadOnlyList<ParsedCall>? callSites = null)
     {
         var lines = tree.GetLineSpan(span);
         return CreateParsedSymbol(repositoryId, revisionSha, blobOid, path, language, kind, semanticKey,
-            qualifiedName, FirstLine(body), body, lines.StartLinePosition.Line + 1, lines.EndLinePosition.Line + 1, calls, bases, Confidence.Exact);
+            qualifiedName, FirstLine(body), body, lines.StartLinePosition.Line + 1, lines.EndLinePosition.Line + 1, calls, bases, Confidence.Exact, callSites);
     }
 
     private static ParsedSymbol CreateCppSymbol(
@@ -387,7 +419,8 @@ public sealed partial class SourceGraphAnalyzer
         int endLine,
         IReadOnlyList<string> calls,
         IReadOnlyList<string> bases,
-        Confidence confidence)
+        Confidence confidence,
+        IReadOnlyList<ParsedCall>? callSites = null)
     {
         var identityId = StableIds.Create(repositoryId, language, kind, semanticKey);
         var versionId = StableIds.Create(identityId, revisionSha, Hash(body));
@@ -398,7 +431,8 @@ public sealed partial class SourceGraphAnalyzer
             new EvidenceRef(evidenceId, revisionSha, blobOid, path, startLine, endLine, language == "csharp" ? "RoslynSyntax" : "FallbackParser", confidence),
             body,
             calls,
-            bases);
+            bases,
+            callSites);
     }
 
     private static IReadOnlyList<SymbolChange> BuildChanges(
@@ -448,18 +482,22 @@ public sealed partial class SourceGraphAnalyzer
 
         foreach (var source in symbols)
         {
-            foreach (var calledName in source.CalledNames)
+            var callSites = source.CallSites ?? source.CalledNames
+                .Select(name => new ParsedCall(name, source.Version.StartLine, source.Version.EndLine, source.Evidence))
+                .ToArray();
+            foreach (var call in callSites)
             {
-                if (!callable.TryGetValue(calledName, out var targets) || targets.Length != 1)
+                if (!callable.TryGetValue(call.Name, out var targets) || targets.Length != 1)
                 {
                     continue;
                 }
 
                 var target = targets[0];
                 edges.Add(new GraphEdge(
-                    StableIds.Create(source.Identity.Id, target.Identity.Id, "calls"),
+                    StableIds.Create(source.Version.RevisionSha, source.Identity.Id, target.Identity.Id, "calls", call.StartLine, call.EndLine),
                     source.Identity.Id, target.Identity.Id, "calls", "calls", Confidence.Inferred,
-                    [source.Evidence.Id]));
+                    [call.Evidence.Id], RevisionSha: source.Version.RevisionSha, FilePath: source.Version.FilePath,
+                    StartLine: call.StartLine, EndLine: call.EndLine));
             }
 
             foreach (var baseType in source.BaseTypeNames)
@@ -471,9 +509,10 @@ public sealed partial class SourceGraphAnalyzer
 
                 var target = targets[0];
                 edges.Add(new GraphEdge(
-                    StableIds.Create(source.Identity.Id, target.Identity.Id, "inherits"),
+                    StableIds.Create(source.Version.RevisionSha, source.Identity.Id, target.Identity.Id, "inherits"),
                     source.Identity.Id, target.Identity.Id, "inherits", "inherits", Confidence.Inferred,
-                    [source.Evidence.Id]));
+                    [source.Evidence.Id], RevisionSha: source.Version.RevisionSha, FilePath: source.Version.FilePath,
+                    StartLine: source.Version.StartLine, EndLine: source.Version.EndLine));
             }
         }
 

@@ -8,6 +8,26 @@ public sealed class MermaidCompilerTests
     private readonly MermaidCompiler _compiler = new(new DiagramValidator());
 
     [Fact]
+    public void Compile_ChangeMarker_EmitsStableEdgeIdBadgeAndRedStyle()
+    {
+        var marker = new DiagramChangeMarker(DiagramChangeKind.Modified, DiagramChangePrecision.Exact,
+            "Service.cs", 5, 5, ["evidence"]);
+        var diagram = new DiagramIr("flowchart", "Changed",
+            [
+                new DiagramNode("a", "A", "method", null, "unchanged", Confidence.Exact, [], ChangeMarker: marker),
+                new DiagramNode("b", "B", "method", null, "unchanged", Confidence.Exact, [])
+            ],
+            [new DiagramEdge("edge", "a", "b", "calls", "Save", "unchanged", Confidence.Exact, [], ChangeMarker: marker)],
+            [], []);
+
+        var result = _compiler.Compile(diagram);
+
+        Assert.Contains("A · ~ 수정", result, StringComparison.Ordinal);
+        Assert.Contains("n_edge@-->", result, StringComparison.Ordinal);
+        Assert.Contains("stroke:#dc2626", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Compile_RemovesDirectiveAndHtmlCharacters()
     {
         var diagram = new DiagramIr(
@@ -120,7 +140,7 @@ public sealed class MermaidCompilerTests
 
         var result = _compiler.Compile(diagram);
 
-        Assert.Contains("n_call -. 다음 반복 .-> n_loop", result, StringComparison.Ordinal);
+        Assert.Contains("n_call n_e@-. 다음 반복 .-> n_loop", result, StringComparison.Ordinal);
         Assert.DoesNotContain("-.->|", result, StringComparison.Ordinal);
     }
 }

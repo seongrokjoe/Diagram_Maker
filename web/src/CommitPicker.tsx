@@ -81,8 +81,14 @@ export function CommitPicker({
       return;
     }
     const known = commits.find((commit) => commit.sha === value);
-    if (known) setSelected(known);
-  }, [value, commits]);
+    if (known) { setSelected(known); return; }
+    if (!repositoryId || selected?.sha === value) return;
+    let active = true;
+    void api.resolveCommit(repositoryId, value)
+      .then((commit) => { if (active) setSelected(commit); })
+      .catch(() => { if (active) setSelected(null); });
+    return () => { active = false; };
+  }, [value, commits, repositoryId, selected?.sha]);
 
   function choose(commit: GitCommit) {
     setSelected(commit);

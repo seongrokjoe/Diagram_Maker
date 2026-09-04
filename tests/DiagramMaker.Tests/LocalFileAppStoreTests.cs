@@ -7,6 +7,33 @@ namespace DiagramMaker.Tests;
 public sealed class LocalFileAppStoreTests
 {
     [Fact]
+    public async Task AnalysisHistory_SurvivesRestartAndUsesNewestFirstLimit()
+    {
+        var filePath = Path.Combine(AppContext.BaseDirectory, $"history-registry-{Guid.NewGuid():N}.json");
+        var planId = Guid.NewGuid();
+        var repositoryId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        await using (var first = new LocalFileAppStore(filePath))
+        {
+            await first.InitializeAsync(CancellationToken.None);
+            for (var index = 0; index < 3; index++)
+            {
+                var job = new AnalysisJob(Guid.NewGuid(), new AnalyzeRequest(repositoryId, "base", "target", AnalysisPlanId: planId),
+                    AnalysisState.Completed, "base", "target", 100, "done", null, null, null,
+                    now.AddMinutes(index), now.AddMinutes(index), null);
+                await first.SaveAnalysisAsync(job, CancellationToken.None);
+            }
+        }
+
+        await using var second = new LocalFileAppStore(filePath);
+        await second.InitializeAsync(CancellationToken.None);
+        var history = await second.ListAnalysesByPlanAsync(planId, 2, CancellationToken.None);
+
+        Assert.Equal(2, history.Count);
+        Assert.True(history[0].CreatedAt > history[1].CreatedAt);
+    }
+
+    [Fact]
     public async Task RepositoryRegistration_SurvivesStoreRestart()
     {
         var filePath = Path.Combine(AppContext.BaseDirectory, $"repository-registry-{Guid.NewGuid():N}.json");

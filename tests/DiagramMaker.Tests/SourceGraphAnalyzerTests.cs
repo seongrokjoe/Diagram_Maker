@@ -35,8 +35,9 @@ public sealed class SourceGraphAnalyzerTests
 
         Assert.Contains(result.Changes, change => change.Type == SymbolChangeKind.ModifyBody);
         Assert.Contains(result.Changes, change => change.Type == SymbolChangeKind.AddSymbol);
-        Assert.Contains(result.Edges, edge => edge.Type == "calls");
-        Assert.All(result.Evidence, evidence => Assert.Equal("RoslynSyntax", evidence.Analyzer));
+        var call = result.Edges.First(edge => edge.Type == "calls" && edge.RevisionSha == comparison.TargetSha && edge.StartLine == 4);
+        Assert.Contains(result.Evidence, evidence => evidence.Id == Assert.Single(call.EvidenceIds) && evidence.Analyzer == "RoslynInvocation");
+        Assert.All(result.Evidence, evidence => Assert.StartsWith("Roslyn", evidence.Analyzer, StringComparison.Ordinal));
     }
 
     [Fact]

@@ -360,6 +360,20 @@ api.MapGet("/analysis-plans/{id:guid}", async (
     return Results.Ok(ToAnalysisPlanResponse(plan));
 });
 
+api.MapGet("/analysis-plans/{id:guid}/analyses", async (
+    Guid id,
+    int? limit,
+    HttpContext context,
+    IAppStore store,
+    CancellationToken cancellationToken) =>
+{
+    var plan = await AuthorizedPlan(id, context, store, cancellationToken);
+    if (plan is null) return Results.NotFound();
+    if (plan.ExpiresAt <= DateTimeOffset.UtcNow) return Results.StatusCode(StatusCodes.Status410Gone);
+    var jobs = await store.ListAnalysesByPlanAsync(id, Math.Clamp(limit ?? 20, 1, 50), cancellationToken);
+    return Results.Ok(jobs.Select(ToAnalysisHistorySummary));
+});
+
 api.MapGet("/analysis-plans/{id:guid}/evidence/{changeId}", async (
     Guid id,
     string changeId,
@@ -810,6 +824,64 @@ api.MapGet("/diagram-artifacts/{rootArtifactId:guid}/revisions", async (
     return Results.Ok(await store.ListDiagramRevisionsAsync(rootArtifactId, identity.UserId, cancellationToken));
 });
 
+api.MapPost("/natural-diagrams/{id:guid}/views/{viewId}/edit-preview", async (
+    Guid id,
+    string viewId,
+    SaveDiagramEditRequest request,
+    HttpContext context,
+    IAppStore store,
+    DiagramRevisionService service,
+    CancellationToken cancellationToken) =>
+{
+    var record = await store.GetNaturalDiagramAsync(id, cancellationToken);
+    if (record is null) return Results.NotFound();
+    var identity = context.GetInternalIdentity();
+    if (!CanAccessNaturalDiagram(record, identity.UserId)) return Results.Forbid();
+    var artifact = FindNaturalDiagramArtifact(record, viewId);
+    if (artifact is null) return Results.NotFound(new { error = "The diagram view does not exist." });
+    try
+    {
+        return Results.Ok(await service.PreviewAsync(artifact, request, identity.UserId, cancellationToken));
+    }
+    catch (DiagramRevisionConflictException exception)
+    {
+        return Results.Conflict(new { errorCode = "DIAGRAM_REVISION_CONFLICT", error = exception.Message, currentVersion = exception.CurrentVersion });
+    }
+    catch (Exception exception) when (exception is ArgumentException or DiagramValidationException)
+    {
+        return Results.BadRequest(new { error = exception.Message });
+    }
+});
+
+api.MapPost("/analyses/{id:guid}/groups/{groupId}/views/{viewId}/edit-preview", async (
+    Guid id,
+    string groupId,
+    string viewId,
+    SaveDiagramEditRequest request,
+    HttpContext context,
+    IAppStore store,
+    DiagramRevisionService service,
+    CancellationToken cancellationToken) =>
+{
+    var job = await AuthorizedJob(id, context, store, cancellationToken);
+    if (job is null) return Results.NotFound();
+    var artifact = FindAnalysisDiagramArtifact(job, groupId, viewId);
+    if (artifact is null) return Results.NotFound(new { error = "The diagram view does not exist." });
+    var identity = context.GetInternalIdentity();
+    try
+    {
+        return Results.Ok(await service.PreviewAsync(artifact, request, identity.UserId, cancellationToken));
+    }
+    catch (DiagramRevisionConflictException exception)
+    {
+        return Results.Conflict(new { errorCode = "DIAGRAM_REVISION_CONFLICT", error = exception.Message, currentVersion = exception.CurrentVersion });
+    }
+    catch (Exception exception) when (exception is ArgumentException or DiagramValidationException)
+    {
+        return Results.BadRequest(new { error = exception.Message });
+    }
+});
+
 api.MapPost("/natural-diagrams/{id:guid}/views/{viewId}/edits", async (
     Guid id,
     string viewId,
@@ -909,6 +981,24 @@ static object ToAnalysisResponse(AnalysisJob job) => new
     job.CreatedAt,
     job.UpdatedAt
 };
+
+static AnalysisHistorySummary ToAnalysisHistorySummary(AnalysisJob job)
+{
+    var groups = job.Result?.DiagramGroups ?? [];
+    var views = groups.SelectMany(static group => group.Views ?? []).ToArray();
+    return new AnalysisHistorySummary(
+        job.Id,
+        job.State,
+        job.CreatedAt,
+        job.UpdatedAt,
+        job.BaseSha,
+        job.TargetSha,
+        job.Result is not null,
+        groups.Count,
+        groups.Count(static group => group.Diagram is not null || group.Views?.Any(static view => view.Diagram is not null) == true),
+        views.Length,
+        views.Count(static view => view.Diagram is not null));
+}
 
 static object ToAnalysisPlanResponse(AnalysisPlan plan) => new
 {

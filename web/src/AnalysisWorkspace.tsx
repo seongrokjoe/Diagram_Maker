@@ -8,6 +8,7 @@ import { elapsedLabel, useElapsedSeconds } from "./useElapsedSeconds";
 import type {
   AnalysisDiagramGroup,
   AnalysisGroupSelection,
+  AnalysisHistorySummary,
   AnalysisPlan,
   AnalysisResponse,
   DiagramPreset,
@@ -45,6 +46,8 @@ export function AnalysisWorkspace({ repositories, reportError }: {
   const [mergeIds, setMergeIds] = useState<string[]>([]);
   const [presets, setPresets] = useState<DiagramPreset[]>([]);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
+  const [analysisHistory, setAnalysisHistory] = useState<AnalysisHistorySummary[]>([]);
+  const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
   const [sourceAnalysis, setSourceAnalysis] = useState<AnalysisResponse | null>(null);
   const [activeResultGroup, setActiveResultGroup] = useState("");
   const [activeResultView, setActiveResultView] = useState("");
@@ -86,6 +89,12 @@ export function AnalysisWorkspace({ repositories, reportError }: {
   }, [analysis, reportError]);
 
   useEffect(() => {
+    if (!plan || !analysis || !terminalStates.has(analysis.state)) return;
+    void api.listAnalysisPlanAnalyses(plan.id).then(setAnalysisHistory)
+      .catch((reason: unknown) => reportError(messageOf(reason, "생성 이력을 불러오지 못했습니다.")));
+  }, [analysis?.id, analysis?.state, plan?.id, reportError]);
+
+  useEffect(() => {
     const first = analysis?.result?.diagramGroups?.find((group) => group.diagram);
     if (first) {
       setActiveResultGroup(first.groupId);
@@ -117,6 +126,8 @@ export function AnalysisWorkspace({ repositories, reportError }: {
         enableThinking: useLlmGrouping && enableThinking,
       });
       setPlan(created);
+      setCurrentStep(2);
+      setAnalysisHistory([]);
       setRecentPlans((current) => [created, ...current.filter((item) => item.id !== created.id)]);
     } catch (reason) {
       reportError(messageOf(reason, "사전 분석을 시작하지 못했습니다."));
@@ -211,14 +222,56 @@ export function AnalysisWorkspace({ repositories, reportError }: {
       setGroups(saved.selections.map(normalizeGroup));
       const requestedViewIds = changedViewIds(validGroups, sourceAnalysis);
       setAnalysis(await api.generateAnalysisPlan(saved.id, saved.revision, sourceAnalysis?.id, requestedViewIds));
+      setCurrentStep(3);
     } catch (reason) {
       reportError(messageOf(reason, "선택 저장 또는 다이어그램 생성에 실패했습니다."));
     } finally { setBusyAction(""); }
   }
 
   function restorePlan(id: string) {
-    void api.getAnalysisPlan(id).then((value) => { setPlan(value); setAnalysis(null); setSourceAnalysis(null); })
-      .catch((reason: unknown) => reportError(messageOf(reason, "초안을 복원하지 못했습니다.")));
+    setBusyAction("plan-restore");
+    void Promise.all([api.getAnalysisPlan(id), api.listAnalysisPlanAnalyses(id)])
+      .then(async ([value, history]) => {
+        setPlan(value);
+        setAnalysisHistory(history);
+        setRepositoryId(value.request.repositoryId);
+        setTargetRevision(value.targetSha ?? value.request.targetRevision);
+        setAdvancedBase(Boolean(value.baseSha ?? value.request.baseRevision));
+        setBaseRevision(value.baseSha ?? value.request.baseRevision ?? "");
+        setUseLlmGrouping(value.request.useLlmGrouping);
+        setEnableThinking(value.request.enableThinking);
+        const repository = repositories.find((item) => item.id === value.request.repositoryId);
+        const target = value.targetSha ?? value.request.targetRevision;
+        const base = value.baseSha ?? value.request.baseRevision;
+        const [resolvedTarget, resolvedBase] = await Promise.all([
+          api.resolveCommit(value.request.repositoryId, target).catch(() => null),
+          base ? api.resolveCommit(value.request.repositoryId, base).catch(() => null) : Promise.resolve(null),
+        ]);
+        setTargetCommit(resolvedTarget);
+        setBaseCommit(resolvedBase);
+        const latest = history.find((item) => item.hasResult && (item.state === "Completed" || item.state === "Partial"));
+        if (latest) {
+          const result = await api.getAnalysis(latest.id);
+          setAnalysis(result);
+          setSourceAnalysis(result);
+          setCurrentStep(3);
+        } else {
+          setAnalysis(null);
+          setSourceAnalysis(null);
+          setCurrentStep(2);
+        }
+        if (!repository) reportError("복원한 초안의 저장소가 현재 접근 가능한 목록에 없습니다.");
+      })
+      .catch((reason: unknown) => reportError(messageOf(reason, "초안을 복원하지 못했습니다.")))
+      .finally(() => setBusyAction(""));
+  }
+
+  function loadAnalysis(id: string) {
+    void api.getAnalysis(id).then((value) => {
+      setAnalysis(value);
+      setSourceAnalysis(value.result ? value : sourceAnalysis);
+      setCurrentStep(3);
+    }).catch((reason: unknown) => reportError(messageOf(reason, "생성 결과를 불러오지 못했습니다.")));
   }
 
   function loadEvidence(changeId: string) {
@@ -231,12 +284,12 @@ export function AnalysisWorkspace({ repositories, reportError }: {
   return (
     <section className="analysis-workspace">
       <ol className="stepper" aria-label="Git 변경 분석 단계">
-        <li className={!plan ? "active" : "done"}>1. 커밋 선택</li>
-        <li className={plan?.state === "Ready" && !analysis ? "active" : plan ? "done" : ""}>2. 변경점 선택·그룹화</li>
-        <li className={analysis ? "active" : ""}>3. 다이어그램 확인</li>
+        <li className={currentStep === 1 ? "active" : plan ? "done" : ""}><button type="button" onClick={() => setCurrentStep(1)}>1. 커밋 선택</button></li>
+        <li className={currentStep === 2 ? "active" : currentStep === 3 ? "done" : ""}><button type="button" disabled={!plan} onClick={() => setCurrentStep(2)}>2. 변경점 선택·그룹화</button></li>
+        <li className={currentStep === 3 ? "active" : ""}><button type="button" disabled={!analysis && analysisHistory.length === 0} onClick={() => setCurrentStep(3)}>3. 다이어그램 확인</button></li>
       </ol>
 
-      {!plan && <div className="workspace-grid">
+      {currentStep === 1 && <div className="workspace-grid">
         <form className="panel controls" onSubmit={createPlan}>
           <p className="section-label">STEP 1 · IMMUTABLE REVISION</p>
           <h2>분석할 커밋 선택</h2>
@@ -286,7 +339,7 @@ export function AnalysisWorkspace({ repositories, reportError }: {
         </section>
       </div>}
 
-      {plan && plan.state !== "Ready" && !analysis && <section className="panel">
+      {currentStep === 2 && plan && plan.state !== "Ready" && <section className="panel">
         <div className="panel-heading"><div><p className="section-label">PRE-ANALYSIS</p><h2>변경 구조를 분석하고 있습니다</h2></div><span className={`status-chip ${plan.state.toLowerCase()}`}>{plan.state}</span></div>
         <Progress value={plan.progress} label={planRunning ? `${plan.stageMessage} · ${planSeconds}초 경과` : plan.stageMessage} />
         {planRunning && <button type="button" className="primary running-action" disabled>{elapsedLabel("변경점 사전 분석 중", true, planSeconds)}</button>}
@@ -294,10 +347,10 @@ export function AnalysisWorkspace({ repositories, reportError }: {
         {plan.state === "Failed" && <button className="secondary" type="button" onClick={() => setPlan(null)}>다시 선택</button>}
       </section>}
 
-      {plan?.state === "Ready" && !analysis && <section className="plan-editor">
+      {currentStep === 2 && plan?.state === "Ready" && <section className="plan-editor">
         <div className="panel plan-toolbar">
           <div><p className="section-label">STEP 2 · EVIDENCE-BOUND GROUPS</p><h2>표시할 변경점과 그룹 확인</h2></div>
-          <div className="button-row"><button type="button" className="secondary" onClick={() => { setPlan(null); setSourceAnalysis(null); }}>커밋 다시 선택</button><button type="button" className="secondary" onClick={addGroup}>그룹 추가</button><button type="button" className="primary" disabled={busy} onClick={() => void saveAndGenerate()}>{elapsedLabel("선택대로 다이어그램 생성", busyAction === "diagram-generate", busySeconds)}</button></div>
+          <div className="button-row"><button type="button" className="secondary" onClick={() => setCurrentStep(1)}>커밋 다시 선택</button><button type="button" className="secondary" onClick={addGroup}>그룹 추가</button><button type="button" className="primary" disabled={busy} onClick={() => void saveAndGenerate()}>{elapsedLabel("선택대로 다이어그램 생성", busyAction === "diagram-generate", busySeconds)}</button></div>
         </div>
         {plan.warnings.filter((warning) => !isCppDiagnostic(warning)).map((warning) => <p className="warning" key={warning}>{warning}</p>)}
         {((plan.notices?.length ?? 0) > 0 || plan.warnings.some(isCppDiagnostic)) && <details className="panel diagnostic-panel">
@@ -348,11 +401,18 @@ export function AnalysisWorkspace({ repositories, reportError }: {
         </div>
       </section>}
 
-      {analysis && <section className="panel analysis-output">
-        <div className="panel-heading"><div><p className="section-label">STEP 3 · RESULT</p><h2>선택된 변경점 다이어그램</h2></div><span className={`status-chip ${analysis.state.toLowerCase()}`}>{analysis.state}</span></div>
+      {currentStep === 3 && <section className="panel analysis-output">
+        <div className="panel-heading"><div><p className="section-label">STEP 3 · RESULT</p><h2>선택된 변경점 다이어그램</h2></div>{analysis && <span className={`status-chip ${analysis.state.toLowerCase()}`}>{analysis.state}</span>}</div>
+        {analysisHistory.length > 0 && <label className="history-picker">생성 이력<select value={analysis?.id ?? ""} onChange={(event) => loadAnalysis(event.target.value)}>
+          {!analysis && <option value="">결과 선택</option>}
+          {analysisHistory.map((item) => <option key={item.id} value={item.id}>{new Date(item.createdAt).toLocaleString("ko-KR")} · {item.state} · {item.baseSha?.slice(0, 8)} → {item.targetSha?.slice(0, 8)} · 그룹 {item.successfulGroups}/{item.totalGroups} · 출력 {item.successfulViews}/{item.totalViews}</option>)}
+        </select></label>}
+        {!analysis && <EmptyState text="확인할 생성 이력이 없습니다." />}
+        {analysis && <>
         {!analysis.result && <><Progress value={analysis.progress} label={analysisRunning ? `${analysis.stageMessage} · ${analysisSeconds}초 경과` : analysis.stageMessage} />{analysisRunning && <button type="button" className="primary running-action" disabled>{elapsedLabel("다이어그램 생성 중", true, analysisSeconds)}</button>}{analysis.errorMessage && <div className="analysis-error"><strong>{analysis.errorCode}</strong><p>{analysis.errorMessage}</p><code>{analysis.id}</code></div>}</>}
         {analysis.result && <AnalysisResultView analysis={analysis} activeGroup={activeResultGroup} setActiveGroup={setActiveResultGroup} activeView={activeResultView} setActiveView={setActiveResultView} reportError={reportError} presets={presets} />}
-        {terminalStates.has(analysis.state) && <button type="button" className="secondary" onClick={() => { setSourceAnalysis(analysis.result ? analysis : null); setAnalysis(null); if (plan) setGroups(plan.selections.map(normalizeGroup)); }}>선택 단계로 돌아가기</button>}
+        {terminalStates.has(analysis.state) && <button type="button" className="secondary" onClick={() => { if (analysis.result) setSourceAnalysis(analysis); if (plan) setGroups(plan.selections.map(normalizeGroup)); setCurrentStep(2); }}>선택 단계로 돌아가기</button>}
+        </>}
       </section>}
     </section>
   );
@@ -420,7 +480,9 @@ function AnalysisResultView({ analysis, activeGroup, setActiveGroup, activeView,
       {views.length > 0 && <><p className="tab-label">다이어그램 형식</p><div className="diagram-type-tabs">{views.map((view) => <button type="button" className={selectedView?.viewId === view.viewId ? "active" : ""} key={view.viewId} onClick={() => setActiveView(view.viewId)}>{formatDiagramType(view.selection.diagramType)}{view.state === "Failed" ? " · 실패" : ""}</button>)}</div></>}
       {selectedView && <div className="effective-options"><strong>적용 옵션</strong><span>{selectedPreset?.name ?? selectedView.selection.presetId}</span><span>{selectedView.selection.overrides?.direction ?? selectedPreset?.direction ?? "LR"}</span><span>{selectedView.selection.overrides?.detailLevel ?? selectedPreset?.detailLevel ?? "balanced"}</span><span>Caller {selectedView.selection.overrides?.callerDepth ?? selectedPreset?.callerDepth ?? 1}</span><span>Callee {selectedView.selection.overrides?.calleeDepth ?? selectedPreset?.calleeDepth ?? 1}</span><span>관계 {selectedView.selection.overrides?.relationDepth ?? selectedPreset?.relationDepth ?? 1}</span><span>{selectedView.reused ? "이전 결과 재사용" : "새로 생성"}</span></div>}
       {selectedView?.errorMessage && <p className="warning">{selectedView.errorMessage}</p>}
-      {selectedView?.diagram ? <DiagramEditor artifact={selectedView.diagram} downloadName={`git-${selectedView.diagram.type}-${analysis.targetSha?.slice(0, 8) ?? "result"}`} reportError={reportError} onSave={(input) => api.saveAnalysisDiagramEdit(analysis.id, selected.groupId, selectedView.viewId, input)} /> : <EmptyState text={selectedView?.warnings[0] ?? selected.warnings[0] ?? "이 그룹의 다이어그램을 생성하지 못했습니다."} />}
+      {selectedView?.diagram ? <DiagramEditor artifact={selectedView.diagram} downloadName={`git-${selectedView.diagram.type}-${analysis.targetSha?.slice(0, 8) ?? "result"}`} reportError={reportError}
+        onSave={(input) => api.saveAnalysisDiagramEdit(analysis.id, selected.groupId, selectedView.viewId, input)}
+        onPreview={(input, signal) => api.previewAnalysisDiagramEdit(analysis.id, selected.groupId, selectedView.viewId, input, signal)} /> : <EmptyState text={selectedView?.warnings[0] ?? selected.warnings[0] ?? "이 그룹의 다이어그램을 생성하지 못했습니다."} />}
     </article>}
     {groups.length === 0 && analysis.result.diagrams[0] && <MermaidPreview source={analysis.result.diagrams[0].mermaidDsl} downloadName="git-analysis" />}
     <h3>변경 파일</h3><ul className="file-list">{analysis.result.changedFiles.map((file) => <li key={`${file.path}-${file.changeKind}`}><span className={`change ${file.changeKind.toLowerCase()}`}>{file.changeKind}</span><code>{file.previousPath ? `${file.previousPath} → ${file.path}` : file.path}</code></li>)}</ul>

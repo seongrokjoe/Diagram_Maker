@@ -43,17 +43,19 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
         foreach (var edge in diagram.Edges)
         {
             var dotted = edge.IsIndirect || edge.Type.Equals("loopBack", StringComparison.OrdinalIgnoreCase);
-            builder.Append("    ").Append(aliases[edge.SourceId]);
+            builder.Append("    ").Append(aliases[edge.SourceId]).Append(' ').Append(Alias(edge.Id)).Append('@');
             if (dotted)
             {
-                if (string.IsNullOrWhiteSpace(edge.Label)) builder.Append(" -.-> ");
-                else builder.Append(" -. ").Append(EscapeDottedEdgeLabel(edge.Label)).Append(" .-> ");
+                var label = DisplayLabel(edge.Label, edge.ChangeMarker);
+                if (string.IsNullOrWhiteSpace(label)) builder.Append("-.-> ");
+                else builder.Append("-. ").Append(EscapeDottedEdgeLabel(label)).Append(" .-> ");
             }
             else
             {
-                builder.Append(" -->");
-                if (!string.IsNullOrWhiteSpace(edge.Label))
-                    builder.Append("|\"").Append(Escape(edge.Label)).Append("\"|");
+                builder.Append("-->");
+                var label = DisplayLabel(edge.Label, edge.ChangeMarker);
+                if (!string.IsNullOrWhiteSpace(label))
+                    builder.Append("|\"").Append(Escape(label)).Append("\"|");
                 builder.Append(' ');
             }
             builder.Append(aliases[edge.TargetId]).Append('\n');
@@ -62,12 +64,19 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
         AppendStyles(builder, diagram, aliases);
         if (diagram.Nodes.Any(static node => node.Shape is not null))
             builder.AppendLine("    linkStyle default stroke:#365f91,stroke-width:2px");
+        foreach (var (edge, index) in diagram.Edges.Select(static (edge, index) => (edge, index)).Where(static item => item.edge.ChangeMarker is not null))
+        {
+            var dash = edge.ChangeMarker!.Kind == DiagramChangeKind.Deleted || edge.ChangeMarker.Precision == DiagramChangePrecision.Symbol
+                ? ",stroke-dasharray:6 4" : string.Empty;
+            builder.Append("    linkStyle ").Append(index).Append(" stroke:#dc2626,stroke-width:3px,color:#991b1b")
+                .Append(dash).Append('\n');
+        }
         return builder.ToString();
     }
 
     private static void AppendFlowNode(StringBuilder builder, DiagramNode node, string alias, string indent)
     {
-        var label = Escape(node.Label);
+        var label = Escape(DisplayLabel(node.Label, node.ChangeMarker));
         builder.Append(indent).Append(alias);
         builder.Append(node.Shape?.ToLowerInvariant() switch
         {
@@ -87,7 +96,7 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
         var aliases = diagram.Nodes.ToDictionary(static node => node.Id, static node => Alias(node.Id));
         foreach (var node in diagram.Nodes)
         {
-            builder.Append("    participant ").Append(aliases[node.Id]).Append(" as ").Append(EscapeSequence(node.Label)).Append('\n');
+            builder.Append("    participant ").Append(aliases[node.Id]).Append(" as ").Append(EscapeSequence(DisplayLabel(node.Label, node.ChangeMarker))).Append('\n');
         }
 
         foreach (var edge in diagram.Edges.OrderBy(static edge => edge.SequenceIndex ?? int.MaxValue))
@@ -105,7 +114,7 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
             }
             var advanced = edge.ControlPath is not null;
             builder.Append("    ").Append(aliases[edge.SourceId]).Append(edge.IsIndirect ? "-->>+" : advanced ? "->>+" : "->>")
-                .Append(aliases[edge.TargetId]).Append(": ").Append(EscapeSequence(edge.IsIndirect ? $"간접 API: {edge.ViaApi} · {edge.Label}" : edge.Label)).Append('\n');
+                .Append(aliases[edge.TargetId]).Append(": ").Append(EscapeSequence(DisplayLabel(edge.IsIndirect ? $"간접 API: {edge.ViaApi} · {edge.Label}" : edge.Label, edge.ChangeMarker))).Append('\n');
             if (advanced)
                 builder.Append("    ").Append(aliases[edge.TargetId]).Append("-->>-")
                     .Append(aliases[edge.SourceId]).AppendLine(": return");
@@ -122,7 +131,7 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
         var aliases = diagram.Nodes.ToDictionary(static node => node.Id, static node => Alias(node.Id));
         foreach (var node in diagram.Nodes)
         {
-            builder.Append("    class ").Append(aliases[node.Id]).Append("[\"").Append(Escape(node.Label)).Append("\"]\n");
+            builder.Append("    class ").Append(aliases[node.Id]).Append("[\"").Append(Escape(DisplayLabel(node.Label, node.ChangeMarker))).Append("\"]\n");
         }
 
         foreach (var edge in diagram.Edges)
@@ -133,7 +142,7 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
                 builder.Append("    ").Append(aliases[edge.SourceId]).Append(edge.IsIndirect ? " ..> " : " --> ").Append(aliases[edge.TargetId]);
             if (!string.IsNullOrWhiteSpace(edge.Label))
             {
-                builder.Append(" : ").Append(Escape(edge.Label));
+                builder.Append(" : ").Append(Escape(DisplayLabel(edge.Label, edge.ChangeMarker)));
             }
 
             builder.Append('\n');
@@ -149,7 +158,7 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
         var aliases = diagram.Nodes.ToDictionary(static node => node.Id, static node => Alias(node.Id));
         foreach (var node in diagram.Nodes)
         {
-            builder.Append("    state \"").Append(Escape(node.Label)).Append("\" as ").Append(aliases[node.Id]).Append('\n');
+            builder.Append("    state \"").Append(Escape(DisplayLabel(node.Label, node.ChangeMarker))).Append("\" as ").Append(aliases[node.Id]).Append('\n');
         }
 
         foreach (var edge in diagram.Edges)
@@ -157,7 +166,7 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
             builder.Append("    ").Append(aliases[edge.SourceId]).Append(" --> ").Append(aliases[edge.TargetId]);
             if (!string.IsNullOrWhiteSpace(edge.Label))
             {
-                builder.Append(" : ").Append(Escape(edge.Label));
+                builder.Append(" : ").Append(Escape(DisplayLabel(edge.Label, edge.ChangeMarker)));
             }
 
             builder.Append('\n');
@@ -168,21 +177,49 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
 
     private static void AppendStyles(StringBuilder builder, DiagramIr diagram, IReadOnlyDictionary<string, string> aliases)
     {
-        builder.AppendLine("    classDef added fill:#dcfce7,stroke:#16a34a,color:#14532d");
-        builder.AppendLine("    classDef modified fill:#fef3c7,stroke:#d97706,color:#78350f");
-        builder.AppendLine("    classDef deleted fill:#fee2e2,stroke:#dc2626,color:#7f1d1d");
+        var markerAware = diagram.Nodes.Any(static node => node.ChangeMarker is not null) || diagram.Edges.Any(static edge => edge.ChangeMarker is not null);
+        builder.AppendLine(markerAware
+            ? "    classDef added fill:#fee2e2,stroke:#dc2626,stroke-width:3px,color:#991b1b"
+            : "    classDef added fill:#dcfce7,stroke:#16a34a,color:#14532d");
+        builder.AppendLine(markerAware
+            ? "    classDef modified fill:#fee2e2,stroke:#dc2626,stroke-width:3px,color:#991b1b"
+            : "    classDef modified fill:#fef3c7,stroke:#d97706,color:#78350f");
+        builder.AppendLine("    classDef deleted fill:#fee2e2,stroke:#dc2626,stroke-width:3px,stroke-dasharray:6 4,color:#991b1b");
+        builder.AppendLine("    classDef symbol fill:#fff1f2,stroke:#dc2626,stroke-width:3px,stroke-dasharray:5 3,color:#991b1b");
         builder.AppendLine("    classDef unchanged fill:#eff6ff,stroke:#3b82f6,color:#1e3a8a");
         foreach (var node in diagram.Nodes)
         {
-            var style = node.Status.ToLowerInvariant() switch
+            var style = node.ChangeMarker?.Precision == DiagramChangePrecision.Symbol ? "symbol" : node.ChangeMarker?.Kind switch
             {
-                "added" => "added",
-                "modified" => "modified",
-                "deleted" => "deleted",
-                _ => "unchanged"
+                DiagramChangeKind.Added => "added",
+                DiagramChangeKind.Modified => "modified",
+                DiagramChangeKind.Deleted => "deleted",
+                _ when markerAware => "unchanged",
+                _ => node.Status.ToLowerInvariant() switch
+                {
+                    "added" => "added",
+                    "modified" => "modified",
+                    "deleted" => "deleted",
+                    _ => "unchanged"
+                }
             };
             builder.Append("    class ").Append(aliases[node.Id]).Append(' ').Append(style).Append('\n');
         }
+    }
+
+    private static string DisplayLabel(string value, DiagramChangeMarker? marker) => marker is null
+        ? value
+        : $"{value} · {MarkerBadge(marker)}";
+
+    private static string MarkerBadge(DiagramChangeMarker marker)
+    {
+        var kind = marker.Kind switch
+        {
+            DiagramChangeKind.Added => "+ 추가",
+            DiagramChangeKind.Modified => "~ 수정",
+            _ => "− 삭제"
+        };
+        return marker.Precision == DiagramChangePrecision.Symbol ? $"{kind} · 심볼 수준" : kind;
     }
 
     private static string Escape(string value) => value

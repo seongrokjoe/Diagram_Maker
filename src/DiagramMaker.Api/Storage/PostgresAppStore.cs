@@ -27,12 +27,20 @@ public sealed class PostgresAppStore : IAppStore
                 id uuid PRIMARY KEY,
                 state text NOT NULL,
                 payload jsonb NOT NULL,
+                analysis_plan_id uuid NULL,
                 created_at timestamptz NOT NULL,
                 updated_at timestamptz NOT NULL,
                 lease_until timestamptz NULL
             );
             CREATE INDEX IF NOT EXISTS ix_analysis_jobs_queue
                 ON analysis_jobs (state, created_at);
+            ALTER TABLE analysis_jobs ADD COLUMN IF NOT EXISTS analysis_plan_id uuid NULL;
+            UPDATE analysis_jobs
+            SET analysis_plan_id = (payload #>> '{request,analysisPlanId}')::uuid
+            WHERE analysis_plan_id IS NULL
+              AND COALESCE(payload #>> '{request,analysisPlanId}', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$';
+            CREATE INDEX IF NOT EXISTS ix_analysis_jobs_plan_created
+                ON analysis_jobs (analysis_plan_id, created_at DESC);
             CREATE TABLE IF NOT EXISTS analysis_plans (
                 id uuid PRIMARY KEY,
                 state text NOT NULL,
@@ -111,11 +119,12 @@ public sealed class PostgresAppStore : IAppStore
     public async Task SaveAnalysisAsync(AnalysisJob job, CancellationToken cancellationToken)
     {
         const string sql = """
-            INSERT INTO analysis_jobs (id, state, payload, created_at, updated_at, lease_until)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO analysis_jobs (id, state, payload, analysis_plan_id, created_at, updated_at, lease_until)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (id) DO UPDATE SET
                 state = EXCLUDED.state,
                 payload = EXCLUDED.payload,
+                analysis_plan_id = EXCLUDED.analysis_plan_id,
                 updated_at = EXCLUDED.updated_at,
                 lease_until = EXCLUDED.lease_until
             """;
@@ -123,6 +132,7 @@ public sealed class PostgresAppStore : IAppStore
         command.Parameters.AddWithValue(job.Id);
         command.Parameters.AddWithValue(job.State.ToString());
         command.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(job, JsonOptions));
+        command.Parameters.AddWithValue(NpgsqlDbType.Uuid, (object?)job.Request.AnalysisPlanId ?? DBNull.Value);
         command.Parameters.AddWithValue(job.CreatedAt);
         command.Parameters.AddWithValue(job.UpdatedAt);
         command.Parameters.AddWithValue((object?)job.LeaseUntil ?? DBNull.Value);
@@ -131,6 +141,18 @@ public sealed class PostgresAppStore : IAppStore
 
     public Task<AnalysisJob?> GetAnalysisAsync(Guid id, CancellationToken cancellationToken) =>
         GetByIdAsync<AnalysisJob>("analysis_jobs", "payload", id, cancellationToken);
+
+    public async Task<IReadOnlyList<AnalysisJob>> ListAnalysesByPlanAsync(Guid planId, int limit, CancellationToken cancellationToken)
+    {
+        const string sql = "SELECT payload::text FROM analysis_jobs WHERE analysis_plan_id=$1 ORDER BY created_at DESC LIMIT $2";
+        var result = new List<AnalysisJob>();
+        await using var command = _dataSource.CreateCommand(sql);
+        command.Parameters.AddWithValue(planId);
+        command.Parameters.AddWithValue(limit);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) result.Add(Deserialize<AnalysisJob>(reader.GetString(0)));
+        return result;
+    }
 
     public async Task<AnalysisJob?> TryLeaseAnalysisAsync(TimeSpan leaseDuration, CancellationToken cancellationToken)
     {

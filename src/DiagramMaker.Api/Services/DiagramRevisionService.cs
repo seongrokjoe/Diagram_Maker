@@ -29,22 +29,11 @@ public sealed partial class DiagramRevisionService(
         await gate.WaitAsync(cancellationToken);
         try
         {
-
-            var revisions = await store.ListDiagramRevisionsAsync(request.RootArtifactId, ownerUserId, cancellationToken);
-            var latest = revisions.LastOrDefault();
-            var currentVersion = latest?.Version ?? source.Version;
-            if (request.ExpectedVersion != currentVersion)
-                throw new DiagramRevisionConflictException(currentVersion);
-            if (latest?.Id != request.ParentRevisionId || latest is null && request.ParentRevisionId is not null)
-                throw new DiagramRevisionConflictException(currentVersion);
-
-            var basis = latest?.Diagram ?? source;
-            var ir = ApplyDocument(basis.Ir, request.Document);
-            validator.Validate(ir);
+            var (currentVersion, parentRevisionId, ir) = await BuildAsync(source, request, ownerUserId, cancellationToken);
             var now = DateTimeOffset.UtcNow;
             var artifact = new DiagramArtifact(Guid.NewGuid(), ir.Type, currentVersion + 1, ir, compiler.Compile(ir), now);
             var record = new DiagramRevisionRecord(
-                Guid.NewGuid(), request.RootArtifactId, source.Id, latest?.Id, ownerUserId,
+                Guid.NewGuid(), request.RootArtifactId, source.Id, parentRevisionId, ownerUserId,
                 sourceKind, sourceId, groupId, viewId, artifact.Version, artifact, now);
             await store.SaveDiagramRevisionAsync(record, cancellationToken);
             return record;
@@ -53,6 +42,47 @@ public sealed partial class DiagramRevisionService(
         {
             gate.Release();
         }
+    }
+
+    public async Task<DiagramEditPreviewResponse> PreviewAsync(
+        DiagramArtifact source,
+        SaveDiagramEditRequest request,
+        string ownerUserId,
+        CancellationToken cancellationToken)
+    {
+        if (request.RootArtifactId != source.Id)
+            throw new ArgumentException("RootArtifactId must match the generated diagram artifact.");
+        ValidateDocument(request.Document);
+        var gate = RevisionGates.GetOrAdd(request.RootArtifactId, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            var (currentVersion, _, ir) = await BuildAsync(source, request, ownerUserId, cancellationToken);
+            return new DiagramEditPreviewResponse(currentVersion, ir, compiler.Compile(ir));
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<(int CurrentVersion, Guid? ParentRevisionId, DiagramIr Ir)> BuildAsync(
+        DiagramArtifact source,
+        SaveDiagramEditRequest request,
+        string ownerUserId,
+        CancellationToken cancellationToken)
+    {
+        var revisions = await store.ListDiagramRevisionsAsync(request.RootArtifactId, ownerUserId, cancellationToken);
+        var latest = revisions.LastOrDefault();
+        var currentVersion = latest?.Version ?? source.Version;
+        if (request.ExpectedVersion != currentVersion)
+            throw new DiagramRevisionConflictException(currentVersion);
+        if (latest?.Id != request.ParentRevisionId || latest is null && request.ParentRevisionId is not null)
+            throw new DiagramRevisionConflictException(currentVersion);
+
+        var ir = ApplyDocument((latest?.Diagram ?? source).Ir, request.Document);
+        validator.Validate(ir);
+        return (currentVersion, latest?.Id, ir);
     }
 
     private static DiagramIr ApplyDocument(DiagramIr basis, DiagramEditDocument document)

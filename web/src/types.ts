@@ -80,6 +80,16 @@ export type DiagramNode = {
   evidenceIds: string[];
   shape?: string;
   details?: string[];
+  changeMarker?: DiagramChangeMarker;
+};
+
+export type DiagramChangeMarker = {
+  kind: "Added" | "Modified" | "Deleted";
+  precision: "Exact" | "Symbol";
+  filePath?: string;
+  startLine?: number;
+  endLine?: number;
+  evidenceIds: string[];
 };
 
 export type DiagramEdge = {
@@ -94,6 +104,8 @@ export type DiagramEdge = {
   sequenceIndex?: number;
   isIndirect?: boolean;
   viaApi?: string;
+  controlPath?: Array<{ id: string; kind: string; label: string; branch: string }>;
+  changeMarker?: DiagramChangeMarker;
 };
 
 export type DiagramArtifact = {
@@ -182,7 +194,10 @@ export type ChangedFile = {
   path: string;
   previousPath?: string;
   changeKind: string;
-  hunks: Array<{ oldStart?: number; oldLines?: number; newStart?: number; newLines?: number; header: string }>;
+  hunks: Array<{
+    oldStart?: number; oldLines?: number; newStart?: number; newLines?: number; header: string;
+    changedRanges?: Array<{ oldStartLine?: number; oldLineCount: number; newStartLine?: number; newLineCount: number }>;
+  }>;
 };
 
 export type ChangeCandidate = {
@@ -311,6 +326,26 @@ export type DiagramRevisionRecord = {
   version: number;
   diagram: DiagramArtifact;
   createdAt: string;
+};
+
+export type DiagramEditPreview = {
+  version: number;
+  ir: DiagramArtifact["ir"];
+  mermaidDsl: string;
+};
+
+export type AnalysisHistorySummary = {
+  id: string;
+  state: string;
+  createdAt: string;
+  updatedAt: string;
+  baseSha?: string;
+  targetSha?: string;
+  hasResult: boolean;
+  totalGroups: number;
+  successfulGroups: number;
+  totalViews: number;
+  successfulViews: number;
 };
 
 export type AnalysisResponse = {

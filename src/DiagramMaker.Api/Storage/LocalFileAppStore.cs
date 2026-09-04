@@ -74,6 +74,9 @@ public sealed class LocalFileAppStore(string filePath) : IAppStore
     public Task<AnalysisJob?> GetAnalysisAsync(Guid id, CancellationToken cancellationToken) =>
         _inner.GetAnalysisAsync(id, cancellationToken);
 
+    public Task<IReadOnlyList<AnalysisJob>> ListAnalysesByPlanAsync(Guid planId, int limit, CancellationToken cancellationToken) =>
+        _inner.ListAnalysesByPlanAsync(planId, limit, cancellationToken);
+
     public Task<AnalysisJob?> TryLeaseAnalysisAsync(TimeSpan leaseDuration, CancellationToken cancellationToken) =>
         _inner.TryLeaseAnalysisAsync(leaseDuration, cancellationToken);
 

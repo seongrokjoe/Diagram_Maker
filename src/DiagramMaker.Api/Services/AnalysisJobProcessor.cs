@@ -200,7 +200,7 @@ public sealed class AnalysisJobProcessor(
             {
                 artifacts.Add(artifact with { MermaidDsl = compiler.Compile(artifact.Ir) });
             }
-            catch (DiagramValidationException exception)
+            catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 logger.LogWarning(exception, "Diagram type {DiagramType} was rejected for analysis {AnalysisId}.", artifact.Type, analysisId);
                 availability[artifact.Type] = new DiagramAvailability(artifact.Type, false, "유효하지 않은 관계가 있어 이 형식만 제외했습니다.");
@@ -230,7 +230,14 @@ public sealed class AnalysisJobProcessor(
             var groupWarnings = new List<string>();
             var viewResults = new List<AnalysisDiagramViewResult>();
             var sourceGroup = sourceResult?.DiagramGroups?.FirstOrDefault(item => item.GroupId == group.Id);
-            var sourceViews = EffectiveResultViews(sourceGroup).ToDictionary(static item => item.ViewId, StringComparer.Ordinal);
+            var sourceViews = EffectiveResultViews(sourceGroup)
+                .GroupBy(static item => item.ViewId, StringComparer.Ordinal)
+                .ToDictionary(
+                    static group => group.Key,
+                    static group => group.OrderByDescending(static item => item.Diagram is not null)
+                        .ThenByDescending(static item => item.State.Equals("Completed", StringComparison.OrdinalIgnoreCase))
+                        .First(),
+                    StringComparer.Ordinal);
             foreach (var view in group.EffectiveViews())
             {
                 expectedCount++;
@@ -269,16 +276,19 @@ public sealed class AnalysisJobProcessor(
                             "DIAGRAM_NO_VALID_OUTPUT", message));
                     }
                 }
-                catch (DiagramValidationException exception)
+                catch (Exception exception) when (exception is not OperationCanceledException)
                 {
                     logger.LogWarning(exception,
-                        "Diagram view {ViewId} in group {GroupId} was rejected for analysis {AnalysisId}.",
-                        view.Id, group.Id, analysisId);
-                    const string message = "다이어그램의 노드 또는 관계가 유효하지 않아 이 보기만 제외했습니다.";
+                        "Diagram view {ViewId} ({DiagramType}/{PresetId}) in group {GroupId} was rejected for analysis {AnalysisId}.",
+                        view.Id, view.DiagramType, view.PresetId, group.Id, analysisId);
+                    var errorCode = exception is DiagramValidationException ? "DIAGRAM_INVALID" : "DIAGRAM_RENDER_FAILED";
+                    var message = exception is DiagramValidationException
+                        ? "다이어그램의 노드 또는 관계가 유효하지 않아 이 보기만 제외했습니다."
+                        : "다이어그램 생성 중 오류가 발생하여 이 보기만 제외했습니다.";
                     availability.Add(new DiagramAvailability(view.DiagramType, false, message));
                     groupWarnings.Add(message);
                     viewResults.Add(new AnalysisDiagramViewResult(view.Id, view, null, [message], "Failed",
-                        "DIAGRAM_INVALID", message));
+                        errorCode, message));
                 }
             }
             var groupNarrative = BuildGroupNarrative(group, graph, groupWarnings);
@@ -293,7 +303,12 @@ public sealed class AnalysisJobProcessor(
     private static IReadOnlyList<AnalysisDiagramViewResult> EffectiveResultViews(AnalysisDiagramGroupResult? group)
     {
         if (group is null) return [];
-        if (group.Views is { Count: > 0 }) return group.Views;
+        if (group.Views is { Count: > 0 }) return group.Views
+            .GroupBy(static view => view.ViewId, StringComparer.Ordinal)
+            .Select(static views => views.OrderByDescending(static view => view.Diagram is not null)
+                .ThenByDescending(static view => view.State.Equals("Completed", StringComparison.OrdinalIgnoreCase))
+                .First())
+            .ToArray();
         var selection = new DiagramViewSelection($"{group.GroupId}-view", group.Diagram?.Type ?? "flowchart", "balanced");
         return [new AnalysisDiagramViewResult(selection.Id, selection, group.Diagram, group.Warnings,
             group.Diagram is null ? "Failed" : "Completed")];

@@ -346,15 +346,53 @@ function createEvidenceSnippet(revisionSha, filepath, oid, content, requestedSta
   };
 }
 
-function createHunks(pathname, before, after) {
-  if (before === null || after === null) return [];
-  return structuredPatch(pathname, pathname, before, after, "base", "target", { context: 3 }).hunks.map((hunk) => ({
+export function createHunks(pathname, before, after) {
+  if (before === null && after === null) return [];
+  return structuredPatch(pathname, pathname, before ?? "", after ?? "", "base", "target", { context: 3 }).hunks.map((hunk) => ({
     oldStart: hunk.oldStart,
     oldLines: hunk.oldLines,
     newStart: hunk.newStart,
     newLines: hunk.newLines,
     header: `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`,
+    changedRanges: changedRanges(hunk),
   }));
+}
+
+function changedRanges(hunk) {
+  const result = [];
+  let oldLine = hunk.oldStart;
+  let newLine = hunk.newStart;
+  let current = null;
+  const flush = () => {
+    if (!current) return;
+    result.push({
+      oldStartLine: current.oldLineCount > 0 ? current.oldStartLine : null,
+      oldLineCount: current.oldLineCount,
+      newStartLine: current.newLineCount > 0 ? current.newStartLine : null,
+      newLineCount: current.newLineCount,
+    });
+    current = null;
+  };
+  for (const line of hunk.lines) {
+    const prefix = line[0];
+    if (prefix === " ") {
+      flush();
+      oldLine += 1;
+      newLine += 1;
+      continue;
+    }
+    if (prefix !== "-" && prefix !== "+") continue;
+    current ??= { oldStartLine: oldLine, oldLineCount: 0, newStartLine: newLine, newLineCount: 0 };
+    if (prefix === "-") {
+      current.oldLineCount += 1;
+      oldLine += 1;
+    } else {
+      current.newLineCount += 1;
+      newLine += 1;
+    }
+  }
+  flush();
+  return result;
 }
 
 export function classifyChanges(baseEntries, targetEntries) {
@@ -602,9 +640,10 @@ async function buildCppIndexNative(input, dir, comparison) {
     .filter(isCppSourceFile);
   if (changedCppPaths.length === 0) {
     return {
-      parserVersion: "tree-sitter-cpp-0.23.4/index-v2",
+      parserVersion: "tree-sitter-cpp-0.23.4/index-v3",
       targetSymbols: [],
       targetEdges: [],
+      baseEdges: [],
       beforeChangedSymbols: [],
       diagnostics: [],
       ambiguousCallCount: 0,
@@ -675,13 +714,22 @@ async function buildCppIndexNative(input, dir, comparison) {
     if (!isCppSourceFile(beforePath) || file.beforeContent === null) continue;
     parsedBefore.push(await parseCppFile(beforePath, file.beforeContent, projectForFile.get(file.path) ?? null));
   }
+  const changedTargetPaths = new Set(comparison.files.filter((file) => isCppSourceFile(file.path)).map((file) => file.path));
+  const base = resolveCppCalls([
+    ...parsedTarget.filter((file) => !changedTargetPaths.has(file.filepath)),
+    ...parsedBefore,
+  ], input.indirectCallRules ?? []);
+  const changedBasePaths = new Set(comparison.files
+    .map((file) => file.previousPath ?? file.path)
+    .filter(isCppSourceFile));
 
   return {
-    parserVersion: "tree-sitter-cpp-0.23.4/index-v2",
+    parserVersion: "tree-sitter-cpp-0.23.4/index-v3",
     targetSymbols: target.symbols,
     targetEdges: target.edges,
-    beforeChangedSymbols: parsedBefore.flatMap((file) => file.symbols),
-    diagnostics: target.diagnostics,
+    baseEdges: base.edges,
+    beforeChangedSymbols: base.symbols.filter((symbol) => changedBasePaths.has(symbol.filePath)),
+    diagnostics: [...new Set([...target.diagnostics, ...base.diagnostics])],
     ambiguousCallCount: target.ambiguousCallCount,
     indexedFileCount: selected.length,
     indexedBytes: selectedBytes,
@@ -980,7 +1028,7 @@ export async function prepare(input) {
     comparison: await compareIsomorphic(fallbackInput),
     cppIndex: {
       parserVersion: "fallback-none",
-      targetSymbols: [], targetEdges: [], beforeChangedSymbols: [], diagnostics: ["C++ project indexing requires native Git."],
+      targetSymbols: [], targetEdges: [], baseEdges: [], beforeChangedSymbols: [], diagnostics: ["C++ project indexing requires native Git."],
       ambiguousCallCount: 0, indexedFileCount: 0, indexedBytes: 0, truncated: true, projectPaths: [],
       excludedCalls: [], excludedCallCount: 0, excludedCallsTruncated: false,
     },

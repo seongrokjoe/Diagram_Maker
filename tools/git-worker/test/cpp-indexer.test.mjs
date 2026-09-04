@@ -80,7 +80,10 @@ test("C++ indexer preserves method control flow and indirect API calls", async (
   assert.equal(edge.targetSemanticKey, "function:Opr_Xfer::runOrgReturn()");
   assert.equal(edge.isIndirect, true);
   assert.equal(edge.viaApi, "RunFunction");
+  assert.ok(edge.endLine >= edge.line);
   assert.equal(edge.controlPath.map((scope) => scope.kind).join(","), "loop,alt");
+  const loopNode = execute.controlNodes.find((node) => node.kind === "loop");
+  assert.ok(loopNode.endLine < execute.endLine, "loop range should cover the header rather than the whole body");
   const breakNode = execute.controlNodes.find((node) => node.kind === "break");
   assert.ok(!execute.controlEdges.some((item) => item.sourceId === breakNode.id && item.type === "loopBack"));
   assert.equal(resolved.excludedCallCount, 0);

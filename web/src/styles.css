@@ -138,6 +138,8 @@ pre { overflow: auto; max-height: 260px; padding: 14px; background: #101c2d; col
 .analysis-workspace { display: grid; gap: 18px; }
 .stepper { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin: 0; padding: 0; list-style: none; border: 1px solid #cad6e3; background: #cad6e3; }
 .stepper li { padding: 13px 18px; background: #f4f7fa; color: #70839a; font-size: 12px; font-weight: 800; }
+.stepper li button { width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+.stepper li button:disabled { cursor: not-allowed; opacity: .55; }
 .stepper li.active { background: #e7f2ff; color: #155da9; box-shadow: inset 0 -3px #2f7ddb; }
 .stepper li.done { background: #eef9f3; color: #287250; }
 .plan-toolbar { display: flex; min-height: auto; align-items: center; justify-content: space-between; gap: 20px; }
@@ -205,6 +207,11 @@ pre { overflow: auto; max-height: 260px; padding: 14px; background: #101c2d; col
 .diagnostic-panel ul { display: grid; gap: 6px; margin: 10px 0 0; padding-left: 20px; color: #596d84; font-size: 11px; }
 .tab-label { margin: 17px 0 -16px; color: #71849b; font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
 .structured-diagram-editor { margin-top: 12px; }
+.direct-edit-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 10px 0; padding: 10px; border: 1px solid #c9d8e8; background: #f4f8fc; color: #536b84; font-size: 11px; }
+.direct-edit-toolbar span { flex: 1; min-width: 260px; }
+.diagram-canvas.interactive [data-ir-id] { cursor: pointer; }
+.history-picker { display: grid; grid-template-columns: auto minmax(300px, 1fr); align-items: center; gap: 10px; margin: 12px 0; }
+.history-picker select { margin: 0; }
 .structure-editor-panel { display: grid; gap: 12px; margin-top: 14px; padding: 16px; border: 1px solid #bdcde0; background: #f8fbff; }
 .structure-editor-panel .panel-heading { margin: 0 0 4px; }
 .structure-editor-panel h3, .structure-editor-panel h4 { margin: 0; }

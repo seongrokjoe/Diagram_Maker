@@ -7,6 +7,28 @@ namespace DiagramMaker.Tests;
 public sealed class DiagramRevisionServiceTests
 {
     [Fact]
+    public async Task PreviewAsync_DoesNotPersistAndPreservesExistingChangeMarkers()
+    {
+        await using var store = new InMemoryAppStore();
+        var validator = new DiagramValidator();
+        var service = new DiagramRevisionService(store, validator, new MermaidCompiler(validator));
+        var marker = new DiagramChangeMarker(DiagramChangeKind.Modified, DiagramChangePrecision.Exact,
+            "Service.cs", 3, 3, ["evidence"]);
+        var basis = Artifact();
+        basis = basis with { Ir = basis.Ir with { Nodes = basis.Ir.Nodes.Select((node, index) => index == 0 ? node with { ChangeMarker = marker } : node).ToArray() } };
+        var document = new DiagramEditDocument("미리보기", "TB",
+            [new EditableDiagramNode("a", "변경된 A"), new EditableDiagramNode("b", "B")],
+            [new EditableDiagramEdge("e", "a", "b", "호출")]);
+
+        var preview = await service.PreviewAsync(basis,
+            new SaveDiagramEditRequest(basis.Id, null, 1, document), "reviewer", CancellationToken.None);
+
+        Assert.Equal(1, preview.Version);
+        Assert.Equal(marker, preview.Ir.Nodes[0].ChangeMarker);
+        Assert.Empty(await store.ListDiagramRevisionsAsync(basis.Id, "reviewer", CancellationToken.None));
+    }
+
+    [Fact]
     public async Task SaveAsync_CreatesValidatedRevisionAndDetectsStaleVersion()
     {
         var store = new InMemoryAppStore();

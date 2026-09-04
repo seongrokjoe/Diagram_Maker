@@ -6,7 +6,7 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import git from "isomorphic-git";
-import { compare, inspectRepository, listCommits, prepare, readEvidence } from "../index.mjs";
+import { compare, createHunks, inspectRepository, listCommits, prepare, readEvidence } from "../index.mjs";
 
 const author = { name: "Test", email: "test@internal" };
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -35,6 +35,22 @@ async function commitFile(dir, filepath, content, message, commitAuthor = author
   await git.add({ fs, dir, filepath });
   return git.commit({ fs, dir, message, author: commitAuthor });
 }
+
+test("diff hunks retain only contiguous actual changed line ranges", () => {
+  const hunks = createHunks("Service.cs",
+    "one\nremove-a\nremove-b\ncontext\nold-tail\n",
+    "one\nadd-a\ncontext\nnew-tail-a\nnew-tail-b\n");
+
+  assert.deepEqual(hunks.flatMap((hunk) => hunk.changedRanges), [
+    { oldStartLine: 2, oldLineCount: 2, newStartLine: 2, newLineCount: 1 },
+    { oldStartLine: 5, oldLineCount: 1, newStartLine: 4, newLineCount: 2 },
+  ]);
+});
+
+test("diff hunks expose whole-file additions without a base blob", () => {
+  const ranges = createHunks("Added.cs", null, "first\nsecond\n").flatMap((hunk) => hunk.changedRanges);
+  assert.deepEqual(ranges, [{ oldStartLine: null, oldLineCount: 0, newStartLine: 1, newLineCount: 2 }]);
+});
 
 test("native Git compares immutable commits and auto falls back only when Git is missing", async (t) => {
   const dir = await createRepository(t, "native");
@@ -136,7 +152,7 @@ test("prepares a Visual Studio C++ project with resolved calls and commit metada
   fs.writeFileSync(path.join(dir, "src", "Service.cpp"), `
     namespace Demo {
       class Service { public: void Run(); void Save(); };
-      void Service::Run() { }
+      void Service::Run() { Save(); }
       void Service::Save() { }
     }
   `);
@@ -146,7 +162,7 @@ test("prepares a Visual Studio C++ project with resolved calls and commit metada
   fs.writeFileSync(path.join(dir, "src", "Service.cpp"), `
     namespace Demo {
       class Service { public: void Run(); void Save(); };
-      void Service::Run() { Save(); }
+      void Service::Run() { Save(); Save(); }
       void Service::Save() { }
     }
   `);
@@ -169,6 +185,8 @@ test("prepares a Visual Studio C++ project with resolved calls and commit metada
   assert.deepEqual(result.cppIndex.projectPaths, ["Demo.vcxproj"]);
   assert.ok(result.cppIndex.targetSymbols.some((symbol) => symbol.qualifiedName.endsWith("Service::Run")));
   assert.ok(result.cppIndex.targetEdges.some((edge) => edge.type === "calls"));
+  assert.ok(result.cppIndex.baseEdges.some((edge) => edge.type === "calls"));
+  assert.match(result.cppIndex.parserVersion, /index-v3$/);
   assert.equal(result.cppIndex.ambiguousCallCount, 0);
 
   const commits = await listCommits({ repositoryPath: dir, backend: "native", limit: 2 });

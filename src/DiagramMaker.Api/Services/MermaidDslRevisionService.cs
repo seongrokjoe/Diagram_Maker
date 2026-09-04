@@ -158,8 +158,9 @@ public sealed partial class MermaidDslRevisionService(
         var label = DecodeLabel(match.Groups["label"].Value);
         var isClass = type == "class";
         var inherits = isClass && match.Groups["arrow"].Value == "<|--";
+        var explicitEdgeId = match.Groups["edge"].Value;
         edge = new DiagramEdge(
-            $"e{sequence}",
+            string.IsNullOrEmpty(explicitEdgeId) ? $"e{sequence}" : DecodeAlias(explicitEdgeId),
             isClass ? right : left,
             isClass ? left : right,
             inherits ? "inherits" : type switch { "sequence" => "message", "state" => "transition", "class" => "uses", _ => "flow" },
@@ -197,8 +198,8 @@ public sealed partial class MermaidDslRevisionService(
     private static partial Regex ClassEdge();
     [GeneratedRegex("^(?<left>[A-Za-z][A-Za-z0-9_]{0,119})\\s+-->\\s+(?<right>[A-Za-z][A-Za-z0-9_]{0,119})(?:\\s*:\\s*(?<label>.*))?$", RegexOptions.CultureInvariant)]
     private static partial Regex StateEdge();
-    [GeneratedRegex("^(?<left>[A-Za-z][A-Za-z0-9_]{0,119})\\s+-->(?:\\|\\\"(?<label>[^\\\"]*)\\\"\\|)?\\s+(?<right>[A-Za-z][A-Za-z0-9_]{0,119})$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^(?<left>[A-Za-z][A-Za-z0-9_]{0,119})\\s+(?:(?<edge>[A-Za-z][A-Za-z0-9_]{0,119})@)?-->(?:\\|\\\"(?<label>[^\\\"]*)\\\"\\|)?\\s+(?<right>[A-Za-z][A-Za-z0-9_]{0,119})$", RegexOptions.CultureInvariant)]
     private static partial Regex FlowEdge();
-    [GeneratedRegex("^class\\s+[A-Za-z][A-Za-z0-9_]{0,119}\\s+(added|modified|deleted|unchanged)$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^class\\s+[A-Za-z][A-Za-z0-9_]{0,119}\\s+(added|modified|deleted|symbol|unchanged)$", RegexOptions.CultureInvariant)]
     private static partial Regex FlowStyle();
 }

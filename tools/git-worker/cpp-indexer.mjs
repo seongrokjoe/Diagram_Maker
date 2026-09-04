@@ -200,6 +200,7 @@ function collectCalls(node) {
           name: lastName(expression),
           argumentCount: countArguments(current),
           line: current.startPosition.row + 1,
+          endLine: current.endPosition.row + 1,
           order: ++order,
           arguments: callArguments(current),
           controlPath,
@@ -260,8 +261,15 @@ function buildControlFlow(functionNode, calls) {
       edges.push({ sourceId: source.id, targetId: target.id, type: source.type ?? "control", label: source.label ?? "" });
     }
   };
-  const entry = addNode("entry", "시작", functionNode);
-  const exit = addNode("exit", "종료", functionNode);
+  const bodyNode = field(functionNode, "body");
+  const entry = addNode("entry", "시작", {
+    startPosition: functionNode.startPosition,
+    endPosition: bodyNode?.startPosition ?? functionNode.startPosition,
+  });
+  const exit = addNode("exit", "종료", {
+    startPosition: { row: functionNode.endPosition.row },
+    endPosition: functionNode.endPosition,
+  });
 
   function processSequence(statements, incoming, loopNode = null) {
     let pending = incoming;
@@ -284,7 +292,7 @@ function buildControlFlow(functionNode, calls) {
     if (!statement || statement.type === "comment") return incoming;
     if (statement.type === "compound_statement") return processSequence(children(statement), incoming, loopNode);
     if (statement.type === "if_statement") {
-      const decision = addNode("condition", conditionLabel(statement), statement);
+      const decision = addNode("condition", conditionLabel(statement), field(statement, "condition") ?? statement);
       connect(incoming, decision);
       const consequence = field(statement, "consequence");
       const alternative = field(statement, "alternative");
@@ -293,9 +301,12 @@ function buildControlFlow(functionNode, calls) {
       return [...yes, ...no];
     }
     if (["for_statement", "for_range_loop", "while_statement", "do_statement"].includes(statement.type)) {
-      const loop = addNode("loop", conditionLabel(statement), statement);
-      connect(incoming, loop);
       const body = field(statement, "body");
+      const loopHeader = statement.type === "do_statement"
+        ? (field(statement, "condition") ?? statement)
+        : { startPosition: statement.startPosition, endPosition: body?.startPosition ?? statement.endPosition };
+      const loop = addNode("loop", conditionLabel(statement), loopHeader);
+      connect(incoming, loop);
       const bodyExit = body ? processStatement(body, [{ id: loop.id, label: "반복" }], loop) : [];
       for (const source of bodyExit.filter((item) => !item.breakLoop)) {
         edges.push({ sourceId: source.id, targetId: loop.id, type: "loopBack", label: "다음 반복" });
@@ -305,7 +316,10 @@ function buildControlFlow(functionNode, calls) {
     if (statement.type === "return_statement") {
       let pending = incoming;
       for (const call of directCalls(statement)) {
-        const callNode = addNode("call", `${call.expression}(${(call.arguments ?? []).join(", ")})`, statement, call.order);
+        const callNode = addNode("call", `${call.expression}(${(call.arguments ?? []).join(", ")})`, {
+          startPosition: { row: call.line - 1 },
+          endPosition: { row: (call.endLine ?? call.line) - 1 },
+        }, call.order);
         connect(pending, callNode);
         pending = [{ id: callNode.id }];
       }
@@ -331,7 +345,10 @@ function buildControlFlow(functionNode, calls) {
     if (statementCalls.length > 0) {
       let pending = incoming;
       for (const call of statementCalls) {
-        const callNode = addNode("call", `${call.expression}(${(call.arguments ?? []).join(", ")})`, statement, call.order);
+        const callNode = addNode("call", `${call.expression}(${(call.arguments ?? []).join(", ")})`, {
+          startPosition: { row: call.line - 1 },
+          endPosition: { row: (call.endLine ?? call.line) - 1 },
+        }, call.order);
         connect(pending, callNode);
         pending = [{ id: callNode.id }];
       }
@@ -345,8 +362,7 @@ function buildControlFlow(functionNode, calls) {
     return processSequence(children(statement), incoming, loopNode);
   }
 
-  const body = field(functionNode, "body");
-  const pending = body ? processStatement(body, [{ id: entry.id }], null) : [{ id: entry.id }];
+  const pending = bodyNode ? processStatement(bodyNode, [{ id: entry.id }], null) : [{ id: entry.id }];
   connect(pending, exit);
   return { nodes, edges };
 }
@@ -597,6 +613,7 @@ export function resolveCppCalls(files, indirectCallRules = []) {
           confidence: typeValue.confidence,
           filePath: source.filePath,
           line: call.line,
+          endLine: call.endLine,
           sequenceIndex: call.order,
           isIndirect: true,
           viaApi: indirectRule.apiName,
@@ -635,6 +652,7 @@ export function resolveCppCalls(files, indirectCallRules = []) {
         confidence,
         filePath: source.filePath,
         line: call.line,
+        endLine: call.endLine,
         sequenceIndex: call.order,
         isIndirect: false,
         viaApi: null,

@@ -55,6 +55,21 @@ public enum Confidence
     Inferred
 }
 
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum DiagramChangeKind
+{
+    Added,
+    Modified,
+    Deleted
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum DiagramChangePrecision
+{
+    Exact,
+    Symbol
+}
+
 public sealed record RepositoryDefinition(
     Guid Id,
     string Name,
@@ -144,7 +159,14 @@ public sealed record DiffHunk(
     int OldLines,
     int NewStart,
     int NewLines,
-    string Header);
+    string Header,
+    IReadOnlyList<DiffChangedRange>? ChangedRanges = null);
+
+public sealed record DiffChangedRange(
+    int? OldStartLine,
+    int OldLineCount,
+    int? NewStartLine,
+    int NewLineCount);
 
 public sealed record GitComparison(
     string BaseSha,
@@ -176,7 +198,8 @@ public sealed record CppCallFact(
     int Line,
     int Order,
     IReadOnlyList<string>? Arguments = null,
-    IReadOnlyList<ControlScope>? ControlPath = null);
+    IReadOnlyList<ControlScope>? ControlPath = null,
+    int? EndLine = null);
 
 public sealed record ControlScope(
     string Id,
@@ -229,7 +252,8 @@ public sealed record CppEdgeFact(
     int? SequenceIndex,
     bool IsIndirect = false,
     string? ViaApi = null,
-    IReadOnlyList<ControlScope>? ControlPath = null);
+    IReadOnlyList<ControlScope>? ControlPath = null,
+    int? EndLine = null);
 
 public sealed record ExcludedCallFact(
     string FilePath,
@@ -252,7 +276,8 @@ public sealed record CppSourceIndex(
     IReadOnlyList<string> ProjectPaths,
     IReadOnlyList<ExcludedCallFact>? ExcludedCalls = null,
     int ExcludedCallCount = 0,
-    bool ExcludedCallsTruncated = false);
+    bool ExcludedCallsTruncated = false,
+    IReadOnlyList<CppEdgeFact>? BaseEdges = null);
 
 public sealed record PreparedRepositoryAnalysis(
     GitComparison Comparison,
@@ -303,7 +328,11 @@ public sealed record GraphEdge(
     int? SequenceIndex = null,
     bool IsIndirect = false,
     string? ViaApi = null,
-    IReadOnlyList<ControlScope>? ControlPath = null);
+    IReadOnlyList<ControlScope>? ControlPath = null,
+    string? RevisionSha = null,
+    string? FilePath = null,
+    int? StartLine = null,
+    int? EndLine = null);
 
 public sealed record ControlFlowNode(
     string Id,
@@ -325,7 +354,9 @@ public sealed record ControlFlowEdge(
 public sealed record MethodControlFlow(
     string IdentityId,
     IReadOnlyList<ControlFlowNode> Nodes,
-    IReadOnlyList<ControlFlowEdge> Edges);
+    IReadOnlyList<ControlFlowEdge> Edges,
+    string? RevisionSha = null,
+    string? FilePath = null);
 
 public sealed record SymbolChange(
     string Id,
@@ -352,7 +383,8 @@ public sealed record DiagramNode(
     Confidence Confidence,
     IReadOnlyList<string> EvidenceIds,
     string? Shape = null,
-    IReadOnlyList<string>? Details = null);
+    IReadOnlyList<string>? Details = null,
+    DiagramChangeMarker? ChangeMarker = null);
 
 public sealed record DiagramEdge(
     string Id,
@@ -366,7 +398,16 @@ public sealed record DiagramEdge(
     int? SequenceIndex = null,
     bool IsIndirect = false,
     string? ViaApi = null,
-    IReadOnlyList<ControlScope>? ControlPath = null);
+    IReadOnlyList<ControlScope>? ControlPath = null,
+    DiagramChangeMarker? ChangeMarker = null);
+
+public sealed record DiagramChangeMarker(
+    DiagramChangeKind Kind,
+    DiagramChangePrecision Precision,
+    string? FilePath,
+    int? StartLine,
+    int? EndLine,
+    IReadOnlyList<string> EvidenceIds);
 
 public sealed record DiagramIr(
     string Type,
@@ -603,6 +644,24 @@ public sealed record SaveDiagramEditRequest(
     Guid? ParentRevisionId,
     int ExpectedVersion,
     DiagramEditDocument Document);
+
+public sealed record DiagramEditPreviewResponse(
+    int Version,
+    DiagramIr Ir,
+    string MermaidDsl);
+
+public sealed record AnalysisHistorySummary(
+    Guid Id,
+    AnalysisState State,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    string? BaseSha,
+    string? TargetSha,
+    bool HasResult,
+    int TotalGroups,
+    int SuccessfulGroups,
+    int TotalViews,
+    int SuccessfulViews);
 
 public sealed record DiagramRevisionRecord(
     Guid Id,

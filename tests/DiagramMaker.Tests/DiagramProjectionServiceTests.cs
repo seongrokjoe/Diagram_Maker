@@ -6,6 +6,64 @@ namespace DiagramMaker.Tests;
 public sealed class DiagramProjectionServiceTests
 {
     [Fact]
+    public void CurrentVersions_DeduplicatesIdentityUsingTargetRangeAndStablePathOrder()
+    {
+        var repositoryId = Guid.NewGuid();
+        var baseSha = new string('a', 40);
+        var targetSha = new string('b', 40);
+        var identity = new SymbolIdentity("method", repositoryId, "cpp", "method", "method");
+        var versions = new[]
+        {
+            new SymbolVersion("base", identity.Id, baseSha, "Base", "void Run()", "Z.cpp", 1, 100, "base"),
+            new SymbolVersion("small", identity.Id, targetSha, "Small", "void Run()", "B.cpp", 5, 8, "small"),
+            new SymbolVersion("wide-z", identity.Id, targetSha, "Wide Z", "void Run()", "Z.cpp", 5, 20, "wide-z"),
+            new SymbolVersion("wide-a", identity.Id, targetSha, "Wide A", "void Run()", "A.cpp", 5, 20, "wide-a")
+        };
+        var graph = new VersionedGraph([identity], versions, [], [], []);
+
+        var current = DiagramProjectionService.CurrentVersions(graph, new GitComparison(baseSha, targetSha, []));
+
+        Assert.Equal("wide-a", Assert.Single(current).Id);
+    }
+
+    [Fact]
+    public void Build_ChangedCallLine_AddsExactModifiedMarkerWithoutMarkingContextEdge()
+    {
+        var repositoryId = Guid.NewGuid();
+        var baseSha = new string('a', 40);
+        var targetSha = new string('b', 40);
+        var identities = new[]
+        {
+            new SymbolIdentity("source", repositoryId, "csharp", "method", "source"),
+            new SymbolIdentity("target", repositoryId, "csharp", "method", "target")
+        };
+        var versions = new[]
+        {
+            new SymbolVersion("source-version", "source", targetSha, "Source.Run", "void Run()", "Service.cs", 1, 10, "source"),
+            new SymbolVersion("target-version", "target", targetSha, "Target.Save", "void Save()", "Service.cs", 12, 15, "target")
+        };
+        var edges = new[]
+        {
+            new GraphEdge("base-edge", "source", "target", "calls", "Save", Confidence.Exact, [], RevisionSha: baseSha, FilePath: "Service.cs", StartLine: 4, EndLine: 4),
+            new GraphEdge("target-edge", "source", "target", "calls", "Save", Confidence.Exact, [], RevisionSha: targetSha, FilePath: "Service.cs", StartLine: 5, EndLine: 5),
+            new GraphEdge("context-edge", "target", "source", "calls", "Run", Confidence.Exact, [], RevisionSha: targetSha, FilePath: "Service.cs", StartLine: 14, EndLine: 14)
+        };
+        var graph = new VersionedGraph(identities, versions, edges, [],
+            [new SymbolChange("change", SymbolChangeKind.ModifyBody, null, "source-version", Confidence.Exact, [])]);
+        var comparison = new GitComparison(baseSha, targetSha,
+            [new ChangedFile("Service.cs", null, ChangeKind.Modified, "old", "new",
+                [new DiffHunk(4, 1, 5, 1, "@@", [new DiffChangedRange(4, 1, 5, 1)])])]);
+
+        var result = new DiagramProjectionService().Build("sample", graph, comparison, ["sequence"], 1, 1, false);
+        var diagram = Assert.Single(result.Artifacts).Ir;
+
+        var changed = Assert.Single(diagram.Edges, edge => edge.Id == "target-edge");
+        Assert.Equal(DiagramChangeKind.Modified, changed.ChangeMarker?.Kind);
+        Assert.Equal(DiagramChangePrecision.Exact, changed.ChangeMarker?.Precision);
+        Assert.Null(Assert.Single(diagram.Edges, edge => edge.Id == "context-edge").ChangeMarker);
+    }
+
+    [Fact]
     public void Build_DefaultImpactScope_ExcludesUnrelatedSymbolsAndIncludesExternalCaller()
     {
         var repositoryId = Guid.NewGuid();

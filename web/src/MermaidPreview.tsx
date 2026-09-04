@@ -1,4 +1,5 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState, type MouseEvent } from "react";
+import type { DiagramArtifact } from "./types";
 
 type MermaidApi = {
   initialize: (configuration: Record<string, unknown>) => void;
@@ -61,14 +62,21 @@ function renderMermaid(mermaid: MermaidApi, id: string, source: string): Promise
 
 type MermaidPreviewProps = {
   source: string;
+  artifact?: DiagramArtifact;
   downloadName?: string;
   editable?: boolean;
   compact?: boolean;
+  interactive?: boolean;
+  selected?: { kind: "node" | "edge"; id: string } | null;
+  onSelect?: (selection: { kind: "node" | "edge"; id: string } | null) => void;
+  onInteractionReady?: (available: boolean) => void;
   onSaveRevision?: (source: string) => Promise<void>;
 };
 
-export function MermaidPreview({ source, downloadName = "diagram", editable = false, compact = false, onSaveRevision }: MermaidPreviewProps) {
+export function MermaidPreview({ source, artifact, downloadName = "diagram", editable = false, compact = false,
+  interactive = false, selected, onSelect, onInteractionReady, onSaveRevision }: MermaidPreviewProps) {
   const id = useId().replaceAll(":", "_");
+  const canvasRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState(source);
   const [svg, setSvg] = useState("");
   const [error, setError] = useState("");
@@ -92,7 +100,9 @@ export function MermaidPreview({ source, downloadName = "diagram", editable = fa
         .then((mermaid) => renderMermaid(mermaid, renderId, renderSource))
         .then((result) => {
           if (!active) return;
-          setSvg(sanitizeSvg(result.svg));
+          const decorated = decorateSvg(sanitizeSvg(result.svg), artifact, selected ?? null);
+          setSvg(decorated.svg);
+          onInteractionReady?.(interactive && decorated.mappingComplete);
           setError("");
         })
         .catch(() => {
@@ -102,7 +112,16 @@ export function MermaidPreview({ source, downloadName = "diagram", editable = fa
         .finally(() => { if (active) setRendering(false); });
     }, editable ? 350 : 0);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [draft, editable, id, source]);
+  }, [artifact, draft, editable, id, interactive, onInteractionReady, selected, source]);
+
+  function selectRenderedElement(event: MouseEvent<HTMLDivElement>) {
+    if (!interactive || !onSelect) return;
+    const target = event.target instanceof Element ? event.target.closest("[data-ir-id]") : null;
+    if (!target || !canvasRef.current?.contains(target)) { onSelect(null); return; }
+    const kind = target.getAttribute("data-ir-kind");
+    const itemId = target.getAttribute("data-ir-id");
+    if ((kind === "node" || kind === "edge") && itemId) onSelect({ kind, id: itemId });
+  }
 
   async function saveRevision() {
     if (!onSaveRevision) return;
@@ -126,9 +145,135 @@ export function MermaidPreview({ source, downloadName = "diagram", editable = fa
     {editable && <label className="mermaid-editor-label">Mermaid DSL 편집<textarea className="mermaid-editor" rows={12} value={draft} spellCheck={false} onChange={(event) => setDraft(event.target.value)} /></label>}
     {rendering && !svg && <div className="empty-state"><p>Mermaid 렌더러를 불러오는 중…</p></div>}
     {error && <div className={`error-panel ${compact ? "compact-error" : ""}`} role="alert">{error}</div>}
-    <div className={`diagram-canvas ${compact ? "compact" : ""}`} aria-label="생성된 다이어그램" dangerouslySetInnerHTML={{ __html: svg }} />
+    <div ref={canvasRef} className={`diagram-canvas ${compact ? "compact" : ""} ${interactive ? "interactive" : ""}`}
+      aria-label="생성된 다이어그램" onClick={selectRenderedElement} dangerouslySetInnerHTML={{ __html: svg }} />
   </>;
 }
+
+function decorateSvg(svg: string, artifact: DiagramArtifact | undefined, selected: MermaidPreviewProps["selected"]): { svg: string; mappingComplete: boolean } {
+  if (!artifact) return { svg, mappingComplete: false };
+  const parser = new DOMParser();
+  const document = parser.parseFromString(svg, "image/svg+xml");
+  const root = document.documentElement;
+  let mappedNodes = 0;
+  let mappedEdges = 0;
+  const used = new Set<Element>();
+
+  for (const node of artifact.ir.nodes) {
+    const candidates = rootsForDataId(root, alias(node.id), "node");
+    if (candidates.length === 0) continue;
+    candidates.forEach((element) => tag(element, "node", node.id, selected, node.changeMarker));
+    candidates.forEach((element) => used.add(element));
+    mappedNodes++;
+  }
+
+  const remainingMessages = [...root.querySelectorAll('[data-et="message"]')];
+  const genericEdges = uniqueRoots(root.querySelectorAll("g.edgePath, .edgePaths > path, path.relation, line.messageLine0, line.messageLine1"), "edge")
+    .filter((element) => !used.has(element));
+  let genericIndex = 0;
+  for (const edge of artifact.ir.edges) {
+    let candidates = rootsForDataId(root, alias(edge.id), "edge");
+    if (candidates.length === 0 && artifact.type === "sequence") {
+      const source = alias(edge.sourceId);
+      const target = alias(edge.targetId);
+      const index = remainingMessages.findIndex((element) =>
+        element.getAttribute("data-from") === source && element.getAttribute("data-to") === target);
+      if (index >= 0) candidates = [remainingMessages.splice(index, 1)[0]];
+    }
+    if (candidates.length === 0 && genericEdges.length === artifact.ir.edges.length) {
+      candidates = [genericEdges[genericIndex++]];
+    }
+    if (candidates.length === 0) continue;
+    candidates.forEach((element) => tag(element, "edge", edge.id, selected, edge.changeMarker));
+    mappedEdges++;
+  }
+
+  if (artifact.ir.nodes.some((node) => node.changeMarker) || artifact.ir.edges.some((edge) => edge.changeMarker)) {
+    appendLegend(document, root);
+  }
+  return {
+    svg: new XMLSerializer().serializeToString(root),
+    mappingComplete: mappedNodes === artifact.ir.nodes.length && mappedEdges === artifact.ir.edges.length,
+  };
+}
+
+function rootsForDataId(root: Element, dataId: string, kind: "node" | "edge"): Element[] {
+  const matches = [...root.querySelectorAll("[data-id]")].filter((element) => element.getAttribute("data-id") === dataId);
+  return uniqueRoots(matches, kind);
+}
+
+function uniqueRoots(elements: Iterable<Element>, kind: "node" | "edge"): Element[] {
+  const selector = kind === "node"
+    ? "g.node, g.actor, g[class*='node'], g[class*='actor']"
+    : "g.edgePath, g.edgeLabel, g[class*='edge'], path, line";
+  return [...new Set([...elements].map((element) => element.closest(selector) ?? element))];
+}
+
+function tag(element: Element, kind: "node" | "edge", id: string, selected: MermaidPreviewProps["selected"], marker?: DiagramArtifact["ir"]["nodes"][number]["changeMarker"]) {
+  element.setAttribute("data-ir-kind", kind);
+  element.setAttribute("data-ir-id", id);
+  element.setAttribute("tabindex", "0");
+  element.setAttribute("role", "button");
+  element.setAttribute("style", `${element.getAttribute("style") ?? ""};cursor:pointer;`);
+  if (marker) applyMarkerStyle(element, marker.kind === "Deleted" || marker.precision === "Symbol");
+  if (selected?.kind === kind && selected.id === id) {
+    element.setAttribute("style", `${element.getAttribute("style") ?? ""};filter:drop-shadow(0 0 5px #2563eb);`);
+  }
+}
+
+function applyMarkerStyle(element: Element, dashed: boolean) {
+  const targets = [element, ...element.querySelectorAll("path, line, polygon, rect, circle, ellipse")];
+  for (const target of targets) {
+    const name = target.tagName.toLowerCase();
+    const style = `${target.getAttribute("style") ?? ""};stroke:#dc2626;stroke-width:3px;${dashed ? "stroke-dasharray:6 4;" : ""}`;
+    target.setAttribute("style", name === "rect" || name === "circle" || name === "ellipse" ? `${style}fill:#fee2e2;` : style);
+    recolorMarker(target);
+  }
+}
+
+function recolorMarker(element: Element) {
+  const value = element.getAttribute("marker-end");
+  const markerId = value?.match(/^url\(["']?#([^"')]+)["']?\)$/)?.[1];
+  if (!markerId) return;
+  const document = element.ownerDocument;
+  const original = [...document.querySelectorAll("marker")].find((marker) => marker.id === markerId);
+  if (!original) return;
+  const cloneId = `${markerId}-changed`;
+  const existing = [...document.querySelectorAll("marker")].find((marker) => marker.id === cloneId);
+  if (!existing) {
+    const cloned = original.cloneNode(true) as SVGMarkerElement;
+    cloned.id = cloneId;
+    cloned.querySelectorAll("path, polygon").forEach((part) => part.setAttribute("style", "fill:#dc2626;stroke:#dc2626"));
+    original.parentElement?.appendChild(cloned);
+  }
+  element.setAttribute("marker-end", `url(#${cloneId})`);
+}
+
+function appendLegend(document: Document, root: Element) {
+  const ns = "http://www.w3.org/2000/svg";
+  const viewBox = (root.getAttribute("viewBox") ?? "0 0 1200 800").split(/\s+/).map(Number);
+  if (viewBox.length !== 4 || viewBox.some((value) => !Number.isFinite(value))) return;
+  const [x, y, width, height] = viewBox;
+  root.setAttribute("viewBox", `${x} ${y} ${width} ${height + 56}`);
+  const group = document.createElementNS(ns, "g");
+  group.setAttribute("data-diagram-legend", "git-changes");
+  group.setAttribute("transform", `translate(${x + 8} ${y + height + 12})`);
+  const background = document.createElementNS(ns, "rect");
+  background.setAttribute("width", String(Math.min(Math.max(width - 16, 420), 720)));
+  background.setAttribute("height", "36");
+  background.setAttribute("rx", "6");
+  background.setAttribute("style", "fill:#fff7f7;stroke:#fecaca");
+  group.appendChild(background);
+  const text = document.createElementNS(ns, "text");
+  text.setAttribute("x", "12");
+  text.setAttribute("y", "23");
+  text.setAttribute("style", "font:600 12px Arial,sans-serif;fill:#991b1b");
+  text.textContent = "+ 추가   ~ 수정   − 삭제(점선)   심볼 수준(점선)";
+  group.appendChild(text);
+  root.appendChild(group);
+}
+
+function alias(id: string) { return `n_${id.replace(/[^a-zA-Z0-9_]/g, "_")}`; }
 
 function downloadSvg(svg: string, filename: string) {
   const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));

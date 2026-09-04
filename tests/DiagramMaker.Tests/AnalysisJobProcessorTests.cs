@@ -8,6 +8,44 @@ namespace DiagramMaker.Tests;
 public sealed class AnalysisJobProcessorTests
 {
     [Fact]
+    public async Task ProcessAsync_UnexpectedViewFailure_IsolatedAsPartialResult()
+    {
+        await using var store = new InMemoryAppStore();
+        var repositoryId = Guid.NewGuid();
+        var planId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        var baseSha = new string('a', 40);
+        var targetSha = new string('b', 40);
+        await store.SaveRepositoryAsync(
+            new RepositoryDefinition(repositoryId, "Sample", Path.GetTempPath(), "main", ["Reviewer"], now),
+            CancellationToken.None);
+        var graph = CreateGraph(repositoryId, targetSha);
+        var comparison = new GitComparison(baseSha, targetSha, []);
+        var views = new[]
+        {
+            new DiagramViewSelection("valid", "flowchart", "flow-vertical-overview"),
+            new DiagramViewSelection("broken", "historical-unsupported", "missing-historical-preset")
+        };
+        var group = new AnalysisGroupSelection("group", "변경 그룹", ["change"], "flowchart", "flow-vertical-overview", Views: views);
+        await store.SaveAnalysisPlanAsync(new AnalysisPlan(
+            planId, "reviewer", new AnalysisPlanRequest(repositoryId, targetSha, baseSha, false), AnalysisPlanState.Ready,
+            baseSha, targetSha, 100, "Ready", comparison, graph, [], [], [group], [], null, null, 1,
+            now, now, now.AddDays(1), null), CancellationToken.None);
+        var job = new AnalysisJob(Guid.NewGuid(), new AnalyzeRequest(repositoryId, baseSha, targetSha,
+            IncludeLlmSummary: false, AnalysisPlanId: planId, Groups: [group]), AnalysisState.Queued,
+            null, null, 0, "Queued", null, null, null, now, now, null);
+        await store.SaveAnalysisAsync(job, CancellationToken.None);
+
+        await CreateProcessor(store).ProcessAsync(job, CancellationToken.None);
+
+        var completed = (await store.GetAnalysisAsync(job.Id, CancellationToken.None))!;
+        Assert.Equal(AnalysisState.Partial, completed.State);
+        Assert.Single(completed.Result!.Diagrams);
+        var failedView = Assert.Single(completed.Result.DiagramGroups!.Single().Views!, view => view.ViewId == "broken");
+        Assert.Equal("DIAGRAM_RENDER_FAILED", failedView.ErrorCode);
+    }
+
+    [Fact]
     public async Task ProcessAsync_MapsStructuredGitFailureToActionableAnalysisError()
     {
         await using var store = new InMemoryAppStore();
@@ -87,8 +125,23 @@ public sealed class AnalysisJobProcessorTests
         var processor = CreateProcessor(store);
 
         await processor.ProcessAsync(first, CancellationToken.None);
-        var firstResult = (await store.GetAnalysisAsync(first.Id, CancellationToken.None))!.Result!;
+        var storedFirst = (await store.GetAnalysisAsync(first.Id, CancellationToken.None))!;
+        var firstResult = storedFirst.Result!;
         var firstViews = firstResult.DiagramGroups!.Single().Views!;
+        var duplicateFailure = firstViews[0] with
+        {
+            Diagram = null,
+            State = "Failed",
+            ErrorCode = "OLD_DUPLICATE",
+            ErrorMessage = "historical duplicate"
+        };
+        await store.SaveAnalysisAsync(storedFirst with
+        {
+            Result = firstResult with
+            {
+                DiagramGroups = [firstResult.DiagramGroups!.Single() with { Views = [.. firstViews, duplicateFailure] }]
+            }
+        }, CancellationToken.None);
         var second = new AnalysisJob(
             Guid.NewGuid(), first.Request with { SourceAnalysisId = first.Id, RequestedViewIds = ["class-view"] },
             AnalysisState.Queued, null, null, 0, "Queued", null, null, null, now, now, null);

@@ -44,6 +44,13 @@ public sealed class InMemoryAppStore : IAppStore
         return Task.FromResult(job);
     }
 
+    public Task<IReadOnlyList<AnalysisJob>> ListAnalysesByPlanAsync(Guid planId, int limit, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<AnalysisJob>>(_analyses.Values
+            .Where(job => job.Request.AnalysisPlanId == planId)
+            .OrderByDescending(static job => job.CreatedAt)
+            .Take(limit)
+            .ToArray());
+
     public async Task<AnalysisJob?> TryLeaseAnalysisAsync(TimeSpan leaseDuration, CancellationToken cancellationToken)
     {
         await _leaseLock.WaitAsync(cancellationToken);
