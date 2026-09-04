@@ -77,7 +77,7 @@ Windows x64 오프라인 패키지 생성:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1
 ```
 
-결과는 `artifacts/release/DiagramMaker-0.1.0-offline.14-win-x64.zip`과 SHA-256 파일입니다. 회사 정책상 GitHub Release 다운로드가 막힌 환경을 위해 이 두 파일은 소스 ZIP에도 포함되도록 관리합니다.
+결과는 `artifacts/release/DiagramMaker-0.1.0-offline.15-win-x64.zip`과 SHA-256 파일입니다. 회사 정책상 GitHub Release 다운로드가 막힌 환경을 위해 이 두 파일은 소스 ZIP에도 포함되도록 관리합니다.
 
 ## 현재 제한
 
