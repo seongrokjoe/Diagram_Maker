@@ -35,6 +35,9 @@ public static class DiagramViewSelectionService
     {
         Id = view.Id.Trim(),
         DiagramType = view.DiagramType.Trim().ToLowerInvariant(),
-        PresetId = view.PresetId.Trim()
+        PresetId = view.PresetId.Trim(),
+        RefinementInstruction = string.IsNullOrWhiteSpace(view.RefinementInstruction)
+            ? null
+            : view.RefinementInstruction.Trim()
     };
 }

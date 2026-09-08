@@ -1,6 +1,9 @@
 param(
     [switch]$NoBrowser,
-    [ValidateRange(1024, 65535)][int]$Port = 5080
+    [ValidateRange(1024, 65535)][int]$Port = 5080,
+    [switch]$CodexTest,
+    [string]$CodexExecutable,
+    [string]$CodexModel
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,12 +18,21 @@ $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $apiRoot = Join-Path $projectRoot 'src\DiagramMaker.Api'
 $webRoot = Join-Path $projectRoot 'web'
 $dataRoot = Join-Path $projectRoot 'data'
+if ($CodexTest) {
+    if (-not $PSBoundParameters.ContainsKey('Port')) { $Port = 5081 }
+    $dataRoot = Join-Path $projectRoot 'artifacts\codex-test'
+}
 $logRoot = Join-Path $dataRoot 'logs'
 $statePath = Join-Path $dataRoot 'local-processes.json'
 $apiProject = Join-Path $apiRoot 'DiagramMaker.Api.csproj'
 $apiDll = Join-Path $apiRoot 'bin\Release\net9.0\DiagramMaker.Api.dll'
 $viteScript = Join-Path $webRoot 'node_modules\vite\bin\vite.js'
 $webIndex = Join-Path $webRoot 'dist\index.html'
+if ($CodexTest) {
+    $apiDll = Join-Path $dataRoot 'api\DiagramMaker.Api.dll'
+    $webIndex = Join-Path $dataRoot 'web\index.html'
+}
+$codexEnvironment = @{ CodexTest__Enabled = 'false' }
 
 New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
 
@@ -35,9 +47,41 @@ if (Test-Path -LiteralPath $statePath) {
 
 $dotnetPath = (Get-Command dotnet -ErrorAction Stop).Source
 $nodePath = (Get-Command node -ErrorAction Stop).Source
+if ($CodexTest) {
+    $codexCommand = if ($CodexExecutable) { $CodexExecutable } else { (Get-Command codex -ErrorAction Stop).Source }
+    $nativeCodex = & $nodePath (Join-Path $projectRoot 'tools\codex-test\resolve-codex.mjs') $codexCommand
+    Assert-LastExitCode 'resolve native Codex CLI'
+    $loginInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $loginInfo.FileName = $nativeCodex.Trim()
+    $loginInfo.Arguments = 'login status'
+    $loginInfo.WorkingDirectory = [System.IO.Path]::GetTempPath()
+    $loginInfo.UseShellExecute = $false
+    $loginInfo.CreateNoWindow = $true
+    $loginInfo.RedirectStandardOutput = $true
+    $loginInfo.RedirectStandardError = $true
+    $loginProcess = [System.Diagnostics.Process]::Start($loginInfo)
+    $loginOut = $loginProcess.StandardOutput.ReadToEndAsync()
+    $loginError = $loginProcess.StandardError.ReadToEndAsync()
+    if (-not $loginProcess.WaitForExit(15000)) { $loginProcess.Kill(); throw 'Codex login status timed out.' }
+    if ($loginProcess.ExitCode -ne 0 -or ($loginOut.Result + $loginError.Result) -notmatch 'ChatGPT') {
+        throw 'Sign in using codex login in a terminal, then run start-codex-test.cmd again. This sample mode does not use API-key authentication.'
+    }
+    $loginProcess.Dispose()
+    $codexEnvironment = @{
+        CodexTest__Enabled = 'true'
+        CodexTest__RuntimeRoot = $dataRoot
+        CodexTest__AssetsRoot = (Join-Path $projectRoot 'tools\codex-test')
+        CodexTest__ExecutablePath = $nativeCodex.Trim()
+        CodexTest__Model = $CodexModel
+        DIAGRAMMAKER_LLM_POLICY_PATH = ''
+        DOTNET_ENVIRONMENT = 'Development'
+    }
+}
 $env:ASPNETCORE_ENVIRONMENT = 'Development'
 # Some managed shells expose both Path and PATH; Windows Start-Process treats them as duplicate keys.
+$commandSearchPath = $env:Path
 [System.Environment]::SetEnvironmentVariable('PATH', $null, [System.EnvironmentVariableTarget]::Process)
+[System.Environment]::SetEnvironmentVariable('Path', $commandSearchPath, [System.EnvironmentVariableTarget]::Process)
 
 if (-not (Test-Path -LiteralPath $viteScript)) {
     npm.cmd ci --prefix $webRoot
@@ -57,7 +101,8 @@ if (-not $webNeedsBuild) {
         Select-Object -First 1
 }
 if ($webNeedsBuild) {
-    npm.cmd run build --prefix $webRoot
+    if ($CodexTest) { npm.cmd run build --prefix $webRoot -- --outDir (Join-Path $dataRoot 'web') }
+    else { npm.cmd run build --prefix $webRoot }
     Assert-LastExitCode 'web build'
 }
 
@@ -74,8 +119,14 @@ if ($apiNeedsBuild) {
         dotnet restore $apiProject --ignore-failed-sources
         Assert-LastExitCode 'API restore'
     }
-    dotnet build $apiProject -c Release --no-restore
+    if ($CodexTest) { dotnet build $apiProject -c Release --no-restore --output (Join-Path $dataRoot 'api') }
+    else { dotnet build $apiProject -c Release --no-restore }
     Assert-LastExitCode 'API build'
+}
+
+if ($CodexTest) {
+    & $nodePath (Join-Path $projectRoot 'tools\codex-test\prepare-samples.mjs')
+    Assert-LastExitCode 'prepare isolated synthetic repositories'
 }
 
 $apiOut = Join-Path $logRoot 'api.out.log'
@@ -95,10 +146,22 @@ finally {
     $portProbe.Stop()
 }
 
-$apiProcess = Start-Process -FilePath $dotnetPath `
-    -ArgumentList @('bin\Release\net9.0\DiagramMaker.Api.dll', '--environment', 'Development', '--urls', "http://127.0.0.1:$Port") `
-    -WorkingDirectory $apiRoot -WindowStyle Hidden -PassThru `
-    -RedirectStandardOutput $apiOut -RedirectStandardError $apiError
+$previousEnvironment = @{}
+try {
+    foreach ($name in $codexEnvironment.Keys) {
+        $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        [Environment]::SetEnvironmentVariable($name, $codexEnvironment[$name], 'Process')
+    }
+    $apiProcess = Start-Process -FilePath $dotnetPath `
+        -ArgumentList @(('"' + $apiDll + '"'), '--environment', 'Development', '--urls', "http://127.0.0.1:$Port") `
+        -WorkingDirectory $apiRoot -WindowStyle Hidden -PassThru `
+        -RedirectStandardOutput $apiOut -RedirectStandardError $apiError
+}
+finally {
+    foreach ($name in $previousEnvironment.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], 'Process')
+    }
+}
 
 [pscustomobject]@{
     apiPid = $apiProcess.Id
@@ -130,10 +193,14 @@ if (-not $ready) {
 }
 
 Write-Host 'Diagram Maker is running.' -ForegroundColor Green
-Write-Host "Web/API: http://localhost:$Port"
+$webAddress = if ($CodexTest) { "http://127.0.0.1:$Port" } else { "http://localhost:$Port" }
+Write-Host "Web/API: $webAddress"
 Write-Host "Logs: $logRoot"
-Write-Host 'Stop: powershell -ExecutionPolicy Bypass -File .\scripts\stop-local.ps1'
+if ($CodexTest) {
+    Write-Host 'CODEX SYNTHETIC TEST ONLY. This does not validate the corporate LLM.' -ForegroundColor Yellow
+    Write-Host 'Stop: scripts\stop-codex-test.cmd'
+} else { Write-Host 'Stop: powershell -ExecutionPolicy Bypass -File .\scripts\stop-local.ps1' }
 
 if (-not $NoBrowser) {
-    Start-Process "http://localhost:$Port"
+    Start-Process $webAddress
 }

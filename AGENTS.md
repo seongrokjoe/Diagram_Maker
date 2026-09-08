@@ -33,3 +33,7 @@ Recent commits use concise imperative summaries (for example, `Integrate interna
 ## Security & Configuration Tips
 
 Never commit secrets or real LLM endpoints/credentials. Start from `.env.example` or `packaging/windows/config/llm-policy.example.json`. Preserve loopback-only local defaults, origin validation, repository ACL checks, secret masking, and the policies documented in `SECURITY.md`.
+
+## Code Block Feature Continuation
+
+Before continuing the code block diagram feature, read `CODE_BLOCK_DIAGRAM_IMPLEMENTATION_PLAN.txt` and `CODE_BLOCK_DIAGRAM_PROGRESS.md` in the repository root. Update the progress record after each implementation stage, meaningful verification result, or interruption, including the next concrete action and any unresolved failures. Preserve the pre-feature checkpoint and existing user changes.

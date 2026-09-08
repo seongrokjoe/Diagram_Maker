@@ -106,6 +106,8 @@ public sealed record RegisterRepositoryRequest(
 
 public sealed record InspectRepositoryRequest(string LocalPath);
 
+public sealed record SampleGenerationMetadata(string Provider, string ScenarioId, string SampleVersion, string RefinementId);
+
 public sealed record GitRepositoryInspection(
     string NormalizedPath,
     bool IsBare,
@@ -127,7 +129,8 @@ public sealed record AnalyzeRequest(
     Guid? AnalysisPlanId = null,
     IReadOnlyList<AnalysisGroupSelection>? Groups = null,
     Guid? SourceAnalysisId = null,
-    IReadOnlyList<string>? RequestedViewIds = null);
+    IReadOnlyList<string>? RequestedViewIds = null,
+    SampleGenerationMetadata? TestMetadata = null);
 
 public sealed record AnalysisJob(
     Guid Id,
@@ -199,7 +202,9 @@ public sealed record CppCallFact(
     int Order,
     IReadOnlyList<string>? Arguments = null,
     IReadOnlyList<ControlScope>? ControlPath = null,
-    int? EndLine = null);
+    int? EndLine = null,
+    int? StartOffset = null,
+    int? EndOffset = null);
 
 public sealed record ControlScope(
     string Id,
@@ -239,7 +244,10 @@ public sealed record CppSymbolFact(
     IReadOnlyList<CppCallFact> Calls,
     IReadOnlyList<string> Bases,
     IReadOnlyList<CppControlNodeFact>? ControlNodes = null,
-    IReadOnlyList<CppControlEdgeFact>? ControlEdges = null);
+    IReadOnlyList<CppControlEdgeFact>? ControlEdges = null,
+    IReadOnlyList<ClassMemberFact>? Members = null,
+    string? OwnerSemanticKey = null,
+    string? OwnerKind = null);
 
 public sealed record CppEdgeFact(
     string SourceSemanticKey,
@@ -305,7 +313,20 @@ public sealed record SymbolVersion(
     string FilePath,
     int StartLine,
     int EndLine,
-    string ContentFingerprint);
+    string ContentFingerprint,
+    IReadOnlyList<ClassMemberFact>? Members = null,
+    string? OwnerIdentityId = null);
+
+public sealed record ClassMemberFact(
+    string Name,
+    string Kind,
+    string Accessibility,
+    string Signature,
+    string? DeclaredType,
+    bool IsStatic,
+    int StartLine,
+    int EndLine,
+    IReadOnlyList<string>? ReferencedTypes = null);
 
 public sealed record EvidenceRef(
     string Id,
@@ -315,7 +336,9 @@ public sealed record EvidenceRef(
     int StartLine,
     int EndLine,
     string Analyzer,
-    Confidence Confidence);
+    Confidence Confidence,
+    int? StartOffset = null,
+    int? EndOffset = null);
 
 public sealed record GraphEdge(
     string Id,
@@ -332,7 +355,8 @@ public sealed record GraphEdge(
     string? RevisionSha = null,
     string? FilePath = null,
     int? StartLine = null,
-    int? EndLine = null);
+    int? EndLine = null,
+    CodeContext? Context = null);
 
 public sealed record ControlFlowNode(
     string Id,
@@ -343,7 +367,14 @@ public sealed record ControlFlowNode(
     IReadOnlyList<string> EvidenceIds,
     string? CallTargetIdentityId = null,
     bool IsIndirect = false,
-    string? ViaApi = null);
+    string? ViaApi = null,
+    CodeContext? Context = null);
+
+public sealed record CodeContext(string Statement, string? Target, string? Receiver,
+    IReadOnlyList<string> Arguments, string? AssignedTo, string? CreatedType,
+    IReadOnlyList<string> Initializers, IReadOnlyList<ControlScope> ControlPath,
+    SourceSpan Span, string Purpose, IReadOnlyList<CodeDefinition>? Definitions = null);
+public sealed record CodeDefinition(string Name, string Statement, SourceSpan Span);
 
 public sealed record ControlFlowEdge(
     string SourceId,
@@ -384,7 +415,12 @@ public sealed record DiagramNode(
     IReadOnlyList<string> EvidenceIds,
     string? Shape = null,
     IReadOnlyList<string>? Details = null,
-    DiagramChangeMarker? ChangeMarker = null);
+    DiagramChangeMarker? ChangeMarker = null,
+    IReadOnlyList<string>? SourceFactIds = null,
+    string? DetailPageId = null,
+    string? AbstractionKind = null,
+    CodeContext? Context = null,
+    string? QualifiedName = null);
 
 public sealed record DiagramEdge(
     string Id,
@@ -399,7 +435,9 @@ public sealed record DiagramEdge(
     bool IsIndirect = false,
     string? ViaApi = null,
     IReadOnlyList<ControlScope>? ControlPath = null,
-    DiagramChangeMarker? ChangeMarker = null);
+    DiagramChangeMarker? ChangeMarker = null,
+    IReadOnlyList<string>? SourceFactIds = null,
+    CodeContext? Context = null);
 
 public sealed record DiagramChangeMarker(
     DiagramChangeKind Kind,
@@ -416,7 +454,40 @@ public sealed record DiagramIr(
     IReadOnlyList<DiagramEdge> Edges,
     IReadOnlyList<string> Notes,
     IReadOnlyList<string> Provenance,
-    string? Direction = null);
+    string? Direction = null,
+    IReadOnlyList<SequenceBlock>? SequenceBlocks = null);
+
+public sealed record SequenceBlock(string Id, string Kind, string Label,
+    IReadOnlyList<SequenceBlock> Children, string? EdgeId = null,
+    IReadOnlyList<string>? ParticipantIds = null, string? DetailPageId = null);
+
+public sealed record DiagramPage(string Id, string Title, DiagramArtifact Diagram);
+public sealed record DiagramViewDocument(string OverviewPageId, IReadOnlyList<DiagramPage> Pages,
+    IReadOnlyList<ChangeCoverage> Coverage);
+public sealed record ChangeCoverage(string ChangeId, string State, IReadOnlyList<string> PageIds, string? Reason = null,
+    IReadOnlyList<string>? MissingFactIds = null);
+public sealed record SourceSpan(string RevisionSha, string BlobOid, string FilePath, int StartLine, int EndLine,
+    int? StartOffset = null, int? EndOffset = null);
+public sealed record SourceFact(string Id, string Kind, string Label, IReadOnlyList<string> ChangeIds,
+    IReadOnlyList<string> EvidenceIds, SourceSpan? Span, string? Content = null,
+    CodeContext? Context = null);
+public sealed record EvidenceBundle(string Hash, string BaseSha, string TargetSha,
+    IReadOnlyList<string> ChangeIds, IReadOnlyList<SourceFact> Facts, IReadOnlyList<string> Warnings);
+public sealed record ChangeUnderstanding(string Summary, IReadOnlyList<ChangeExplanation> Changes);
+public sealed record ChangeExplanation(string ChangeId, string Summary, IReadOnlyList<string> FactIds);
+public sealed record SemanticElement(string Id, string Summary, IReadOnlyList<string> NodeIds);
+public sealed record SemanticMessage(string EdgeId, string Summary);
+public sealed record DiagramPlan(string Summary, IReadOnlyList<SemanticElement> Elements,
+    IReadOnlyList<SemanticMessage> Messages, IReadOnlyList<string> InstructionResults,
+    IReadOnlyList<PageChangeExplanation>? Changes = null);
+public sealed record PageChangeExplanation(string ChangeId, string Summary,
+    IReadOnlyList<string> FactIds, IReadOnlyList<string> NodeIds, IReadOnlyList<string> EdgeIds);
+public sealed record DiagramExplanation(string Summary, IReadOnlyList<PageChangeExplanation> Changes,
+    IReadOnlyList<string> FactIds, IReadOnlyList<string> EvidenceIds, string Status,
+    IReadOnlyList<string> Warnings, string Basis = "GeneratedSource");
+public sealed record DiagramPlanReview(bool Accepted, IReadOnlyList<string> Issues);
+public sealed record SemanticGeneration(DiagramIr Diagram, string Status, IReadOnlyList<string> Warnings,
+    IReadOnlyList<string> InstructionResults, int Attempts, DiagramExplanation? Explanation = null);
 
 public sealed record DiagramArtifact(
     Guid Id,
@@ -424,7 +495,8 @@ public sealed record DiagramArtifact(
     int Version,
     DiagramIr Ir,
     string MermaidDsl,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    DiagramExplanation? Explanation = null);
 
 public sealed record RiskItem(
     string Severity,
@@ -457,7 +529,9 @@ public sealed record AnalysisDiagramGroupResult(
     DiagramArtifact? Diagram,
     ReviewNarrative Narrative,
     IReadOnlyList<string> Warnings,
-    IReadOnlyList<AnalysisDiagramViewResult>? Views = null);
+    IReadOnlyList<AnalysisDiagramViewResult>? Views = null,
+    ChangeUnderstanding? Understanding = null,
+    string? BundleHash = null);
 
 public sealed record AnalysisDiagramViewResult(
     string ViewId,
@@ -468,7 +542,27 @@ public sealed record AnalysisDiagramViewResult(
     string? ErrorCode = null,
     string? ErrorMessage = null,
     bool Reused = false,
-    DiagramArtifact? ComparisonBaseDiagram = null);
+    DiagramGenerationMetadata? GenerationMetadata = null,
+    DiagramViewDocument? Document = null);
+
+public sealed record DiagramSourceRange(
+    string FilePath,
+    int StartLine,
+    int EndLine);
+
+public sealed record DiagramGenerationMetadata(
+    IReadOnlyList<string> ChangeIds,
+    IReadOnlyList<DiagramSourceRange> Sources,
+    IReadOnlyList<string> EvidenceIds,
+    string LlmStatus,
+    string? RefinementInstruction,
+    IReadOnlyList<string> Warnings,
+    string? BundleHash = null,
+    string? AnalyzerVersion = null,
+    string? PromptVersion = null,
+    DiagramStyleOverrides? EffectiveOptions = null,
+    IReadOnlyList<string>? InstructionResults = null,
+    int Attempts = 0);
 
 public sealed record DiagramStyleOverrides(
     string? Direction = null,
@@ -483,7 +577,7 @@ public sealed record DiagramViewSelection(
     string PresetId,
     DiagramStyleOverrides? Overrides = null,
     bool FocusOnChanges = false,
-    bool CompareRevisions = false);
+    string? RefinementInstruction = null);
 
 public sealed record AnalysisGroupSelection(
     string Id,
@@ -595,7 +689,8 @@ public sealed record NaturalDiagramRequest(
     bool ForceRegenerate = false,
     string PresetId = "balanced",
     DiagramStyleOverrides? Style = null,
-    IReadOnlyList<DiagramViewSelection>? Views = null);
+    IReadOnlyList<DiagramViewSelection>? Views = null,
+    SampleGenerationMetadata? TestMetadata = null);
 
 public sealed record ReviseNaturalDiagramViewsRequest(
     IReadOnlyList<DiagramViewSelection> Views,

@@ -62,6 +62,13 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
         }
 
         AppendStyles(builder, diagram, aliases);
+        if (diagram.Type.Equals("code-relation", StringComparison.OrdinalIgnoreCase))
+        {
+            builder.AppendLine("    classDef codeRelation font-weight:400");
+            if (diagram.Nodes.Count > 0)
+                builder.Append("    class ").Append(string.Join(',', diagram.Nodes.Select(node => aliases[node.Id])))
+                    .AppendLine(" codeRelation");
+        }
         if (diagram.Nodes.Any(static node => node.Shape is not null))
             builder.AppendLine("    linkStyle default stroke:#365f91,stroke-width:2px");
         foreach (var (edge, index) in diagram.Edges.Select(static (edge, index) => (edge, index)).Where(static item => item.edge.ChangeMarker is not null))
@@ -98,29 +105,55 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
             builder.Append("    participant ").Append(aliases[node.Id]).Append(" as ").Append(EscapeSequence(DisplayLabel(node.Label, node.ChangeMarker))).Append('\n');
         }
 
-        foreach (var edge in diagram.Edges.OrderBy(static edge => edge.SequenceIndex ?? int.MaxValue))
-        {
-            var scopes = edge.ControlPath ?? [];
-            foreach (var scope in scopes)
-            {
-                if (scope.Kind.Equals("loop", StringComparison.OrdinalIgnoreCase))
-                    builder.Append("    loop ").Append(EscapeSequence(scope.Label)).Append('\n');
-                else
-                {
-                    builder.Append("    alt ").Append(EscapeSequence(scope.Label)).Append('\n');
-                    if (scope.Branch.Equals("else", StringComparison.OrdinalIgnoreCase)) builder.AppendLine("    else 그 외");
-                }
-            }
-            var advanced = edge.ControlPath is not null;
-            builder.Append("    ").Append(aliases[edge.SourceId]).Append(edge.IsIndirect ? "-->>+" : advanced ? "->>+" : "->>")
-                .Append(aliases[edge.TargetId]).Append(": ").Append(EscapeSequence(DisplayLabel(edge.IsIndirect ? $"간접 API: {edge.ViaApi} · {edge.Label}" : edge.Label, edge.ChangeMarker))).Append('\n');
-            if (advanced)
-                builder.Append("    ").Append(aliases[edge.TargetId]).Append("-->>-")
-                    .Append(aliases[edge.SourceId]).AppendLine(": return");
-            for (var index = scopes.Count - 1; index >= 0; index--) builder.AppendLine("    end");
-        }
-
+        var edgeMap = diagram.Edges.ToDictionary(edge => edge.Id);
+        var blocks = diagram.SequenceBlocks ?? SequenceStructure.FromEdges(diagram.Edges.OrderBy(edge => edge.SequenceIndex ?? int.MaxValue).ToArray());
+        foreach (var block in blocks) Append(block);
         return builder.ToString();
+
+        void Append(SequenceBlock block)
+        {
+            if (block.Kind == "message")
+            {
+                if (block.EdgeId is null || !edgeMap.TryGetValue(block.EdgeId, out var edge))
+                    throw new DiagramValidationException("Sequence block references an unknown event.");
+                builder.Append("    ").Append(aliases[edge.SourceId]).Append(edge.IsIndirect ? "-->>" : "->>")
+                    .Append(aliases[edge.TargetId]).Append(": ").Append(EscapeSequence(edge.IsIndirect ? $"간접 API: {edge.ViaApi} · {edge.Label}" : edge.Label)).Append('\n');
+                return;
+            }
+            if (block.Kind is "note" or "scenario" or "unordered")
+            {
+                var participants = block.ParticipantIds?.Where(aliases.ContainsKey).ToArray() ?? diagram.Nodes.Take(2).Select(node => node.Id).ToArray();
+                if (participants.Length > 0)
+                    builder.Append("    Note over ").Append(aliases[participants[0]])
+                        .Append(participants.Length > 1 ? "," + aliases[participants[^1]] : "")
+                        .Append(": ").Append(EscapeSequence(block.Label)).Append('\n');
+            }
+            if (block.Kind == "alt")
+            {
+                foreach (var (branch, index) in block.Children.Select((item, index) => (item, index)))
+                {
+                    var branchLabel = branch.Label switch { "then" => "참일 때", "else" => "거짓일 때", _ => branch.Label };
+                    builder.Append(index == 0 ? "    alt " : "    else ")
+                        .Append(EscapeSequence(index == 0 ? $"{block.Label}: {branchLabel}" : branchLabel)).Append('\n');
+                    foreach (var child in branch.Children) Append(child);
+                }
+                if (block.Children.Count > 0) builder.AppendLine("    end");
+                return;
+            }
+            if (block.Kind == "unordered")
+            {
+                foreach (var branch in block.Children)
+                {
+                    if (diagram.Nodes.Count > 0) builder.Append("    Note over ").Append(aliases[diagram.Nodes[0].Id])
+                        .Append(": ").Append(EscapeSequence(branch.Label)).Append('\n');
+                    foreach (var child in branch.Children) Append(child);
+                }
+                return;
+            }
+            if (block.Kind == "loop") builder.Append("    loop ").Append(EscapeSequence(block.Label)).Append('\n');
+            foreach (var child in block.Children) Append(child);
+            if (block.Kind == "loop") builder.AppendLine("    end");
+        }
     }
 
     private static string CompileClass(DiagramIr diagram)
@@ -131,12 +164,23 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
         foreach (var node in diagram.Nodes)
         {
             builder.Append("    class ").Append(aliases[node.Id]).Append("[\"").Append(EscapeClassNodeLabel(node.Label)).Append("\"]\n");
+            foreach (var member in node.Details ?? [])
+            {
+                builder.Append("    ").Append(aliases[node.Id]).Append(" : ")
+                    .Append(EscapeClassMember(member)).Append('\n');
+            }
         }
 
         foreach (var edge in diagram.Edges)
         {
             if (edge.Type.Equals("inherits", StringComparison.OrdinalIgnoreCase))
                 builder.Append("    ").Append(aliases[edge.TargetId]).Append(" <|-- ").Append(aliases[edge.SourceId]);
+            else if (edge.Type.Equals("association", StringComparison.OrdinalIgnoreCase))
+                builder.Append("    ").Append(aliases[edge.SourceId]).Append(" --> ").Append(aliases[edge.TargetId]);
+            else if (edge.Type.Equals("implements", StringComparison.OrdinalIgnoreCase))
+                builder.Append("    ").Append(aliases[edge.TargetId]).Append(" <|.. ").Append(aliases[edge.SourceId]);
+            else if (edge.Type.Equals("depends", StringComparison.OrdinalIgnoreCase))
+                builder.Append("    ").Append(aliases[edge.SourceId]).Append(" ..> ").Append(aliases[edge.TargetId]);
             else
                 builder.Append("    ").Append(aliases[edge.SourceId]).Append(edge.IsIndirect ? " ..> " : " --> ").Append(aliases[edge.TargetId]);
             if (!string.IsNullOrWhiteSpace(edge.Label))
@@ -223,6 +267,12 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
         .Replace(":", "∶", StringComparison.Ordinal)
         .Replace(";", "；", StringComparison.Ordinal);
 
+    private static string EscapeClassMember(string value) => EscapeClassNodeLabel(value)
+        .Replace(":", "∶", StringComparison.Ordinal)
+        .Replace(";", string.Empty, StringComparison.Ordinal)
+        .Replace("{", "‹", StringComparison.Ordinal)
+        .Replace("}", "›", StringComparison.Ordinal);
+
     private static (string Stroke, string Color) MarkerColors(DiagramChangeKind kind) => kind switch
     {
         DiagramChangeKind.Added => ("#2563eb", "#1e3a8a"),
@@ -232,6 +282,9 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
 
     private static string EscapeSequence(string value) => value
         .Replace("%%", string.Empty, StringComparison.Ordinal)
+        .Replace(";", "；", StringComparison.Ordinal)
+        .Replace("<", "‹", StringComparison.Ordinal)
+        .Replace(">", "›", StringComparison.Ordinal)
         .Replace("\"", "'", StringComparison.Ordinal)
         .Replace("\r", " ", StringComparison.Ordinal)
         .Replace("\n", " ", StringComparison.Ordinal)

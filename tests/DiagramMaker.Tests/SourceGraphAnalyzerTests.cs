@@ -76,6 +76,42 @@ public sealed class SourceGraphAnalyzerTests
         Assert.Contains(flow.Nodes, node => node.IsIndirect && node.CallTargetIdentityId == edge.ToIdentityId);
     }
 
+    [Fact]
+    public void Analyze_CSharpExtractsClassMembersAssociationsAndSwitchBranches()
+    {
+        const string source = """
+            namespace Sample;
+            public class Store { public void Save() { } }
+            public class Service
+            {
+                private Store _store;
+                public int Run(int kind)
+                {
+                    switch (kind)
+                    {
+                        case 1: _store.Save(); break;
+                        default: return 0;
+                    }
+                    return 1;
+                }
+            }
+            """;
+        var targetSha = new string('b', 40);
+        var comparison = new GitComparison(new string('a', 40), targetSha,
+            [new ChangedFile("Service.cs", null, ChangeKind.Added, null, "new", [], null, source)]);
+
+        var result = new SourceGraphAnalyzer().Analyze(Guid.NewGuid(), comparison);
+
+        var service = result.Versions.Single(version => version.QualifiedName == "Sample.Service");
+        Assert.Contains(service.Members!, member => member.Name == "_store" && member.Accessibility == "private" && member.DeclaredType == "Store");
+        Assert.Contains(service.Members!, member => member.Name == "Run" && member.Accessibility == "public" && member.Kind == "method");
+        Assert.Contains(result.Edges, edge => edge.FromIdentityId == service.IdentityId && edge.Type == "association");
+        var runIdentity = result.Versions.Single(version => version.QualifiedName == "Sample.Service.Run").IdentityId;
+        var flow = result.ControlFlows!.Single(item => item.IdentityId == runIdentity && item.RevisionSha == targetSha);
+        Assert.Contains(flow.Edges, edge => edge.Label == "case 1");
+        Assert.Contains(flow.Edges, edge => edge.Label == "default");
+    }
+
     private static CppSymbolFact CppFact(string semanticKey, string name, string fingerprint) => new(
         semanticKey, name, name, "function", 0, $"void {name}()", "Service.cpp", null,
         1, 2, fingerprint, [], []);

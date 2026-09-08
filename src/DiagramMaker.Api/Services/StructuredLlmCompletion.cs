@@ -4,7 +4,7 @@ namespace DiagramMaker.Services;
 
 public sealed record StructuredCompletionResult<T>(T Value, VllmCompletionResult Completion, bool RepairUsed);
 
-public sealed class StructuredLlmCompletion(VllmClient client)
+public sealed class StructuredLlmCompletion(ILlmCompletionTransport client)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {

@@ -119,6 +119,39 @@ public sealed class MermaidCompilerTests
     }
 
     [Fact]
+    public void Compile_Class_EmitsVisibilityMembersAndTypedRelations()
+    {
+        var diagram = new DiagramIr(
+            "class", "Classes",
+            [
+                new DiagramNode("service", "Service", "class", null, "modified", Confidence.Exact, [], Details: ["- Store _store", "+ void Save()"]),
+                new DiagramNode("store", "Store", "class", null, "unchanged", Confidence.Exact, [])
+            ],
+            [new DiagramEdge("e", "service", "store", "association", "보유: _store", "unchanged", Confidence.Exact, [])],
+            [], []);
+
+        var result = _compiler.Compile(diagram);
+
+        Assert.Contains("n_service : - Store _store", result, StringComparison.Ordinal);
+        Assert.Contains("n_service : + void Save()", result, StringComparison.Ordinal);
+        Assert.Contains("n_service --> n_store", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("o--", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Compile_CodeRelation_ForcesNormalWeight()
+    {
+        var diagram = new DiagramIr("code-relation", "Implementation",
+            [new DiagramNode("run", "Run", "method", "Service", "modified", Confidence.Exact, [])],
+            [], [], []);
+
+        var result = _compiler.Compile(diagram);
+
+        Assert.Contains("classDef codeRelation font-weight:400", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("**", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Compile_ClassRelation_NormalizesCharactersRejectedByMermaidClassParser()
     {
         var diagram = new DiagramIr(
@@ -159,11 +192,11 @@ public sealed class MermaidCompilerTests
 
         var result = _compiler.Compile(diagram);
 
-        Assert.Contains("loop index < count", result, StringComparison.Ordinal);
+        Assert.Contains("loop index ‹ count", result, StringComparison.Ordinal);
         Assert.DoesNotContain("&lt;", result, StringComparison.Ordinal);
         Assert.Contains("alt ready", result, StringComparison.Ordinal);
-        Assert.Contains("-->>+n_target: 간접 API: RunFunction", result, StringComparison.Ordinal);
-        Assert.Contains("-->>-n_source: return", result, StringComparison.Ordinal);
+        Assert.Contains("-->>n_target: 간접 API: RunFunction", result, StringComparison.Ordinal);
+        Assert.DoesNotContain(": return", result, StringComparison.Ordinal);
     }
 
     [Fact]

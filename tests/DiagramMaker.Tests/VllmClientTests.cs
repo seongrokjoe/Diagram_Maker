@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using DiagramMaker.Configuration;
+using DiagramMaker.Domain;
 using DiagramMaker.Services;
 
 namespace DiagramMaker.Tests;
@@ -282,6 +283,37 @@ public sealed class VllmClientTests
     }
 
     [Fact]
+    public async Task AnalysisDiagramRefinement_UsesOnlyCandidateIdsAndCarriesUserInstruction()
+    {
+        const string semantics = """
+            {"nodes":[{"id":"start","summary":"시작","include":true},{"id":"operation","summary":"Header 포인터 할당","include":true}],"edgeIds":["edge"],"notes":[]}
+            """;
+        var handler = new QueueHandler(Response(semantics));
+        var options = Options();
+        using var transport = new VllmClient(options, handler: handler);
+        var llm = CreateInternalClient(options, transport);
+        var candidate = new DiagramIr("flowchart", "test", [
+            new DiagramNode("start", "시작", "entry", null, "unchanged", Confidence.Exact, [], "terminal"),
+            new DiagramNode("operation", "데이터 처리", "operation", null, "modified", Confidence.Exact, [])
+        ], [new DiagramEdge("edge", "start", "operation", "control", "", "unchanged", Confidence.Exact, [])], [], []);
+        var graph = new VersionedGraph([], [], [], [], []);
+        var comparison = new GitComparison(new string('a', 40), new string('b', 40), []);
+
+        var result = await llm.RefineAnalysisDiagramAsync(candidate, graph, comparison, [],
+            new DiagramViewSelection("view", "flowchart", "balanced", RefinementInstruction: "포인터 할당 의미를 강조"),
+            false, CancellationToken.None);
+
+        Assert.Equal("시작", result!.Nodes.Single(node => node.Id == "start").Label);
+        Assert.Equal("Header 포인터 할당", result.Nodes.Single(node => node.Id == "operation").Label);
+        using var request = JsonDocument.Parse(Assert.Single(handler.Requests).Body);
+        var userMessage = request.RootElement.GetProperty("messages")[1].GetProperty("content").GetString()!;
+        using var context = JsonDocument.Parse(userMessage);
+        Assert.Equal("포인터 할당 의미를 강조",
+            context.RootElement.GetProperty("selection").GetProperty("refinementInstruction").GetString());
+        Assert.Equal(2, context.RootElement.GetProperty("allowedNodeIds").GetArrayLength());
+    }
+
+    [Fact]
     public void RejectsThinkingBudgetAboveHardLimit()
     {
         var options = Options();
@@ -291,6 +323,64 @@ public sealed class VllmClientTests
     }
 
     private static VllmClient CreateClient(HttpMessageHandler handler) => new(Options(), handler: handler);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SemanticPlanning_CarriesBothRevisionsAndOptions_AndReviewsBeforeAccepting(bool repair)
+    {
+        const string plan = """{"summary":"헤더 변경","elements":[{"id":"operation","summary":"Header 포인터 할당","nodeIds":["operation"]}],"messages":[],"changes":[{"changeId":"change","summary":"포인터 형 변환을 명시했습니다.","factIds":["before","after"],"nodeIds":["operation"],"edgeIds":[]}],"instructionResults":["포인터 할당 의미를 강조했습니다."]}""";
+        const string accepted = """{"accepted":true,"issues":[]}""";
+        var handler = repair ? new QueueHandler(Response(plan), Response("""{"accepted":false,"issues":["이전 버전 차이를 설명하세요."]}"""), Response(plan), Response(accepted)) :
+            new QueueHandler(Response(plan), Response(accepted));
+        var options = Options();
+        using var transport = new VllmClient(options, handler: handler);
+        var llm = CreateInternalClient(options, transport);
+        var candidate = new DiagramIr("flowchart", "test", [new DiagramNode("operation", "처리", "operation", null,
+            "modified", Confidence.Exact, [], SourceFactIds: ["fact"])], [], [], []);
+        var bundle = PlanningBundle();
+        var result = await llm.PlanDiagramAsync(candidate, bundle, null,
+            new DiagramViewSelection("view", "flowchart", "balanced", Overrides: new DiagramStyleOverrides(Direction: "TB"),
+                RefinementInstruction: "포인터 할당 의미를 강조"), candidate, false, CancellationToken.None);
+        Assert.Equal("Semantic", result!.Status);
+        Assert.Equal(repair ? 4 : 2, handler.Requests.Count);
+        Assert.Equal(handler.Requests.Count, result.Attempts);
+        using var request = JsonDocument.Parse(handler.Requests[0].Body);
+        using var input = JsonDocument.Parse(request.RootElement.GetProperty("messages")[1].GetProperty("content").GetString()!);
+        Assert.Equal("bundle-hash", input.RootElement.GetProperty("hash").GetString());
+        Assert.Equal("TB", input.RootElement.GetProperty("selection").GetProperty("overrides").GetProperty("direction").GetString());
+        var facts = input.RootElement.GetProperty("facts").EnumerateArray().ToArray();
+        Assert.Contains(facts, fact => fact.GetProperty("id").GetString() == "before");
+        Assert.Contains(facts, fact => fact.GetProperty("id").GetString() == "after");
+        Assert.Equal("Header 포인터 할당", result.Diagram.Nodes[0].Label);
+        Assert.Equal("헤더 변경", result.Explanation!.Summary);
+        Assert.Equal(new[] { "before", "after" }, Assert.Single(result.Explanation.Changes).FactIds);
+    }
+
+    [Fact]
+    public async Task SemanticPlanning_OversizedOrUnresolvedEvidenceNeverProducesSuccessOrMalformedJson()
+    {
+        var handler = new QueueHandler();
+        var options = Options();
+        using var transport = new VllmClient(options, handler: handler);
+        var llm = CreateInternalClient(options, transport);
+        var candidate = new DiagramIr("flowchart", "test", [new DiagramNode("operation", "처리", "operation", null,
+            "modified", Confidence.Exact, [], SourceFactIds: ["fact"])], [], [], []);
+        var bundle = PlanningBundle();
+        var huge = bundle with { Facts = bundle.Facts.Select(fact => fact.Id == "after" ? fact with { Content = new string('x', 20_000) } : fact).ToArray() };
+        var selection = new DiagramViewSelection("view", "flowchart", "balanced");
+        var result = await llm.PlanDiagramAsync(candidate, huge, null, selection, null, false, CancellationToken.None);
+        Assert.Equal("Deterministic", result!.Status);
+        Assert.Empty(handler.Requests);
+        var missing = await llm.PlanDiagramAsync(candidate, bundle with { Facts = [] }, null, selection, null, false, CancellationToken.None);
+        Assert.Equal("Deterministic", missing!.Status);
+        Assert.Empty(handler.Requests);
+    }
+
+    private static EvidenceBundle PlanningBundle() => new("bundle-hash", "base", "target", ["change"],
+        [new("fact", "operation", "할당", ["change"], [], new("target", "new", "S.cpp", 1, 1)),
+         new("before", "source", "Run", ["change"], [], new("base", "old", "S.cpp", 1, 1), "auto p = pHeaderBuf;"),
+         new("after", "source", "Run", ["change"], [], new("target", "new", "S.cpp", 1, 1), "T_HEADER_COMM *pHeader = (T_HEADER_COMM *) pHeaderBuf;")], []);
 
     private static InternalLlmClient CreateInternalClient(LlmOptions options, VllmClient transport)
     {

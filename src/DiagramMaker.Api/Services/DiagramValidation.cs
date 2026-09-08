@@ -35,6 +35,8 @@ public sealed class DiagramValidator
         var nodeIds = diagram.Nodes.Select(static node => node.Id).ToHashSet(StringComparer.Ordinal);
         if (nodeIds.Count != diagram.Nodes.Count)
             return new ValidationFailure("DuplicateNodeId", "Diagram contains duplicate node IDs.");
+        if (diagram.Nodes.Select(node => RenderAlias(node.Id ?? "")).Distinct(StringComparer.Ordinal).Count() != nodeIds.Count)
+            return new ValidationFailure("AmbiguousRenderId", "Node IDs collide after Mermaid alias encoding.");
         if (diagram.Nodes.Any(static node => string.IsNullOrWhiteSpace(node.Id) ||
                                              string.IsNullOrWhiteSpace(node.Label) ||
                                              node.Id.Length > 120 || node.Label.Length > MaximumNodeLabelLength))
@@ -42,9 +44,19 @@ public sealed class DiagramValidator
         if (diagram.Edges.Any(edge => string.IsNullOrWhiteSpace(edge.Id) || edge.Id.Length > 120 ||
                                       !nodeIds.Contains(edge.SourceId) || !nodeIds.Contains(edge.TargetId)))
             return new ValidationFailure("UnknownEdgeNode", "Diagram contains an invalid edge or an edge that references an unknown node.");
+        if (diagram.Edges.Select(edge => edge.Id).Distinct(StringComparer.Ordinal).Count() != diagram.Edges.Count)
+            return new ValidationFailure("DuplicateEdgeId", "Diagram contains duplicate edge IDs.");
+        if (diagram.Type == "sequence" && diagram.SequenceBlocks is not null)
+        {
+            var failure = SequenceStructure.Validate(diagram.SequenceBlocks, diagram.Edges.Select(edge => edge.Id).ToHashSet(), nodeIds);
+            if (failure is not null) return new ValidationFailure("InvalidSequenceStructure", failure);
+        }
 
         return null;
     }
+
+    private static string RenderAlias(string id) => string.Concat(id.Select(character =>
+        char.IsAsciiLetterOrDigit(character) || character == '_' ? character : '_'));
 
     private sealed record ValidationFailure(string Kind, string Message);
 }

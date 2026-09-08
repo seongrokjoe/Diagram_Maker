@@ -1,5 +1,7 @@
 using System.Text.Json;
 
+if (await FakeCodex.TryRunAsync(args)) return;
+
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://127.0.0.1:52641");
 var app = builder.Build();

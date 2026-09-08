@@ -28,6 +28,8 @@ Push-Location .\web
 try {
     npm.cmd ci
     Assert-LastExitCode 'web npm ci'
+    npm.cmd test
+    Assert-LastExitCode 'web interaction tests'
     npm.cmd run build -- --outDir ..\artifacts\verify-web-dist --emptyOutDir
     Assert-LastExitCode 'web build'
     npm.cmd audit --audit-level=low
@@ -39,3 +41,11 @@ finally {
 
 node .\scripts\check-npm-licenses.mjs .\web\node_modules .\tools\git-worker\node_modules
 Assert-LastExitCode 'npm license policy check'
+
+node .\scripts\smoke-diagram-api.mjs
+Assert-LastExitCode 'loopback diagram API smoke test'
+
+dotnet build .\tests\DiagramMaker.FakeVllm\DiagramMaker.FakeVllm.csproj -c Release --no-restore
+Assert-LastExitCode 'offline fake CLI build'
+node .\scripts\smoke-codex-samples.mjs
+Assert-LastExitCode 'isolated Codex sample smoke (fake CLI, no external calls)'

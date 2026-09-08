@@ -1,9 +1,10 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import { CommitPicker } from "./CommitPicker";
 import { DiagramEditor } from "./DiagramEditor";
 import { MermaidPreview } from "./MermaidPreview";
 import { PresetPicker } from "./PresetPicker";
+import { EvidenceBrowser, ResultNotices } from "./ResultDetails";
 import { elapsedLabel, useElapsedSeconds } from "./useElapsedSeconds";
 import type {
   AnalysisDiagramGroup,
@@ -12,6 +13,7 @@ import type {
   AnalysisHistorySummary,
   AnalysisPlan,
   AnalysisResponse,
+  DiagramArtifact,
   DiagramPreset,
   DiagramType,
   DiagramViewSelection,
@@ -25,8 +27,7 @@ const diagramTypes: Array<{ value: DiagramType; label: string }> = [
   { value: "flowchart", label: "흐름 / 영향도" },
   { value: "sequence", label: "호출 시퀀스" },
   { value: "class", label: "클래스 관계" },
-  { value: "code-relation", label: "코드 관계도" },
-  { value: "state", label: "상태 전이" },
+  { value: "code-relation", label: "변경 구현 맵" },
 ];
 
 export function AnalysisWorkspace({ repositories, reportError }: {
@@ -54,6 +55,8 @@ export function AnalysisWorkspace({ repositories, reportError }: {
   const [activeResultView, setActiveResultView] = useState("");
   const [busyAction, setBusyAction] = useState("");
   const [evidence, setEvidence] = useState<Record<string, EvidenceSnippet>>({});
+  const [restoring, setRestoring] = useState(false);
+  const resultLoadToken = useRef(0);
   const busy = Boolean(busyAction);
   const busySeconds = useElapsedSeconds(busy);
   const planRunning = Boolean(plan && !["Ready", "Failed", "Expired"].includes(plan.state));
@@ -69,11 +72,12 @@ export function AnalysisWorkspace({ repositories, reportError }: {
 
   useEffect(() => {
     if (!plan || ["Ready", "Failed", "Expired"].includes(plan.state)) return;
+    let active = true;
     const timer = window.setTimeout(() => {
-      void api.getAnalysisPlan(plan.id).then(setPlan)
-        .catch((reason: unknown) => reportError(messageOf(reason, "사전 분석 상태를 불러오지 못했습니다.")));
+      void api.getAnalysisPlan(plan.id).then(value => { if (active) setPlan(value); })
+        .catch((reason: unknown) => { if (active) reportError(messageOf(reason, "사전 분석 상태를 불러오지 못했습니다.")); });
     }, 1000);
-    return () => window.clearTimeout(timer);
+    return () => { active = false; window.clearTimeout(timer); };
   }, [plan, reportError]);
 
   useEffect(() => {
@@ -82,27 +86,30 @@ export function AnalysisWorkspace({ repositories, reportError }: {
 
   useEffect(() => {
     if (!analysis || terminalStates.has(analysis.state)) return;
+    let active = true;
     const timer = window.setTimeout(() => {
-      void api.getAnalysis(analysis.id).then(setAnalysis)
-        .catch((reason: unknown) => reportError(messageOf(reason, "다이어그램 생성 상태를 불러오지 못했습니다.")));
+      void api.getAnalysis(analysis.id).then(value => { if (active) setAnalysis(value); })
+        .catch((reason: unknown) => { if (active) reportError(messageOf(reason, "다이어그램 생성 상태를 불러오지 못했습니다.")); });
     }, 900);
-    return () => window.clearTimeout(timer);
+    return () => { active = false; window.clearTimeout(timer); };
   }, [analysis, reportError]);
 
   useEffect(() => {
     if (!plan || !analysis || !terminalStates.has(analysis.state)) return;
-    void api.listAnalysisPlanAnalyses(plan.id).then(setAnalysisHistory)
-      .catch((reason: unknown) => reportError(messageOf(reason, "생성 이력을 불러오지 못했습니다.")));
+    let active = true;
+    void api.listAnalysisPlanAnalyses(plan.id).then(value => { if (active) setAnalysisHistory(value); })
+      .catch((reason: unknown) => { if (active) reportError(messageOf(reason, "생성 이력을 불러오지 못했습니다.")); });
+    return () => { active = false; };
   }, [analysis?.id, analysis?.state, plan?.id, reportError]);
 
   useEffect(() => {
     const resultGroups = analysis?.result?.diagramGroups ?? [];
-    const first = resultGroups.find((group) => effectiveResultViews(group).some((view) => view.diagram || view.comparisonBaseDiagram));
+    const first = resultGroups.find((group) => effectiveResultViews(group).some((view) => view.diagram));
     if (!first) return;
     const currentGroup = resultGroups.find((group) => group.groupId === activeResultGroup &&
-      effectiveResultViews(group).some((view) => view.diagram || view.comparisonBaseDiagram)) ?? first;
+      effectiveResultViews(group).some((view) => view.diagram)) ?? first;
     const currentViews = effectiveResultViews(currentGroup);
-    const firstVisibleView = currentViews.find((view) => view.diagram || view.comparisonBaseDiagram) ?? currentViews[0];
+    const firstVisibleView = currentViews.find((view) => view.diagram) ?? currentViews[0];
     if (activeResultGroup !== currentGroup.groupId) setActiveResultGroup(currentGroup.groupId);
     if (!currentViews.some((view) => view.viewId === activeResultView)) setActiveResultView(firstVisibleView?.viewId ?? "");
   }, [activeResultGroup, activeResultView, analysis?.id, analysis?.result]);
@@ -122,6 +129,8 @@ export function AnalysisWorkspace({ repositories, reportError }: {
   async function createPlan(event: FormEvent) {
     event.preventDefault();
     if (!repositoryId || !targetRevision) return;
+    ++resultLoadToken.current;
+    setRestoring(false);
     setBusyAction("plan-create");
     reportError("");
     setAnalysis(null);
@@ -264,9 +273,20 @@ export function AnalysisWorkspace({ repositories, reportError }: {
   }
 
   function restorePlan(id: string) {
+    const loadToken = ++resultLoadToken.current;
     setBusyAction("plan-restore");
+    setRestoring(true);
+    setCurrentStep(3);
+    setAnalysis(null);
+    setSourceAnalysis(null);
+    setPlan(null);
+    setAnalysisHistory([]);
+    setEvidence({});
+    setTargetCommit(null);
+    setBaseCommit(null);
     void Promise.all([api.getAnalysisPlan(id), api.listAnalysisPlanAnalyses(id)])
-      .then(async ([value, history]) => {
+      .then(([value, history]) => {
+        if (resultLoadToken.current !== loadToken) return;
         setPlan(value);
         setAnalysisHistory(history);
         setRepositoryId(value.request.repositoryId);
@@ -278,18 +298,30 @@ export function AnalysisWorkspace({ repositories, reportError }: {
         const repository = repositories.find((item) => item.id === value.request.repositoryId);
         const target = value.targetSha ?? value.request.targetRevision;
         const base = value.baseSha ?? value.request.baseRevision;
-        const [resolvedTarget, resolvedBase] = await Promise.all([
+        void Promise.all([
           api.resolveCommit(value.request.repositoryId, target).catch(() => null),
           base ? api.resolveCommit(value.request.repositoryId, base).catch(() => null) : Promise.resolve(null),
-        ]);
-        setTargetCommit(resolvedTarget);
-        setBaseCommit(resolvedBase);
+        ]).then(([resolvedTarget, resolvedBase]) => {
+          if (resultLoadToken.current !== loadToken) return;
+          setTargetCommit(resolvedTarget);
+          setBaseCommit(resolvedBase);
+        });
         const latest = history.find((item) => item.hasResult && (item.state === "Completed" || item.state === "Partial"));
         if (latest) {
-          const result = await api.getAnalysis(latest.id);
-          setAnalysis(result);
-          setSourceAnalysis(result);
           setCurrentStep(3);
+          setAnalysis({
+            id: latest.id,
+            state: latest.state,
+            baseSha: latest.baseSha,
+            targetSha: latest.targetSha,
+            progress: 100,
+            stageMessage: "저장된 다이어그램을 불러오는 중",
+          });
+          void api.getAnalysis(latest.id).then((result) => {
+            if (resultLoadToken.current !== loadToken) return;
+            setAnalysis(result);
+            setSourceAnalysis(result);
+          }).catch((reason: unknown) => { if (resultLoadToken.current === loadToken) reportError(messageOf(reason, "저장된 분석 결과를 불러오지 못했습니다.")); });
         } else {
           setAnalysis(null);
           setSourceAnalysis(null);
@@ -297,23 +329,32 @@ export function AnalysisWorkspace({ repositories, reportError }: {
         }
         if (!repository) reportError("복원한 초안의 저장소가 현재 접근 가능한 목록에 없습니다.");
       })
-      .catch((reason: unknown) => reportError(messageOf(reason, "초안을 복원하지 못했습니다.")))
-      .finally(() => setBusyAction(""));
+      .catch((reason: unknown) => { if (resultLoadToken.current === loadToken) reportError(messageOf(reason, "초안을 복원하지 못했습니다.")); })
+      .finally(() => { if (resultLoadToken.current === loadToken) { setBusyAction(""); setRestoring(false); } });
   }
 
   function loadAnalysis(id: string) {
+    const loadToken = ++resultLoadToken.current;
+    const summary = analysisHistory.find((item) => item.id === id);
+    if (summary) {
+      setAnalysis({ id, state: summary.state, baseSha: summary.baseSha, targetSha: summary.targetSha,
+        progress: 100, stageMessage: "저장된 다이어그램을 불러오는 중" });
+      setCurrentStep(3);
+    }
     void api.getAnalysis(id).then((value) => {
+      if (resultLoadToken.current !== loadToken) return;
       setAnalysis(value);
       setSourceAnalysis(value.result ? value : sourceAnalysis);
       setCurrentStep(3);
-    }).catch((reason: unknown) => reportError(messageOf(reason, "생성 결과를 불러오지 못했습니다.")));
+    }).catch((reason: unknown) => { if (resultLoadToken.current === loadToken) reportError(messageOf(reason, "생성 결과를 불러오지 못했습니다.")); });
   }
 
   function loadEvidence(changeId: string) {
     if (!plan || evidence[changeId]) return;
+    const loadToken = resultLoadToken.current;
     void api.getAnalysisPlanEvidence(plan.id, changeId)
-      .then((value) => setEvidence((current) => ({ ...current, [changeId]: value })))
-      .catch((reason: unknown) => reportError(messageOf(reason, "소스 근거를 불러오지 못했습니다.")));
+      .then((value) => { if (loadToken === resultLoadToken.current) setEvidence((current) => ({ ...current, [changeId]: value })); })
+      .catch((reason: unknown) => { if (loadToken === resultLoadToken.current) reportError(messageOf(reason, "소스 근거를 불러오지 못했습니다.")); });
   }
 
   return (
@@ -442,7 +483,7 @@ export function AnalysisWorkspace({ repositories, reportError }: {
           {!analysis && <option value="">결과 선택</option>}
           {analysisHistory.map((item) => <option key={item.id} value={item.id}>{new Date(item.createdAt).toLocaleString("ko-KR")} · {item.state} · {item.baseSha?.slice(0, 8)} → {item.targetSha?.slice(0, 8)} · 그룹 {item.successfulGroups}/{item.totalGroups} · 출력 {item.successfulViews}/{item.totalViews}</option>)}
         </select></label>}
-        {!analysis && <EmptyState text="확인할 생성 이력이 없습니다." />}
+        {!analysis && <EmptyState text={restoring ? "선택한 초안을 불러오는 중…" : "확인할 생성 이력이 없습니다."} />}
         {analysis && <>
         {!analysis.result && <><Progress value={analysis.progress} label={analysisRunning ? `${analysis.stageMessage} · ${analysisSeconds}초 경과` : analysis.stageMessage} />{analysisRunning && <button type="button" className="primary running-action" disabled>{elapsedLabel("다이어그램 생성 중", true, analysisSeconds)}</button>}{analysis.errorMessage && <div className="analysis-error"><strong>{analysis.errorCode}</strong><p>{analysis.errorMessage}</p><code>{analysis.id}</code></div>}</>}
         {analysis.result && <AnalysisResultView analysis={analysis} activeGroup={activeResultGroup} setActiveGroup={setActiveResultGroup} activeView={activeResultView} setActiveView={setActiveResultView} reportError={reportError} presets={presets}
@@ -479,11 +520,10 @@ function GroupViewEditor({ group, view, index, presets, siblingViews, onChange, 
     <div className="field-row"><label>다이어그램 형식<select value={view.diagramType} onChange={(event) => { const diagramType = event.target.value as DiagramType; onChange({ diagramType, presetId: defaultPreset(diagramType, presets), overrides: undefined }); }}>{diagramTypes.map((type) => <option key={type.value} value={type.value} disabled={siblingViews.some((other) => other.id !== view.id && other.diagramType === type.value)}>{type.label}</option>)}</select></label>{allowRemove && siblingViews.length > 1 && <button type="button" className="text-button danger" onClick={onRemove}>이 출력 삭제</button>}</div>
     <div className="diagram-mode-options">
       <label className="checkbox"><input type="checkbox" checked={Boolean(view.focusOnChanges)} onChange={(event) => onChange({ focusOnChanges: event.target.checked })} /> 요약</label>
-      <label className="checkbox"><input type="checkbox" checked={Boolean(view.compareRevisions)} onChange={(event) => onChange({ compareRevisions: event.target.checked })} /> 비교</label>
-      <span>요약은 Git 변경점과 최소 문맥만 표시하며, 비교는 Base와 Target을 좌우로 생성합니다.</span>
+      <span>요약은 Git 변경점과 의미 파악에 필요한 최소 문맥만 표시합니다.</span>
     </div>
     <PresetPicker presets={typePresets} selectedId={view.presetId} onSelect={(selected) => onChange({ presetId: selected.id, overrides: undefined })} />
-    <div className="effective-options" aria-label={`${group.title} 출력 ${index + 1} 최종 옵션`}><strong>최종 적용</strong><span>샘플 {preset?.name ?? view.presetId}</span><span>{effective.direction}</span><span>{effective.detail}</span><span>Caller {effective.caller}</span><span>Callee {effective.callee}</span><span>관계 {effective.relation}</span>{view.focusOnChanges && <span className="override-chip">요약</span>}{view.compareRevisions && <span className="override-chip">비교</span>}{customized && <span className="override-chip">고급값 적용</span>}</div>
+    <div className="effective-options" aria-label={`${group.title} 출력 ${index + 1} 최종 옵션`}><strong>최종 적용</strong><span>샘플 {preset?.name ?? view.presetId}</span><span>{effective.direction}</span><span>{effective.detail}</span><span>Caller {effective.caller}</span><span>Callee {effective.callee}</span><span>관계 {effective.relation}</span>{view.focusOnChanges && <span className="override-chip">요약</span>}{customized && <span className="override-chip">고급값 적용</span>}</div>
     <details><summary>고급 옵션 {customized ? "· 적용됨" : "· 샘플 기본값"}</summary><div className="field-row">
       <label>방향<select value={view.overrides?.direction ?? ""} onChange={(event) => onChange({ overrides: { ...view.overrides, direction: (event.target.value || undefined) as "LR" | "TB" | undefined } })}><option value="">샘플 기본값</option><option value="LR">가로 (LR)</option><option value="TB">세로 (TB)</option></select></label>
       <label>상세도<select value={view.overrides?.detailLevel ?? ""} onChange={(event) => onChange({ overrides: { ...view.overrides, detailLevel: (event.target.value || undefined) as "compact" | "balanced" | "detailed" | undefined } })}><option value="">샘플 기본값</option><option value="compact">간결</option><option value="balanced">균형</option><option value="detailed">상세</option></select></label>
@@ -498,8 +538,8 @@ function DepthSelect({ label, value, onChange }: { label: string; value?: number
   return <label>{label}<select value={value ?? ""} onChange={(event) => onChange(event.target.value === "" ? undefined : Number(event.target.value))}><option value="">샘플 기본값</option>{[0, 1, 2, 3].map((item) => <option key={item}>{item}</option>)}</select></label>;
 }
 
-function AnalysisResultView({ analysis, activeGroup, setActiveGroup, activeView, setActiveView, reportError, presets,
-  regeneratingViewId, onRegenerateView }: {
+export function AnalysisResultView({ analysis, activeGroup, setActiveGroup, activeView, setActiveView, reportError, presets,
+  regeneratingViewId, onRegenerateView, sampleRefinements }: {
   analysis: AnalysisResponse;
   activeGroup: string;
   setActiveGroup: (id: string) => void;
@@ -509,46 +549,57 @@ function AnalysisResultView({ analysis, activeGroup, setActiveGroup, activeView,
   presets: DiagramPreset[];
   regeneratingViewId: string;
   onRegenerateView: (groupId: string, selection: DiagramViewSelection) => Promise<void>;
+  sampleRefinements?: Array<{ id: string; label: string; instruction: string }>;
 }) {
   if (!analysis.result) return null;
   const groups = analysis.result.diagramGroups ?? [];
   const selected = groups.find((group) => group.groupId === activeGroup) ??
-    groups.find((group) => effectiveResultViews(group).some((view) => view.diagram || view.comparisonBaseDiagram));
+    groups.find((group) => effectiveResultViews(group).some((view) => view.diagram)) ?? groups[0];
   const views = selected ? effectiveResultViews(selected) : [];
   const selectedView = views.find((view) => view.viewId === activeView) ??
-    views.find((view) => view.diagram || view.comparisonBaseDiagram) ?? views[0];
+    views.find((view) => view.diagram) ?? views[0];
   const selectedPreset = selectedView ? presets.find((preset) => preset.id === selectedView.selection.presetId && preset.type === selectedView.selection.diagramType) : undefined;
   return <div className="analysis-result">
     <div className="summary-card"><strong>전체 요약</strong><p>{analysis.result.narrative.summary}</p></div>
-    {analysis.result.narrative.warnings.map((warning) => <p className="warning" key={warning}>{warning}</p>)}
-    {groups.length > 0 && <><p className="tab-label">그룹</p><div className="diagram-type-tabs">{groups.map((group) => <button type="button" className={selected?.groupId === group.groupId ? "active" : ""} key={group.groupId} onClick={() => { setActiveGroup(group.groupId); setActiveView(effectiveResultViews(group)[0]?.viewId ?? ""); }}>{group.title}</button>)}</div></>}
+    <ResultNotices key={analysis.id} notices={analysis.result.narrative.warnings} title="파일별 분석 안내·주의사항" />
+    {groups.length > 0 && <nav className="result-group-selector" aria-label="생성 결과 그룹 선택">
+      <div className="result-group-heading"><strong>그룹 선택 <span className="result-count">{groups.length}개</span></strong><span>그룹을 선택한 뒤 다이어그램 형식과 페이지를 선택하세요.</span></div>
+      <div className="result-group-grid">{groups.map((group, index) => {
+        const groupViews = effectiveResultViews(group);
+        const active = selected?.groupId === group.groupId;
+        return <button type="button" className={`result-group-card ${active ? "active" : ""}`} aria-pressed={active} key={group.groupId}
+          onClick={() => { setActiveGroup(group.groupId); setActiveView((groupViews.find(view => view.diagram) ?? groupViews[0])?.viewId ?? ""); }}>
+          <span className="result-group-number">{index + 1}</span><span className="result-group-info"><strong>{group.title}</strong>
+            <span>변경 {group.changeIds.length}개 · 다이어그램 {groupViews.length}개</span>
+            <span>{groupViews.map(view => `${formatDiagramType(view.selection.diagramType)}${view.state === "Failed" ? " (실패)" : ""}`).join(" · ")}</span>
+          </span><span className="result-group-state">{active ? "선택됨" : "선택"}</span>
+        </button>;
+      })}</div>
+    </nav>}
     {selected && <article className="diagram-result">
-      <div className="summary-card"><strong>{selected.title}</strong><p>{selected.narrative.summary}</p><small>{selected.narrative.intent}</small></div>
-      {views.length > 0 && <><p className="tab-label">다이어그램 형식</p><div className="diagram-type-tabs">{views.map((view) => <button type="button" className={selectedView?.viewId === view.viewId ? "active" : ""} key={view.viewId} onClick={() => setActiveView(view.viewId)}>{formatDiagramType(view.selection.diagramType)}{view.state === "Failed" ? " · 실패" : ""}</button>)}</div></>}
-      {selectedView && <div className="effective-options"><strong>적용 옵션</strong><span>{selectedPreset?.name ?? selectedView.selection.presetId}</span><span>{selectedView.selection.overrides?.direction ?? selectedPreset?.direction ?? "LR"}</span><span>{selectedView.selection.overrides?.detailLevel ?? selectedPreset?.detailLevel ?? "balanced"}</span><span>Caller {selectedView.selection.overrides?.callerDepth ?? selectedPreset?.callerDepth ?? 1}</span><span>Callee {selectedView.selection.overrides?.calleeDepth ?? selectedPreset?.calleeDepth ?? 1}</span><span>관계 {selectedView.selection.overrides?.relationDepth ?? selectedPreset?.relationDepth ?? 1}</span>{selectedView.selection.focusOnChanges && <span className="override-chip">요약</span>}{selectedView.selection.compareRevisions && <span className="override-chip">비교</span>}<span>{selectedView.reused ? "이전 결과 재사용" : "새로 생성"}</span></div>}
+      <div className="summary-card"><span className="result-group-context">선택한 그룹 {groups.indexOf(selected) + 1} / {groups.length}</span><strong>{selected.title}</strong><p>{selected.narrative.summary}</p><small>{selected.narrative.intent}</small></div>
+      {views.length > 0 && <><p className="tab-label">다이어그램 형식</p><div className="diagram-type-tabs">{views.map((view) => <button type="button" className={selectedView?.viewId === view.viewId ? "active" : ""} aria-pressed={selectedView?.viewId === view.viewId} key={view.viewId} onClick={() => setActiveView(view.viewId)}>{formatDiagramType(view.selection.diagramType)}{view.state === "Failed" ? " · 실패" : ""}</button>)}</div></>}
+      {selectedView && <div className="effective-options"><span>적용 옵션</span><span>{selectedPreset?.name ?? selectedView.selection.presetId}</span><span>{selectedView.selection.overrides?.direction ?? selectedPreset?.direction ?? "LR"}</span><span>{selectedView.selection.overrides?.detailLevel ?? selectedPreset?.detailLevel ?? "balanced"}</span><span>Caller {selectedView.selection.overrides?.callerDepth ?? selectedPreset?.callerDepth ?? 1}</span><span>Callee {selectedView.selection.overrides?.calleeDepth ?? selectedPreset?.calleeDepth ?? 1}</span><span>관계 {selectedView.selection.overrides?.relationDepth ?? selectedPreset?.relationDepth ?? 1}</span>{selectedView.selection.focusOnChanges && <span className="override-chip">요약</span>}<span>{selectedView.generationMetadata?.llmStatus === "Semantic" ? "LLM 설계·의미 검토 통과" : "정적 결과 또는 기존 생성본"}</span><span>{selectedView.reused ? "이전 결과 재사용" : "새로 생성"}</span></div>}
       {selectedView && <ResultViewOptionsEditor group={selected} view={selectedView} siblingViews={views.map((item) => item.selection)} presets={presets}
-        busy={regeneratingViewId === selectedView.viewId} onApply={(selection) => onRegenerateView(selected.groupId, selection)} />}
+        busy={Boolean(regeneratingViewId)} sampleRefinements={sampleRefinements} onApply={(selection) => onRegenerateView(selected.groupId, selection)} />}
       {selectedView?.errorMessage && <p className="warning">{selectedView.errorMessage}</p>}
-      {selectedView?.selection.compareRevisions ? <div className="comparison-diagrams">
-        <AnalysisDiagramPane title={`Base · ${analysis.baseSha?.slice(0, 12) ?? "알 수 없음"}`} artifact={selectedView.comparisonBaseDiagram}
-          emptyText="Base revision에 선택 변경 요소가 없습니다." analysis={analysis} groupId={selected.groupId} view={selectedView} side="base" reportError={reportError} />
-        <AnalysisDiagramPane title={`Target · ${analysis.targetSha?.slice(0, 12) ?? "알 수 없음"}`} artifact={selectedView.diagram}
-          emptyText="Target revision에 선택 변경 요소가 없습니다." analysis={analysis} groupId={selected.groupId} view={selectedView} side="target" reportError={reportError} />
-      </div> : selectedView?.diagram ? <AnalysisDiagramPane artifact={selectedView.diagram} analysis={analysis} groupId={selected.groupId}
-        view={selectedView} side="target" reportError={reportError} /> : <EmptyState text={selectedView?.warnings[0] ?? selected.warnings[0] ?? "이 그룹의 다이어그램을 생성하지 못했습니다."} />}
+      {selectedView?.diagram ? <AnalysisDiagramPane key={`${analysis.id}/${selected.groupId}/${selectedView.viewId}`} artifact={selectedView.diagram} analysis={analysis} groupId={selected.groupId}
+        view={selectedView} reportError={reportError} busy={Boolean(regeneratingViewId)}
+        onRegenerate={() => onRegenerateView(selected.groupId, selectedView.selection)} /> : <EmptyState text={selectedView?.warnings[0] ?? selected.warnings[0] ?? "이 그룹의 다이어그램을 생성하지 못했습니다."} />}
     </article>}
     {groups.length === 0 && analysis.result.diagrams[0] && <MermaidPreview source={analysis.result.diagrams[0].mermaidDsl} downloadName="git-analysis" zoomable />}
     <h3>변경 파일</h3><ul className="file-list">{analysis.result.changedFiles.map((file) => <li key={`${file.path}-${file.changeKind}`}><span className={`change ${file.changeKind.toLowerCase()}`}>{file.changeKind}</span><code>{file.previousPath ? `${file.previousPath} → ${file.path}` : file.path}</code></li>)}</ul>
   </div>;
 }
 
-function ResultViewOptionsEditor({ group, view, siblingViews, presets, busy, onApply }: {
+function ResultViewOptionsEditor({ group, view, siblingViews, presets, busy, onApply, sampleRefinements }: {
   group: AnalysisDiagramGroup;
   view: AnalysisDiagramView;
   siblingViews: DiagramViewSelection[];
   presets: DiagramPreset[];
   busy: boolean;
   onApply: (selection: DiagramViewSelection) => Promise<void>;
+  sampleRefinements?: Array<{ id: string; label: string; instruction: string }>;
 }) {
   const [draft, setDraft] = useState(view.selection);
   useEffect(() => setDraft(view.selection), [view.viewId, view.selection]);
@@ -562,30 +613,104 @@ function ResultViewOptionsEditor({ group, view, siblingViews, presets, busy, onA
     <GroupViewEditor group={editorGroup} view={draft} index={0} presets={presets}
       siblingViews={siblingViews.map((item) => item.id === draft.id ? draft : item)} allowRemove={false}
       onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))} onRemove={() => undefined} />
+    <label>다시 그릴 때 반영할 요청
+      {sampleRefinements ? <select value={draft.refinementInstruction ?? ""}
+        onChange={event => setDraft(current => ({ ...current, refinementInstruction: event.target.value || undefined }))}>
+        {sampleRefinements.map(item => <option key={item.id} value={item.instruction}>{item.label}</option>)}
+      </select> : <textarea maxLength={500} value={draft.refinementInstruction ?? ""}
+        placeholder="예: 인증 실패 경로를 중심으로, 각 단계의 업무 의미를 짧게 표시"
+        onChange={(event) => setDraft((current) => ({ ...current, refinementInstruction: event.target.value || undefined }))} />}
+      <small>{draft.refinementInstruction?.length ?? 0}/500 · 선택한 변경점과 실제 코드 근거 안에서만 반영됩니다.</small>
+    </label>
     <div className="result-option-actions">
       <button type="button" className="secondary" disabled={!changed || busy} onClick={() => setDraft(view.selection)}>변경 취소</button>
-      <button type="button" className="primary" disabled={!changed || busy} onClick={() => void onApply(draft)}>{busy ? "다시 생성 중…" : "이 다이어그램 다시 그리기"}</button>
+      <button type="button" className="primary" disabled={busy} onClick={() => void onApply(draft)}>{busy ? "다시 생성 중…" : "이 다이어그램 다시 그리기"}</button>
     </div>
   </details>;
 }
 
-function AnalysisDiagramPane({ title, artifact, emptyText, analysis, groupId, view, side, reportError }: {
-  title?: string;
+function AnalysisDiagramPane({ artifact, analysis, groupId, view, reportError, onRegenerate, busy }: {
+  onRegenerate: () => Promise<void>;
+  busy: boolean;
   artifact?: AnalysisDiagramView["diagram"];
-  emptyText?: string;
   analysis: AnalysisResponse;
   groupId: string;
   view: AnalysisDiagramView;
-  side: "base" | "target";
   reportError: (message: string) => void;
 }) {
+  const [pageId, setPageId] = useState("overview");
+  const [loadedPage, setLoaded] = useState<{ key: string; value: DiagramArtifact } | null>(null);
+  const requestKey = `${analysis.id}/${groupId}/${view.viewId}/${pageId}/${artifact?.id}`;
+  const loaded = loadedPage?.key === requestKey ? loadedPage.value : null;
+  const [snippet, setSnippet] = useState<EvidenceSnippet | null>(null);
+  const [pageError, setPageError] = useState("");
+  const snippetToken = useRef(0);
+  useEffect(() => { setPageId(view.document?.overviewPageId ?? "overview"); setSnippet(null); }, [analysis.id, view.viewId]);
+  useEffect(() => {
+    const controller = new AbortController();
+    ++snippetToken.current;
+    setSnippet(null);
+    setLoaded(null);
+    setPageError("");
+    void api.getAnalysisPage(analysis.id, groupId, view.viewId, pageId, controller.signal)
+      .then(value => { if (!controller.signal.aborted) setLoaded({ key: requestKey, value }); })
+      .catch(reason => { if (!controller.signal.aborted) setPageError(messageOf(reason, "다이어그램 페이지를 불러오지 못했습니다.")); });
+    return () => { controller.abort(); ++snippetToken.current; };
+  }, [analysis.id, groupId, view.viewId, pageId, artifact?.id, requestKey]);
+  function showEvidence(id: string) {
+    const token = ++snippetToken.current;
+    void api.getAnalysisEvidence(analysis.id, id).then(value => { if (token === snippetToken.current) setSnippet(value); })
+      .catch(reason => { if (token === snippetToken.current) reportError(messageOf(reason, "코드 근거를 불러오지 못했습니다.")); });
+  }
+  const save = useCallback((input: Parameters<typeof api.saveAnalysisDiagramEdit>[3]) =>
+    api.saveAnalysisDiagramEdit(analysis.id, groupId, view.viewId, input, pageId), [analysis.id, groupId, view.viewId, pageId]);
+  const preview = useCallback((input: Parameters<typeof api.previewAnalysisDiagramEdit>[3], signal: AbortSignal) =>
+    api.previewAnalysisDiagramEdit(analysis.id, groupId, view.viewId, input, signal, pageId), [analysis.id, groupId, view.viewId, pageId]);
+  const metadata = view.generationMetadata;
   return <section className="comparison-pane">
-    {title && <h4>{title}</h4>}
-    {artifact ? <DiagramEditor artifact={artifact} zoomable downloadName={`git-${side}-${artifact.type}-${(side === "base" ? analysis.baseSha : analysis.targetSha)?.slice(0, 8) ?? "result"}`} reportError={reportError}
-      onSave={(input) => api.saveAnalysisDiagramEdit(analysis.id, groupId, view.viewId, input, side)}
-      onPreview={(input, signal) => api.previewAnalysisDiagramEdit(analysis.id, groupId, view.viewId, input, signal, side)} />
-      : <EmptyState text={emptyText ?? view.warnings[0] ?? "다이어그램을 생성하지 못했습니다."} />}
+    {view.document && <nav className="diagram-pages" aria-label="요약과 상세 페이지">
+      <label>표시 페이지<span className="page-select-control"><span className="page-select-arrow" aria-hidden="true">▾</span><select value={pageId} onChange={event => { setPageId(event.target.value); setSnippet(null); }}>
+        {view.document.pages.map(page => <option key={page.id} value={page.id}>{page.title}</option>)}
+      </select></span></label>
+      <span className="page-position">{Math.max(0, view.document.pages.findIndex(page => page.id === pageId)) + 1} / {view.document.pages.length} 페이지</span>
+      {pageId !== view.document.overviewPageId && <button type="button" className="secondary" onClick={() => setPageId(view.document!.overviewPageId)}>핵심 요약으로</button>}
+    </nav>}
+    {metadata && <details className="generation-evidence"><summary>생성 근거 · 요청 반영 · 변경 커버리지</summary>
+      <p>{metadata.llmStatus === "Semantic" ? "LLM 설계·의미 검토 통과" : "정적 결과 또는 기존 생성본"} · LLM 시도 {metadata.attempts ?? 0}회</p>
+      <p>코드 범위: {analysis.baseSha?.slice(0, 8)} → {analysis.targetSha?.slice(0, 8)} · {metadata.analyzerVersion ?? "기존 분석기"}</p>
+      <small>입력 식별자: {metadata.bundleHash ?? "기존 결과에 기록되지 않음"}</small>
+      {metadata.effectiveOptions && <p>적용 옵션: {JSON.stringify(metadata.effectiveOptions)}</p>}
+      {metadata.refinementInstruction && <p>요청: {metadata.refinementInstruction}</p>}
+      {(metadata.instructionResults ?? []).map((result, index) => <p key={index}>{result}</p>)}
+      {view.document?.coverage.map(item => <p key={item.changeId}><code>{item.changeId}</code> · {item.state === "Overview" ? "요약 표시" : item.state === "Detail" ? "상세 표시" : item.state === "Partial" ? "일부 표시" : "미제공"}{item.reason && ` · ${item.reason}`}</p>)}
+      <ResultNotices notices={[...view.warnings, ...metadata.warnings]} title="생성 과정 안내" />
+    </details>}
+    {pageError && <p className="warning">{pageError}</p>}
+    {loaded ? <>
+      {loaded.explanation?.status !== "Semantic" && <button type="button" className="secondary" disabled={busy}
+        onClick={() => void onRegenerate()}>{busy ? "의미 설명 생성 중…" : "의미 설명 다시 생성"}</button>}
+      <DiagramEditor key={loaded.id} artifact={loaded} zoomable downloadName={`git-${loaded.type}-${analysis.targetSha?.slice(0, 8) ?? "result"}`} reportError={reportError}
+        onSave={save} onPreview={preview} onOpenDetail={setPageId} showExplanation onEvidence={showEvidence} />
+      {sequenceDetailReferences(loaded.ir.sequenceBlocks ?? []).map(reference => <button type="button" className="secondary" key={reference.id}
+        onClick={() => setPageId(reference.detailPageId!)}>{reference.label} · 세부 보기</button>)}
+      <ResultNotices key={`notes-${loaded.id}`} notices={loaded.ir.notes} title="페이지 분석 메모" />
+      <details><summary>처리 단계와 코드 근거</summary>
+        {loaded.ir.nodes.map(node => <div className="node-evidence-row" key={node.id}><span title={node.qualifiedName}>{node.label}</span>
+          {node.qualifiedName && <small>{node.qualifiedName}</small>}
+          {node.detailPageId && <button type="button" className="secondary" onClick={() => setPageId(node.detailPageId!)}>세부 보기</button>}
+          {node.evidenceIds.length > 0 && <EvidenceBrowser evidenceIds={node.evidenceIds} onEvidence={showEvidence} />}
+        </div>)}
+        {loaded.ir.edges.filter(edge => edge.evidenceIds.length > 0).map(edge => <div className="node-evidence-row" key={edge.id}><span>{edge.label}</span>
+          <EvidenceBrowser evidenceIds={edge.evidenceIds} onEvidence={showEvidence} title="호출 코드 근거" />
+        </div>)}
+      </details>
+      {snippet && <section className="evidence-snippet"><p>{snippet.filePath}:{snippet.startLine} · {snippet.revisionSha.slice(0, 8)}</p><pre>{snippet.content}</pre></section>}
+    </> : !pageError && <EmptyState text="선택한 다이어그램을 불러오는 중…" />}
   </section>;
+}
+
+function sequenceDetailReferences(blocks: NonNullable<DiagramArtifact["ir"]["sequenceBlocks"]>): NonNullable<DiagramArtifact["ir"]["sequenceBlocks"]> {
+  return blocks.flatMap(block => [...(block.detailPageId ? [block] : []), ...sequenceDetailReferences(block.children)]);
 }
 
 function Progress({ value, label }: { value: number; label: string }) {
@@ -602,7 +727,10 @@ function effectiveGroupViews(group: AnalysisGroupSelection): DiagramViewSelectio
   return group.views?.length ? group.views : [{ id: `${group.id}-view`, diagramType: group.diagramType, presetId: group.presetId, overrides: group.overrides }];
 }
 function normalizeGroup(group: AnalysisGroupSelection): AnalysisGroupSelection {
-  const views = effectiveGroupViews(group);
+  const migrated = effectiveGroupViews(group).map((view) => view.diagramType === "state"
+    ? { ...view, diagramType: "flowchart" as DiagramType, presetId: "balanced" }
+    : view);
+  const views = migrated.filter((view, index) => migrated.findIndex((item) => item.diagramType === view.diagramType) === index);
   return { ...group, views, diagramType: views[0].diagramType, presetId: views[0].presetId, overrides: views[0].overrides };
 }
 function effectiveResultViews(group: AnalysisDiagramGroup) {
@@ -624,7 +752,7 @@ function changedViewIds(groups: AnalysisGroupSelection[], source: AnalysisRespon
   }
   return result;
 }
-function formatDiagramType(type: string) { return ({ flowchart: "흐름 / 영향도", class: "클래스 관계", sequence: "호출 시퀀스", "code-relation": "코드 관계도", state: "상태 전이" } as Record<string, string>)[type] ?? type; }
+function formatDiagramType(type: string) { return ({ flowchart: "흐름 / 영향도", class: "클래스 관계", sequence: "호출 시퀀스", "code-relation": "변경 구현 맵", state: "상태 전이" } as Record<string, string>)[type] ?? type; }
 function isCppDiagnostic(value: string) { return /C\+\+|syntax|parser|구문|모호|제외|인덱스|index/i.test(value); }
 function exclusionReason(reason: string) {
   return ({

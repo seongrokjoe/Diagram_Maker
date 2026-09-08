@@ -1,5 +1,5 @@
 param(
-    [string]$Version = '0.1.0-offline.15',
+    [string]$Version = '0.1.0-offline.16',
     [string]$NodeVersion = '24.12.0',
     [switch]$SkipTests
 )
@@ -41,6 +41,7 @@ foreach ($name in @('package.json', 'package-lock.json', 'index.html', 'tsconfig
     Copy-Item -LiteralPath (Join-Path $sourceWebRoot $name) -Destination $webRoot
 }
 Copy-Item -LiteralPath (Join-Path $sourceWebRoot 'src') -Destination $webRoot -Recurse
+Copy-Item -LiteralPath (Join-Path $sourceWebRoot 'test') -Destination $webRoot -Recurse
 foreach ($name in @('package.json', 'package-lock.json', 'index.mjs', 'cpp-indexer.mjs')) {
     Copy-Item -LiteralPath (Join-Path $sourceWorkerRoot $name) -Destination $workerRoot
 }
@@ -95,6 +96,8 @@ Assert-LastExitCode 'git worker audit'
 Assert-LastExitCode 'web npm ci'
 Push-Location $webRoot
 try {
+    & $targetNode $targetNpmCli test
+    Assert-LastExitCode 'web interaction tests'
     & $targetNode $targetNpmCli run build
 }
 finally {

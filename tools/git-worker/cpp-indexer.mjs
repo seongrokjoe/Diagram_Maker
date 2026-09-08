@@ -194,7 +194,14 @@ function collectCalls(node) {
     if (current !== node && current.type === "function_definition") return;
     if (current.type === "call_expression") {
       const expression = cleanName(field(current, "function")?.text ?? "");
-      const currentOrder = ++order;
+      const currentOrder = current.startIndex;
+      // Nested calls must complete before their enclosing call. Argument-to-argument
+      // order is not guaranteed by C++; retain that uncertainty in the control scope.
+      const argumentsNode = field(current, "arguments");
+      const argumentCalls = argumentsNode ? children(argumentsNode).filter(child => /\(/.test(child.text)) : [];
+      for (const child of children(current)) visit(child, argumentCalls.length > 1
+        ? [...controlPath, scopeFor(current, "unordered", "인자 평가 순서 미확정", "arguments")]
+        : controlPath, currentOrder);
       if (expression) {
         calls.push({
           expression,
@@ -202,13 +209,14 @@ function collectCalls(node) {
           argumentCount: countArguments(current),
           line: current.startPosition.row + 1,
           endLine: current.endPosition.row + 1,
-          order: currentOrder,
+          order: ++order,
+          startOffset: current.startIndex,
+          endOffset: current.endIndex,
           parentOrder,
           arguments: callArguments(current),
           controlPath,
         });
       }
-      for (const child of children(current)) visit(child, controlPath, currentOrder);
       return;
     }
     if (current.type === "if_statement") {
@@ -231,6 +239,23 @@ function collectCalls(node) {
       }
       return;
     }
+    if (current.type === "switch_statement") {
+      const condition = field(current, "condition");
+      if (condition) visit(condition, controlPath);
+      const body = field(current, "body");
+      const clauses = body ? children(body).filter(child => child.type === "case_statement") : [];
+      const hasFallthrough = clauses.slice(0, -1).some(clause => !/\b(break|return|throw)\b[^{}]*;\s*$/.test(clause.text));
+      for (const clause of clauses) {
+        const value = field(clause, "value");
+        const label = value ? `case ${value.text}` : "default";
+        // Fallthrough is not a mutually exclusive alternative. Keep case-local
+        // facts and defer execution paths to the control-flow diagram explicitly.
+        const scope = scopeFor(current, hasFallthrough ? "unordered" : "alt",
+          hasFallthrough ? `switch ${conditionLabel(current)}: case별 호출 목록, fallthrough 실행 경로는 흐름도 참조` : `switch ${conditionLabel(current)}`, label);
+        for (const child of children(clause)) if (!value || child.startIndex !== value.startIndex) visit(child, [...controlPath, scope]);
+      }
+      return;
+    }
     for (const child of children(current)) visit(child, controlPath);
   }
   visit(node);
@@ -240,6 +265,61 @@ function collectCalls(node) {
 function compactStatement(node, fallback) {
   const value = node.text.replace(/\s+/g, " ").trim();
   return (value || fallback).slice(0, 1000);
+}
+
+function compactSignature(node) {
+  return node.text.split("{")[0].replace(/\s+/g, " ").replace(/;\s*$/, "").trim().slice(0, 240);
+}
+
+function memberFact(node, accessibility, declarator = field(node, "declarator")) {
+  const functionNode = functionDeclarator(declarator);
+  const declared = declaratorName(declarator);
+  if (!declared) return null;
+  const type = canonicalType(field(node, "type")?.text ?? "");
+  const parameters = functionNode ? parameterTypes(declarator) : [];
+  return {
+    name: lastName(declared),
+    kind: functionNode || node.type === "function_definition" ? "method" : "field",
+    accessibility,
+    signature: functionNode || node.type === "function_definition"
+      ? compactSignature(node)
+      : `${type} ${declarator.text}`.trim().replace(/;\s*$/, "").slice(0, 240),
+    declaredType: type || null,
+    isStatic: /\bstatic\b/.test(node.text.split(/[;{]/, 1)[0]),
+    startLine: node.startPosition.row + 1,
+    endLine: node.endPosition.row + 1,
+    referencedTypes: [...new Set([type, ...parameters].filter(Boolean))],
+  };
+}
+
+function memberFacts(node, accessibility) {
+  if (node.type === "function_definition") {
+    const member = memberFact(node, accessibility);
+    return member ? [member] : [];
+  }
+  const typeNode = field(node, "type");
+  const declarators = children(node).filter((child) => child !== typeNode &&
+    !["storage_class_specifier", "type_qualifier", "attribute_specifier", "attribute_declaration", "comment"].includes(child.type) &&
+    (functionDeclarator(child) || declaratorName(child)));
+  const candidates = declarators.length > 0 ? declarators : [field(node, "declarator")].filter(Boolean);
+  return candidates.map((declarator) => memberFact(node, accessibility, declarator)).filter(Boolean);
+}
+
+function collectClassMembers(typeNode) {
+  const body = field(typeNode, "body");
+  if (!body) return [];
+  let accessibility = typeNode.type === "class_specifier" ? "private" : "public";
+  const members = [];
+  for (const child of children(body)) {
+    if (child.type === "access_specifier") {
+      accessibility = child.text.replace(":", "").trim().toLowerCase();
+      continue;
+    }
+    if (child.type === "function_definition" || child.type === "field_declaration" || child.type === "declaration") {
+      members.push(...memberFacts(child, accessibility));
+    }
+  }
+  return members;
 }
 
 function buildControlFlow(functionNode, calls) {
@@ -273,12 +353,13 @@ function buildControlFlow(functionNode, calls) {
     endPosition: functionNode.endPosition,
   });
 
-  function processSequence(statements, incoming, loopNode = null) {
+  function processSequence(statements, incoming, loopNode = null, switchNode = null) {
     let pending = incoming;
     for (let index = 0; index < statements.length; index++) {
       const statement = statements[index];
-      const halted = pending.filter((item) => item.breakLoop);
-      const active = pending.filter((item) => !item.breakLoop);
+      const halted = pending.filter((item) => item.breakLoop || item.breakSwitch);
+      const active = pending.filter((item) => !item.breakLoop && !item.breakSwitch);
+      if (active.length === 0) break;
       if (isSimpleAssignment(statement)) {
         const grouped = [statement];
         while (index + 1 < statements.length && isSimpleAssignment(statements[index + 1]) &&
@@ -293,7 +374,7 @@ function buildControlFlow(functionNode, calls) {
         connect(active, operation);
         pending = [...halted, { id: operation.id }];
       } else {
-        pending = [...halted, ...processStatement(statement, active, loopNode)];
+        pending = [...halted, ...processStatement(statement, active, loopNode, switchNode)];
       }
     }
     return pending;
@@ -301,8 +382,7 @@ function buildControlFlow(functionNode, calls) {
 
   function directCalls(statement) {
     return calls.filter((call) => {
-      const line = call.line;
-      return line >= statement.startPosition.row + 1 && line <= statement.endPosition.row + 1;
+      return call.startOffset >= statement.startIndex && call.endOffset <= statement.endIndex;
     });
   }
 
@@ -317,17 +397,40 @@ function buildControlFlow(functionNode, calls) {
     return children(statement).some((child) => child.type === "assignment_expression");
   }
 
-  function processStatement(statement, incoming, loopNode) {
+  function processStatement(statement, incoming, loopNode, switchNode = null) {
     if (!statement || statement.type === "comment") return incoming;
-    if (statement.type === "compound_statement") return processSequence(children(statement), incoming, loopNode);
+    if (incoming.length === 0) return [];
+    if (statement.type === "compound_statement") return processSequence(children(statement), incoming, loopNode, switchNode);
     if (statement.type === "if_statement") {
       const decision = addNode("condition", conditionLabel(statement), field(statement, "condition") ?? statement);
       connect(incoming, decision);
       const consequence = field(statement, "consequence");
       const alternative = field(statement, "alternative");
-      const yes = consequence ? processStatement(consequence, [{ id: decision.id, label: "예" }], loopNode) : [{ id: decision.id, label: "예" }];
-      const no = alternative ? processStatement(alternative, [{ id: decision.id, label: "아니오" }], loopNode) : [{ id: decision.id, label: "아니오" }];
+      const yes = consequence ? processStatement(consequence, [{ id: decision.id, label: "예" }], loopNode, switchNode) : [{ id: decision.id, label: "예" }];
+      const no = alternative ? processStatement(alternative, [{ id: decision.id, label: "아니오" }], loopNode, switchNode) : [{ id: decision.id, label: "아니오" }];
       return [...yes, ...no];
+    }
+    if (statement.type === "switch_statement") {
+      const condition = field(statement, "condition") ?? statement;
+      const decision = addNode("condition", `switch ${conditionLabel(statement)}`, condition);
+      connect(incoming, decision);
+      const body = field(statement, "body");
+      const clauses = body ? children(body).filter((item) => item.type === "case_statement") : [];
+      if (clauses.length === 0) return [{ id: decision.id }];
+      const exits = [];
+      let fallthrough = [];
+      for (const clause of clauses) {
+        const value = field(clause, "value");
+        const label = value ? `case ${compactStatement(value, "값")}` : "default";
+        const statements = children(clause).filter((item) => !value || item.startIndex !== value.startIndex || item.endIndex !== value.endIndex);
+        const caseNode = addNode("case", label, value ?? clause);
+        connect([{ id: decision.id, label }, ...fallthrough.map(item => ({ ...item, label: "fallthrough" }))], caseNode);
+        const branch = processSequence(statements, [{ id: caseNode.id }], loopNode, decision);
+        exits.push(...branch.filter(item => item.breakSwitch).map(item => ({ id: item.id })));
+        fallthrough = branch.filter(item => !item.breakSwitch);
+      }
+      if (!clauses.some(clause => !field(clause, "value"))) exits.push({ id: decision.id, label: "일치 없음" });
+      return [...exits, ...fallthrough];
     }
     if (["for_statement", "for_range_loop", "while_statement", "do_statement"].includes(statement.type)) {
       const body = field(statement, "body");
@@ -335,14 +438,17 @@ function buildControlFlow(functionNode, calls) {
         ? (field(statement, "condition") ?? statement)
         : { startPosition: statement.startPosition, endPosition: body?.startPosition ?? statement.endPosition };
       const loop = addNode("loop", conditionLabel(statement), loopHeader);
-      connect(incoming, loop);
-      const bodyExit = body ? processStatement(body, [{ id: loop.id, label: "반복" }], loop) : [];
+      const postTest = statement.type === "do_statement";
+      const bodyEntry = postTest ? addNode("operation", "반복 처리 시작", body ?? statement) : null;
+      connect(incoming, bodyEntry ?? loop);
+      if (bodyEntry) connect([{ id: loop.id, label: "반복" }], bodyEntry);
+      const bodyExit = body ? processStatement(body, [{ id: bodyEntry?.id ?? loop.id, label: postTest ? "" : "반복" }], loop, null) : [];
       for (const source of bodyExit.filter((item) => !item.breakLoop)) {
         edges.push({ sourceId: source.id, targetId: loop.id, type: "loopBack", label: "다음 반복" });
       }
       return [{ id: loop.id, label: "종료" }, ...bodyExit.filter((item) => item.breakLoop).map((item) => ({ id: item.id, label: "break" }))];
     }
-    if (statement.type === "return_statement") {
+    if (["return_statement", "throw_statement"].includes(statement.type)) {
       const [call] = topLevelCalls(statement);
       const returned = addNode("return", compactStatement(statement, "return"), statement, call?.order ?? null);
       connect(incoming, returned);
@@ -358,7 +464,7 @@ function buildControlFlow(functionNode, calls) {
     if (statement.type === "break_statement") {
       const broken = addNode("break", "break", statement);
       connect(incoming, broken);
-      return [{ id: broken.id, breakLoop: true }];
+      return [{ id: broken.id, breakLoop: Boolean(loopNode && !switchNode), breakSwitch: Boolean(switchNode) }];
     }
 
     const statementCalls = topLevelCalls(statement);
@@ -372,10 +478,10 @@ function buildControlFlow(functionNode, calls) {
       connect(incoming, operation);
       return [{ id: operation.id }];
     }
-    return processSequence(children(statement), incoming, loopNode);
+    return processSequence(children(statement), incoming, loopNode, switchNode);
   }
 
-  const pending = bodyNode ? processStatement(bodyNode, [{ id: entry.id }], null) : [{ id: entry.id }];
+  const pending = bodyNode ? processStatement(bodyNode, [{ id: entry.id }], null, null) : [{ id: entry.id }];
   connect(pending, exit);
   return { nodes, edges };
 }
@@ -447,6 +553,7 @@ export async function parseCppFile(filepath, content, projectPath = null) {
           contentFingerprint: fingerprint(node.text),
           calls: [],
           bases,
+          members: collectClassMembers(node),
         });
         const body = field(node, "body");
         if (body) {
@@ -534,6 +641,14 @@ function ruleMatches(rule, call) {
 
 export function resolveCppCalls(files, indirectCallRules = []) {
   const symbols = files.flatMap((file) => file.symbols);
+  for (const symbol of symbols.filter(symbol => symbol.kind === "method")) {
+    const owners = symbols.filter(owner => ["class", "type"].includes(owner.kind) && owner.qualifiedName === ownerName(symbol.qualifiedName));
+    const distinct = [...new Map(owners.map(owner => [owner.semanticKey, owner])).values()];
+    if (distinct.length === 1) {
+      symbol.ownerSemanticKey = distinct[0].semanticKey;
+      symbol.ownerKind = distinct[0].kind;
+    }
+  }
   const byQualified = new Map();
   const bySimple = new Map();
   for (const symbol of symbols) {

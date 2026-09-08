@@ -75,15 +75,15 @@ public sealed class DiagramPresetCatalog
         new(
             "code-method-centered",
             "code-relation",
-            "메서드 중심형",
-            "선택 메서드와 직접 호출 대상만 간결한 카드 형태로 표시합니다.",
+            "변경 경로 중심형",
+            "변경된 구현에서 실제로 이어지는 직접 호출 경로만 간결하게 표시합니다.",
             "flowchart LR\n    n_source[\"변경 메서드\"] --> n_target[\"호출 메서드\"]",
             "LR", "compact", 0, 1, 1, 20, 30),
         new(
             "code-class-grouped",
             "code-relation",
-            "클래스 그룹형",
-            "관련 메서드를 소유 클래스별로 묶어 세로로 표시합니다.",
+            "소유 구조 그룹형",
+            "변경 구현과 연결된 메서드를 소유 클래스별로 묶어 표시합니다.",
             "flowchart TB\n    subgraph n_A[\"InterfaceCustom\"]\n      n_run[\"Run\"]\n    end\n    subgraph n_B[\"Opr_Xfer\"]\n      n_target[\"runOrgReturn\"]\n    end\n    n_run --> n_target",
             "TB", "balanced", 1, 1, 1, 35, 60),
         new(

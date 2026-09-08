@@ -4,6 +4,8 @@ import { api } from "./api";
 import { DiagramEditor } from "./DiagramEditor";
 import { PresetPicker } from "./PresetPicker";
 import { RepositoryRuleEditor } from "./RepositoryRuleEditor";
+import { SampleTestWorkspace } from "./SampleTestWorkspace";
+import type { RuntimeInfo } from "./sampleTestTypes";
 import { elapsedLabel, useElapsedSeconds } from "./useElapsedSeconds";
 import type {
   DiagramPreset,
@@ -28,6 +30,18 @@ const diagramTypes: Array<{ value: DiagramType; label: string }> = [
 ];
 
 export default function App() {
+  const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
+  const [startupError, setStartupError] = useState("");
+  useEffect(() => {
+    void api.runtimeInfo().then(setRuntime).catch(reason => setStartupError(messageOf(reason, "실행 모드를 확인하지 못했습니다.")));
+  }, []);
+  // Never mount the ordinary repository/prompt controls until server mode is known.
+  if (!runtime) return <main className="panel"><p>{startupError || "실행 환경 확인 중…"}</p>
+    {startupError && <button type="button" onClick={() => window.location.reload()}>다시 확인</button>}</main>;
+  return runtime.mode === "codex-sample" ? <SampleTestWorkspace initialRuntime={runtime} /> : <NormalApp />;
+}
+
+function NormalApp() {
   const [tab, setTab] = useState<Tab>("natural");
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [naturalRecord, setNaturalRecord] = useState<NaturalDiagramRecord | null>(null);
@@ -248,6 +262,6 @@ function loadNaturalRecord(
   setActiveView(views[0]?.viewId ?? "");
 }
 function defaultPreset(type: DiagramType, presets: DiagramPreset[]) { return presets.find((preset) => preset.type === type && preset.detailLevel === "balanced")?.id ?? presets.find((preset) => preset.type === type)?.id ?? "balanced"; }
-function formatDiagramType(type: string) { return ({ flowchart: "흐름 / 영향도", class: "클래스 관계", sequence: "호출 시퀀스", "code-relation": "코드 관계도", state: "상태 전이" } as Record<string, string>)[type] ?? type; }
+function formatDiagramType(type: string) { return ({ flowchart: "흐름 / 영향도", class: "클래스 관계", sequence: "호출 시퀀스", "code-relation": "변경 구현 맵", state: "상태 전이" } as Record<string, string>)[type] ?? type; }
 function EmptyState({ text }: { text: string }) { return <div className="empty-state"><p>{text}</p></div>; }
 function messageOf(reason: unknown, fallback: string) { return reason instanceof Error ? reason.message : fallback; }

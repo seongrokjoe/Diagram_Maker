@@ -69,10 +69,15 @@ export type DiagramViewSelection = {
   presetId: string;
   overrides?: DiagramStyle;
   focusOnChanges?: boolean;
-  compareRevisions?: boolean;
+  refinementInstruction?: string;
 };
 
 export type DiagramNode = {
+  qualifiedName?: string;
+  context?: CodeContext;
+  sourceFactIds?: string[];
+  detailPageId?: string;
+  abstractionKind?: string;
   id: string;
   label: string;
   kind: string;
@@ -95,6 +100,7 @@ export type DiagramChangeMarker = {
 };
 
 export type DiagramEdge = {
+  context?: CodeContext;
   id: string;
   sourceId: string;
   targetId: string;
@@ -108,16 +114,36 @@ export type DiagramEdge = {
   viaApi?: string;
   controlPath?: Array<{ id: string; kind: string; label: string; branch: string }>;
   changeMarker?: DiagramChangeMarker;
+  sourceFactIds?: string[];
 };
 
 export type DiagramArtifact = {
+  explanation?: DiagramExplanation | null;
   id: string;
   type: string;
   version: number;
   mermaidDsl: string;
-  ir: { type: string; title: string; notes: string[]; direction?: string; nodes: DiagramNode[]; edges: DiagramEdge[] };
+  ir: { type: string; title: string; notes: string[]; direction?: string; nodes: DiagramNode[]; edges: DiagramEdge[]; sequenceBlocks?: SequenceBlock[] };
   createdAt: string;
 };
+
+export type CodeContext = {
+  statement: string; target?: string; receiver?: string; arguments: string[]; assignedTo?: string; createdType?: string;
+  initializers: string[]; controlPath: Array<{ id: string; kind: string; label: string; branch: string }>;
+  span: { revisionSha: string; blobOid: string; filePath: string; startLine: number; endLine: number; startOffset?: number; endOffset?: number };
+  purpose: string;
+  definitions?: Array<{ name: string; statement: string; span: CodeContext["span"] }>;
+};
+
+export type DiagramExplanation = {
+  summary: string;
+  changes: Array<{ changeId: string; summary: string; factIds: string[]; nodeIds: string[]; edgeIds: string[] }>;
+  factIds: string[]; evidenceIds: string[];
+  status: string; warnings: string[]; basis: string;
+};
+
+export type SequenceBlock = { id: string; kind: string; label: string; children: SequenceBlock[]; edgeId?: string;
+  participantIds?: string[]; detailPageId?: string };
 
 export type DiagramAvailability = { type: string; available: boolean; reason?: string };
 
@@ -299,6 +325,8 @@ export type AnalysisDiagramGroup = {
 };
 
 export type AnalysisDiagramView = {
+  document?: { overviewPageId: string; pages: Array<{ id: string; title: string; diagram: DiagramArtifact }>;
+    coverage: Array<{ changeId: string; state: string; pageIds: string[]; reason?: string }> };
   viewId: string;
   selection: DiagramViewSelection;
   diagram?: DiagramArtifact;
@@ -307,7 +335,20 @@ export type AnalysisDiagramView = {
   errorCode?: string;
   errorMessage?: string;
   reused: boolean;
-  comparisonBaseDiagram?: DiagramArtifact;
+  generationMetadata?: {
+    changeIds: string[];
+    sources: Array<{ filePath: string; startLine: number; endLine: number }>;
+    evidenceIds: string[];
+    llmStatus: "Applied" | "Fallback" | "Disabled" | "NotRun" | string;
+    refinementInstruction?: string;
+    bundleHash?: string;
+    analyzerVersion?: string;
+    promptVersion?: string;
+    effectiveOptions?: DiagramStyle;
+    instructionResults?: string[];
+    attempts?: number;
+    warnings: string[];
+  };
 };
 
 export type DiagramEditDocument = {
@@ -366,6 +407,6 @@ export type AnalysisResponse = {
     diagrams: DiagramArtifact[];
     diagramAvailability?: DiagramAvailability[];
     diagramGroups?: AnalysisDiagramGroup[];
-    graph: { identities: unknown[]; versions: unknown[]; edges: unknown[]; evidence: unknown[]; changes: unknown[] };
+    graph?: { identities: unknown[]; versions: unknown[]; edges: unknown[]; evidence: unknown[]; changes: unknown[] };
   };
 };

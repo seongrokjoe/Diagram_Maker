@@ -21,6 +21,8 @@ llm-policy.local.json
 LocalAssist_Company_LLM_Integration_Reference_KO.txt
 *.user
 *.suo
+/start-local-test.bat
+/stop-local-test.bat
 
 # Runtime data
 repositories/

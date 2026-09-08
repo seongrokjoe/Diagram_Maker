@@ -1,8 +1,10 @@
+import type { RuntimeInfo, SampleCatalog, SampleGenerateInput, SampleGenerateResult } from "./sampleTestTypes";
 import type {
   AnalysisGroupSelection,
   AnalysisHistorySummary,
   AnalysisPlan,
   AnalysisResponse,
+  DiagramArtifact,
   DiagramPreset,
   DiagramEditDocument,
   DiagramEditPreview,
@@ -50,6 +52,13 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  runtimeInfo: () => request<RuntimeInfo>("/api/v1/runtime-info"),
+  sampleCatalog: () => request<SampleCatalog>("/api/v1/sample-tests/scenarios"),
+  prepareSample: (scenarioId: string) => request<{ id: string }>(`/api/v1/sample-tests/${encodeURIComponent(scenarioId)}/plan`, { method: "POST" }),
+  generateSample: (scenarioId: string, input: SampleGenerateInput, signal?: AbortSignal) =>
+    request<SampleGenerateResult>(`/api/v1/sample-tests/${encodeURIComponent(scenarioId)}/generate`, {
+      method: "POST", body: JSON.stringify(input), signal,
+    }),
   listRepositories: () => request<Repository[]>("/api/v1/repositories"),
   inspectRepository: (localPath: string) =>
     request<RepositoryInspection>("/api/v1/repositories/inspect", {
@@ -98,7 +107,7 @@ export const api = {
     useLlmGrouping: boolean;
     enableThinking: boolean;
   }) => request<AnalysisPlan>("/api/v1/analysis-plans", { method: "POST", body: JSON.stringify(input) }),
-  listAnalysisPlans: (limit = 20) => request<AnalysisPlan[]>(`/api/v1/analysis-plans?limit=${limit}`),
+  listAnalysisPlans: (limit = 20) => request<AnalysisPlan[]>(`/api/v1/analysis-plans?limit=${limit}&summary=true`),
   getAnalysisPlan: (id: string) => request<AnalysisPlan>(`/api/v1/analysis-plans/${id}`),
   listAnalysisPlanAnalyses: (id: string, limit = 20) =>
     request<AnalysisHistorySummary[]>(`/api/v1/analysis-plans/${id}/analyses?limit=${limit}`),
@@ -114,7 +123,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ expectedRevision, sourceAnalysisId, requestedViewIds }),
     }),
-  getAnalysis: (id: string) => request<AnalysisResponse>(`/api/v1/analyses/${id}`),
+  getAnalysis: (id: string) => request<AnalysisResponse>(`/api/v1/analyses/${id}?includeGraph=false&summary=true`),
+  getAnalysisPage: (id: string, groupId: string, viewId: string, pageId: string, signal?: AbortSignal) =>
+    request<DiagramArtifact>(`/api/v1/analyses/${id}/groups/${encodeURIComponent(groupId)}/views/${encodeURIComponent(viewId)}/pages/${encodeURIComponent(pageId)}`, { signal }),
+  getAnalysisEvidence: (id: string, evidenceId: string) => request<EvidenceSnippet>(`/api/v1/analyses/${id}/evidence/${encodeURIComponent(evidenceId)}/snippet`),
 
   listDiagramRevisions: (rootArtifactId: string) =>
     request<DiagramRevisionRecord[]>(`/api/v1/diagram-artifacts/${rootArtifactId}/revisions`),
@@ -130,12 +142,12 @@ export const api = {
   }),
   saveAnalysisDiagramEdit: (analysisId: string, groupId: string, viewId: string, input: {
     rootArtifactId: string; parentRevisionId?: string; expectedVersion: number; document: DiagramEditDocument;
-  }, revisionSide: "base" | "target" = "target") => request<DiagramRevisionRecord>(`/api/v1/analyses/${analysisId}/groups/${encodeURIComponent(groupId)}/views/${encodeURIComponent(viewId)}/edits?revisionSide=${revisionSide}`, {
+  }, pageId = "overview") => request<DiagramRevisionRecord>(`/api/v1/analyses/${analysisId}/groups/${encodeURIComponent(groupId)}/views/${encodeURIComponent(viewId)}/edits?pageId=${encodeURIComponent(pageId)}`, {
     method: "POST", body: JSON.stringify(input),
   }),
   previewAnalysisDiagramEdit: (analysisId: string, groupId: string, viewId: string, input: {
     rootArtifactId: string; parentRevisionId?: string; expectedVersion: number; document: DiagramEditDocument;
-  }, signal?: AbortSignal, revisionSide: "base" | "target" = "target") => request<DiagramEditPreview>(`/api/v1/analyses/${analysisId}/groups/${encodeURIComponent(groupId)}/views/${encodeURIComponent(viewId)}/edit-preview?revisionSide=${revisionSide}`, {
+  }, signal?: AbortSignal, pageId = "overview") => request<DiagramEditPreview>(`/api/v1/analyses/${analysisId}/groups/${encodeURIComponent(groupId)}/views/${encodeURIComponent(viewId)}/edit-preview?pageId=${encodeURIComponent(pageId)}`, {
     method: "POST", body: JSON.stringify(input), signal,
   }),
 

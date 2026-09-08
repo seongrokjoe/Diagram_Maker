@@ -121,6 +121,14 @@ public sealed class NaturalDiagramServiceTests
             => throw new NotSupportedException();
 
         public Task<ReviewNarrative?> GenerateReviewAsync(VersionedGraph graph, IReadOnlyList<ChangedFile> files, bool enableThinking, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<DiagramIr?> RefineAnalysisDiagramAsync(
+            DiagramIr candidate,
+            VersionedGraph graph,
+            GitComparison comparison,
+            IReadOnlyList<string> changeIds,
+            DiagramViewSelection selection,
+            bool enableThinking,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<LlmConnectionTestResult> TestConnectionAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<LlmContractTestResult> TestDiagramContractAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<LlmThinkingContractTestResult> TestThinkingContractAsync(CancellationToken cancellationToken) => throw new NotSupportedException();

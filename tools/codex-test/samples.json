@@ -1,0 +1,27 @@
+{
+  "version": "1",
+  "scenarios": [
+    {
+      "id": "cpp-packets",
+      "title": "C++ 패킷 분기와 동작 요약",
+      "kind": "git",
+      "fileName": "Packet.cpp",
+      "before": "struct Header { int type; int size; };\nclass PacketStore {\npublic:\n    void Save(int value) { count = value; }\n    void Reject() { count = 0; }\nprivate:\n    int count;\n};\nclass Dispatcher {\npublic:\n    int Dispatch(void* headerBuffer) {\n        Header* header = (Header*)headerBuffer;\n        store.Save(header->size);\n        return 0;\n    }\nprivate:\n    PacketStore store;\n};\n",
+      "after": "struct Header { int type; int size; };\nclass PacketStore {\npublic:\n    void Save(int value) { count = value; }\n    void Reject() { count = 0; }\nprivate:\n    int count;\n};\nclass Dispatcher {\npublic:\n    int Dispatch(void* headerBuffer) {\n        Header* header = (Header*)headerBuffer;\n        if (header == nullptr) return -1;\n        switch (header->type) {\n        case 1:\n            store.Save(header->size);\n            break;\n        case 2:\n        case 3:\n            store.Save(1);\n            break;\n        case 4:\n            store.Save(4);\n        default:\n            store.Reject();\n            return -2;\n        }\n        return 0;\n    }\nprivate:\n    PacketStore store;\n};\n"
+    },
+    {
+      "id": "csharp-orders",
+      "title": "C# 주문 처리·호출·클래스 관계",
+      "kind": "git",
+      "fileName": "Orders.cs",
+      "before": "namespace SyntheticOrders;\npublic interface IOrderStore { void Save(int amount); }\npublic class OrderStore : IOrderStore {\n    private int total;\n    public void Save(int amount) { total = amount; }\n    public int ReadTotal() { return total; }\n}\npublic class Validator { public bool Accept(int amount) { return amount > 0; } }\npublic class OrderService {\n    private OrderStore store = new OrderStore();\n    private Validator validator = new Validator();\n    public bool Submit(int amount) {\n        store.Save(amount);\n        return true;\n    }\n    private void Unrelated() { }\n}\npublic class OrderController {\n    private OrderService service = new OrderService();\n    public bool Submit(int amount) { return service.Submit(amount); }\n}\npublic class UnrelatedReport { public void Print() { } }\n",
+      "after": "namespace SyntheticOrders;\npublic interface IOrderStore { void Save(int amount); }\npublic class OrderStore : IOrderStore {\n    private int total;\n    public void Save(int amount) { total = amount; }\n    public int ReadTotal() { return total; }\n}\npublic class Validator { public bool Accept(int amount) { return amount > 0; } }\npublic class OrderService {\n    private OrderStore store = new OrderStore();\n    private Validator validator = new Validator();\n    public bool Submit(int amount) {\n        if (!validator.Accept(amount)) return false;\n        store.Save(amount);\n        return true;\n    }\n    private void Unrelated() { }\n}\npublic class OrderController {\n    private OrderService service = new OrderService();\n    public bool Submit(int amount) { return service.Submit(amount); }\n}\npublic class UnrelatedReport { public void Print() { } }\n"
+    },
+    {
+      "id": "natural-orders",
+      "title": "가상 주문 시스템 — 자연어 4종",
+      "kind": "natural",
+      "prompt": "가상 주문 시스템을 설명한다. 고객이 주문을 요청하면 OrderController가 OrderService를 호출한다. OrderService는 Validator로 수량을 검증하고, 성공하면 OrderStore에 저장한다. 실패하면 오류를 반환하고 저장하지 않는다. IOrderStore 인터페이스를 OrderStore가 구현하며 private total 변수와 public Save 메서드를 가진다. 주문 상태는 대기, 검증 중, 완료, 거절이며 검증 성공과 실패에 따라 전이한다. 코드가 아닌 짧은 한국어 동작 설명을 사용한다."
+    }
+  ]
+}

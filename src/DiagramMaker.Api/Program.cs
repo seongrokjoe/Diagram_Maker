@@ -9,24 +9,37 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
+var codexTestsEnabled = builder.Configuration.GetValue<bool>("CodexTest:Enabled");
 var explicitLlmPolicyPath = Environment.GetEnvironmentVariable("DIAGRAMMAKER_LLM_POLICY_PATH");
 var defaultLlmPolicyPath = Path.Combine(
     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
     "DiagramMaker",
     "llm-policy.json");
 var llmPolicyPath = string.IsNullOrWhiteSpace(explicitLlmPolicyPath) ? defaultLlmPolicyPath : explicitLlmPolicyPath;
-if (!string.IsNullOrWhiteSpace(explicitLlmPolicyPath) && !Path.IsPathFullyQualified(llmPolicyPath))
+if (!codexTestsEnabled && !string.IsNullOrWhiteSpace(explicitLlmPolicyPath) && !Path.IsPathFullyQualified(llmPolicyPath))
 {
     throw new InvalidOperationException("DIAGRAMMAKER_LLM_POLICY_PATH must be an absolute path.");
 }
-if (File.Exists(llmPolicyPath))
+if (!codexTestsEnabled && File.Exists(llmPolicyPath))
 {
     builder.Configuration.AddJsonFile(llmPolicyPath, optional: false, reloadOnChange: false);
     builder.Configuration.AddEnvironmentVariables();
 }
-else if (!string.IsNullOrWhiteSpace(explicitLlmPolicyPath))
+else if (!codexTestsEnabled && !string.IsNullOrWhiteSpace(explicitLlmPolicyPath))
 {
     throw new FileNotFoundException("The configured Diagram Maker LLM policy file does not exist.", llmPolicyPath);
+}
+var codexTestOptions = builder.Configuration.GetSection(CodexTestOptions.SectionName).Get<CodexTestOptions>() ?? new();
+codexTestOptions.Validate(builder.Environment.IsDevelopment(), builder.Configuration["urls"]);
+builder.Services.AddSingleton(codexTestOptions);
+if (codexTestOptions.Enabled)
+{
+    builder.Configuration["Storage:Provider"] = "LocalFile";
+    builder.Configuration["Storage:LocalFilePath"] = Path.Combine(codexTestOptions.RuntimeRoot, "store.json");
+    builder.Configuration["Security:TrustReverseProxyHeaders"] = "false";
+    builder.Configuration["Llm:Enabled"] = "true";
+    builder.Configuration["Llm:AllowDevelopmentStub"] = "false";
+    builder.Configuration["Llm:Model"] = codexTestOptions.Model ?? "codex-cli-default";
 }
 builder.Logging.ClearProviders();
 builder.Logging.AddSimpleConsole(options =>
@@ -66,9 +79,18 @@ builder.Services.AddScoped<DiagramRevisionService>();
 builder.Services.AddSingleton(services => new VllmClient(
     services.GetRequiredService<IOptions<LlmOptions>>().Value,
     services.GetRequiredService<ILogger<VllmClient>>()));
+builder.Services.AddSingleton<ICodexProcessRunner, CodexProcessRunner>();
+builder.Services.AddSingleton(services => new CodexCliCompletionTransport(codexTestOptions,
+    services.GetRequiredService<IOptions<LlmOptions>>().Value, services.GetRequiredService<ICodexProcessRunner>()));
+builder.Services.AddSingleton<ILlmCompletionTransport>(services => codexTestOptions.Enabled
+    ? services.GetRequiredService<CodexCliCompletionTransport>() : services.GetRequiredService<VllmClient>());
+if (codexTestOptions.Enabled) builder.Services.AddSingleton<CodexSampleCatalog>();
 builder.Services.AddSingleton<StructuredLlmCompletion>();
 builder.Services.AddSingleton<IInternalLlmClient, InternalLlmClient>();
-builder.Services.AddSingleton<IGitWorkerClient, GitWorkerClient>();
+builder.Services.AddSingleton<GitWorkerClient>();
+builder.Services.AddSingleton<IGitWorkerClient>(services => codexTestOptions.Enabled
+    ? new SampleGitWorkerClient(services.GetRequiredService<GitWorkerClient>(), services.GetRequiredService<CodexSampleCatalog>())
+    : services.GetRequiredService<GitWorkerClient>());
 builder.Services.AddScoped<NaturalDiagramService>();
 builder.Services.AddScoped<AnalysisJobProcessor>();
 builder.Services.AddScoped<AnalysisPlanProcessor>();
@@ -92,11 +114,14 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseMiddleware<InternalIdentityMiddleware>();
+if (codexTestOptions.Enabled) app.Use(SampleTestEndpoints.GuardAsync);
 var localWebRoot = Path.GetFullPath("../../web/dist", app.Environment.ContentRootPath);
 var packagedWebRoot = Path.GetFullPath("wwwroot", AppContext.BaseDirectory);
 var selectedWebRoot = app.Environment.IsDevelopment() && Directory.Exists(localWebRoot)
     ? localWebRoot
     : packagedWebRoot;
+if (codexTestOptions.Enabled && Directory.Exists(Path.Combine(codexTestOptions.RuntimeRoot, "web")))
+    selectedWebRoot = Path.Combine(codexTestOptions.RuntimeRoot, "web");
 if (!Directory.Exists(selectedWebRoot))
 {
     throw new InvalidOperationException($"Static web directory does not exist: {selectedWebRoot}");
@@ -109,11 +134,24 @@ app.UseStaticFiles(new StaticFileOptions { FileProvider = staticFiles });
 await using (var scope = app.Services.CreateAsyncScope())
 {
     await scope.ServiceProvider.GetRequiredService<IAppStore>().InitializeAsync(CancellationToken.None);
+    if (codexTestOptions.Enabled)
+        await scope.ServiceProvider.GetRequiredService<CodexSampleCatalog>().InitializeAsync(
+            scope.ServiceProvider.GetRequiredService<IAppStore>(), CancellationToken.None);
 }
 
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", service = "diagram-maker-api" }));
 
 var api = app.MapGroup("/api/v1");
+api.MapGet("/runtime-info", (IServiceProvider services) => Results.Ok(new
+{
+    mode = codexTestOptions.Enabled ? "codex-sample" : "normal",
+    llmProvider = codexTestOptions.Enabled ? "codex-cli" : "internal-vllm",
+    sampleOnly = codexTestOptions.Enabled,
+    model = codexTestOptions.Enabled ? codexTestOptions.Model ?? "CLI 기본 모델" : null,
+    capabilities = new { thinkingControl = !codexTestOptions.Enabled, exactTokenLimit = !codexTestOptions.Enabled },
+    codex = codexTestOptions.Enabled ? services.GetRequiredService<CodexCliCompletionTransport>().Status : null
+}));
+if (codexTestOptions.Enabled) app.MapSampleTests();
 
 api.MapGet("/repositories", async (HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
 {
@@ -341,11 +379,12 @@ api.MapPost("/analysis-plans", async (
     return Results.Accepted($"/api/v1/analysis-plans/{plan.Id}", ToAnalysisPlanResponse(plan));
 });
 
-api.MapGet("/analysis-plans", async (int? limit, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
+api.MapGet("/analysis-plans", async (int? limit, bool? summary, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
 {
     var identity = context.GetInternalIdentity();
     var plans = await store.ListAnalysisPlansAsync(identity.UserId, Math.Clamp(limit ?? 20, 1, 50), cancellationToken);
-    return Results.Ok(plans.Select(ToAnalysisPlanResponse));
+    return Results.Ok(plans.Select(plan => ToAnalysisPlanResponse(summary == true ? plan with
+        { Comparison = null, Graph = null, Candidates = [], SuggestedGroups = [], Selections = [] } : plan)));
 });
 
 api.MapGet("/analysis-plans/{id:guid}", async (
@@ -515,9 +554,9 @@ api.MapPost("/analyses", async (
     {
         return Results.BadRequest(new { error = "CallerDepth must be 0-3 and CalleeDepth must be 0-2." });
     }
-    if (request.DiagramTypes?.Any(type => !DiagramProjectionService.IsSupported(type)) == true)
+    if (request.DiagramTypes?.Any(type => !IsSupportedGitDiagramType(type)) == true)
     {
-        return Results.BadRequest(new { error = "DiagramTypes must contain only flowchart, class, sequence, code-relation, or state." });
+        return Results.BadRequest(new { error = "DiagramTypes must contain only flowchart, class, sequence, or code-relation." });
     }
 
     var now = DateTimeOffset.UtcNow;
@@ -527,13 +566,22 @@ api.MapPost("/analyses", async (
     return Results.Accepted($"/api/v1/analyses/{job.Id}", ToAnalysisResponse(job));
 });
 
-api.MapGet("/analyses/{id:guid}", async (Guid id, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
+api.MapGet("/analyses/{id:guid}", async (Guid id, bool? includeGraph, bool? summary, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
 {
     var job = await store.GetAnalysisAsync(id, cancellationToken);
     if (job is null) return Results.NotFound();
     var repository = await store.GetRepositoryAsync(job.Request.RepositoryId, cancellationToken);
     if (repository is null || !context.GetInternalIdentity().CanAccess(repository)) return Results.Forbid();
-    return Results.Ok(ToAnalysisResponse(job));
+    return Results.Ok(ToAnalysisResponse(summary == true ? CompactAnalysis(job) : job, includeGraph ?? true));
+});
+
+api.MapGet("/analyses/{id:guid}/groups/{groupId}/views/{viewId}/pages/{pageId}", async (
+    Guid id, string groupId, string viewId, string pageId, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
+{
+    var job = await AuthorizedJob(id, context, store, cancellationToken);
+    if (job is null) return Results.NotFound();
+    var artifact = FindAnalysisDiagramArtifact(job, groupId, viewId, pageId);
+    return artifact is null ? Results.NotFound() : Results.Ok(artifact);
 });
 
 api.MapGet("/analyses/{id:guid}/graph", async (Guid id, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
@@ -595,6 +643,22 @@ api.MapGet("/analyses/{id:guid}/events", async (Guid id, HttpContext context, IA
         if (job.State is AnalysisState.Completed or AnalysisState.Partial or AnalysisState.Failed) return;
         await Task.Delay(TimeSpan.FromMilliseconds(750), cancellationToken);
     }
+});
+
+api.MapGet("/analyses/{id:guid}/evidence/{evidenceId}/snippet", async (
+    Guid id, string evidenceId, HttpContext context, IAppStore store, IGitWorkerClient git, CancellationToken cancellationToken) =>
+{
+    var job = await AuthorizedJob(id, context, store, cancellationToken);
+    if (job?.Result is null) return Results.NotFound();
+    var evidence = job.Result.Graph.Evidence.FirstOrDefault(item => item.Id == evidenceId);
+    if (evidence is null) return Results.NotFound();
+    var repository = await store.GetRepositoryAsync(job.Request.RepositoryId, cancellationToken);
+    if (repository is null) return Results.NotFound();
+    var snippet = await git.ReadEvidenceAsync(repository, evidence.RevisionSha, evidence.FilePath,
+        evidence.StartLine, evidence.EndLine, cancellationToken);
+    if (snippet.RevisionSha != evidence.RevisionSha || snippet.BlobOid != evidence.BlobOid)
+        return Results.Conflict(new { error = "저장된 근거와 Git blob이 일치하지 않습니다." });
+    return Results.Ok(snippet);
 });
 
 api.MapPost("/natural-diagrams", async (
@@ -857,17 +921,15 @@ api.MapPost("/analyses/{id:guid}/groups/{groupId}/views/{viewId}/edit-preview", 
     Guid id,
     string groupId,
     string viewId,
-    string? revisionSide,
     SaveDiagramEditRequest request,
     HttpContext context,
     IAppStore store,
     DiagramRevisionService service,
     CancellationToken cancellationToken) =>
 {
-    if (!ValidRevisionSide(revisionSide)) return Results.BadRequest(new { error = "revisionSide must be base or target." });
     var job = await AuthorizedJob(id, context, store, cancellationToken);
     if (job is null) return Results.NotFound();
-    var artifact = FindAnalysisDiagramArtifact(job, groupId, viewId, revisionSide);
+    var artifact = FindAnalysisDiagramArtifact(job, groupId, viewId, context.Request.Query["pageId"].FirstOrDefault());
     if (artifact is null) return Results.NotFound(new { error = "The diagram view does not exist." });
     var identity = context.GetInternalIdentity();
     try
@@ -919,23 +981,21 @@ api.MapPost("/analyses/{id:guid}/groups/{groupId}/views/{viewId}/edits", async (
     Guid id,
     string groupId,
     string viewId,
-    string? revisionSide,
     SaveDiagramEditRequest request,
     HttpContext context,
     IAppStore store,
     DiagramRevisionService service,
     CancellationToken cancellationToken) =>
 {
-    if (!ValidRevisionSide(revisionSide)) return Results.BadRequest(new { error = "revisionSide must be base or target." });
     var job = await AuthorizedJob(id, context, store, cancellationToken);
     if (job is null) return Results.NotFound();
-    var artifact = FindAnalysisDiagramArtifact(job, groupId, viewId, revisionSide);
+    var artifact = FindAnalysisDiagramArtifact(job, groupId, viewId, context.Request.Query["pageId"].FirstOrDefault());
     if (artifact is null) return Results.NotFound(new { error = "The diagram view does not exist." });
     var identity = context.GetInternalIdentity();
     try
     {
         var revision = await service.SaveAsync(artifact, request, identity.UserId, "analysis", job.Id,
-            groupId, revisionSide?.Equals("base", StringComparison.OrdinalIgnoreCase) == true ? $"{viewId}:base" : viewId,
+            groupId, viewId,
             cancellationToken);
         return Results.Created($"/api/v1/diagram-artifacts/{artifact.Id}/revisions/{revision.Id}", revision);
     }
@@ -963,32 +1023,63 @@ static DiagramArtifact? FindNaturalDiagramArtifact(NaturalDiagramRecord record, 
     return record.Request.EffectiveViews()[0].Id == viewId ? record.Diagram : null;
 }
 
-static DiagramArtifact? FindAnalysisDiagramArtifact(AnalysisJob job, string groupId, string viewId, string? revisionSide = null)
+static DiagramArtifact? FindAnalysisDiagramArtifact(AnalysisJob job, string groupId, string viewId, string? pageId = null)
 {
     var group = job.Result?.DiagramGroups?.FirstOrDefault(item => item.GroupId == groupId);
     if (group is null) return null;
     if (group.Views is { Count: > 0 })
     {
         var view = group.Views.FirstOrDefault(item => item.ViewId == viewId);
-        return revisionSide?.Equals("base", StringComparison.OrdinalIgnoreCase) == true
-            ? view?.ComparisonBaseDiagram
-            : view?.Diagram;
+        if (view?.Document is { } document)
+            return document.Pages.FirstOrDefault(page => page.Id == (pageId ?? document.OverviewPageId))?.Diagram;
+        return pageId is null or "overview" ? view?.Diagram : null;
     }
-    return $"{group.GroupId}-view" == viewId ? group.Diagram : null;
+    return $"{group.GroupId}-view" == viewId && pageId is null or "overview" ? group.Diagram : null;
 }
 
-static bool ValidRevisionSide(string? value) => string.IsNullOrWhiteSpace(value) ||
-    value.Equals("base", StringComparison.OrdinalIgnoreCase) || value.Equals("target", StringComparison.OrdinalIgnoreCase);
+static AnalysisJob CompactAnalysis(AnalysisJob job)
+{
+    if (job.Result is null) return job;
+    DiagramArtifact? Summary(DiagramArtifact? artifact) => artifact is null ? null : artifact with
+    { MermaidDsl = "", Explanation = null, Ir = artifact.Ir with { Nodes = [], Edges = [], SequenceBlocks = null } };
+    return job with { Result = job.Result with
+    {
+        Diagrams = job.Result.DiagramGroups is { Count: > 0 } ? [] : job.Result.Diagrams,
+        DiagramGroups = job.Result.DiagramGroups?.Select(group => group with
+        {
+            Understanding = null,
+            Diagram = group.Views is { Count: > 0 } ? null : Summary(group.Diagram),
+            Views = group.Views?.Select(view => view with
+            {
+                Diagram = Summary(view.Diagram),
+                Document = view.Document is null ? null : view.Document with
+                { Pages = view.Document.Pages.Select(page => page with { Diagram = Summary(page.Diagram)! }).ToArray() }
+            }).ToArray()
+        }).ToArray()
+    } };
+}
 
-static object ToAnalysisResponse(AnalysisJob job) => new
+static object ToAnalysisResponse(AnalysisJob job, bool includeGraph = true) => new
 {
     job.Id,
+    job.Request.TestMetadata,
     job.State,
     job.BaseSha,
     job.TargetSha,
     job.Progress,
     job.StageMessage,
-    job.Result,
+    Result = job.Result is null
+        ? null
+        : includeGraph
+            ? (object)job.Result
+            : new
+            {
+                job.Result.ChangedFiles,
+                job.Result.Narrative,
+                job.Result.Diagrams,
+                job.Result.DiagramAvailability,
+                job.Result.DiagramGroups
+            },
     job.ErrorCode,
     job.ErrorMessage,
     job.CreatedAt,
@@ -1103,8 +1194,10 @@ static string? ValidatePlanSelections(
         foreach (var view in views)
         {
             if (string.IsNullOrWhiteSpace(view.Id) || !usedViews.Add(view.Id.Trim())) return "Every diagram view must have a globally unique ID.";
-            if (!DiagramProjectionService.IsSupported(view.DiagramType)) return $"Unsupported diagram type: {view.DiagramType}";
+            if (!IsSupportedGitDiagramType(view.DiagramType)) return $"Unsupported Git analysis diagram type: {view.DiagramType}";
             if (!catalog.Contains(view.DiagramType, view.PresetId)) return $"The preset '{view.PresetId}' does not support {view.DiagramType}.";
+            if (view.RefinementInstruction?.Trim().Length > 500)
+                return "Diagram refinement instructions must contain at most 500 characters.";
             if (view.Overrides?.CallerDepth is < 0 or > 3 || view.Overrides?.CalleeDepth is < 0 or > 3 || view.Overrides?.RelationDepth is < 0 or > 3)
                 return "Depth overrides must be between 0 and 3.";
             if (view.Overrides?.Direction is { } viewDirection && viewDirection is not ("LR" or "TB"))
@@ -1118,6 +1211,9 @@ static string? ValidatePlanSelections(
     }
     return null;
 }
+
+static bool IsSupportedGitDiagramType(string type) => type.Trim().ToLowerInvariant() is
+    "flowchart" or "class" or "sequence" or "code-relation";
 
 static IResult LlmFailure(LlmClientException exception) => Results.Json(new
 {

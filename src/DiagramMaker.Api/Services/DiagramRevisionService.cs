@@ -31,7 +31,8 @@ public sealed partial class DiagramRevisionService(
         {
             var (currentVersion, parentRevisionId, ir) = await BuildAsync(source, request, ownerUserId, cancellationToken);
             var now = DateTimeOffset.UtcNow;
-            var artifact = new DiagramArtifact(Guid.NewGuid(), ir.Type, currentVersion + 1, ir, compiler.Compile(ir), now);
+            var artifact = new DiagramArtifact(Guid.NewGuid(), ir.Type, currentVersion + 1, ir, compiler.Compile(ir), now,
+                source.Explanation is null ? null : source.Explanation with { Basis = "GeneratedSourceBeforeManualEdit" });
             var record = new DiagramRevisionRecord(
                 Guid.NewGuid(), request.RootArtifactId, source.Id, parentRevisionId, ownerUserId,
                 sourceKind, sourceId, groupId, viewId, artifact.Version, artifact, now);
@@ -112,7 +113,10 @@ public sealed partial class DiagramRevisionService(
             Direction = document.Direction,
             Nodes = nodes,
             Edges = edges,
-            Notes = basis.Notes.Concat(["구조 편집기에서 수정됨."]).Distinct(StringComparer.Ordinal).ToArray()
+            Notes = basis.Notes.Concat([$"사용자 편집본: 원본 대비 노드 {basis.Nodes.Count(node => nodes.All(item => item.Id != node.Id))}개 삭제. 생성 당시 의미·커버리지 검증과 다를 수 있습니다."])
+                .Distinct(StringComparer.Ordinal).ToArray(),
+            SequenceBlocks = basis.SequenceBlocks is null ? null : SequenceStructure.ApplyEdit(basis.SequenceBlocks,
+                edges, nodes.Select(node => node.Id).ToHashSet())
         };
     }
 
@@ -122,10 +126,10 @@ public sealed partial class DiagramRevisionService(
             throw new ArgumentException("The diagram title must contain 1-200 characters.");
         if (document.Direction is not null && document.Direction is not ("LR" or "TB"))
             throw new ArgumentException("Direction must be LR or TB.");
-        if (document.Nodes is null || document.Nodes.Count is < 1 or > 100)
-            throw new ArgumentException("A diagram must contain 1-100 nodes.");
-        if (document.Edges is null || document.Edges.Count > 200)
-            throw new ArgumentException("A diagram may contain at most 200 edges.");
+        if (document.Nodes is null || document.Nodes.Count is < 1 or > 500)
+            throw new ArgumentException("A diagram must contain 1-500 nodes.");
+        if (document.Edges is null || document.Edges.Count > 500)
+            throw new ArgumentException("A diagram may contain at most 500 edges.");
         if (document.Nodes.Any(static node => string.IsNullOrWhiteSpace(node.Id) || !SafeId().IsMatch(node.Id) || string.IsNullOrWhiteSpace(node.Label) || node.Label.Trim().Length > DiagramValidator.MaximumNodeLabelLength))
             throw new ArgumentException($"Node IDs and labels must be valid and no longer than {DiagramValidator.MaximumNodeLabelLength} characters.");
         if (document.Edges.Any(static edge => string.IsNullOrWhiteSpace(edge.Id) || !SafeId().IsMatch(edge.Id) || string.IsNullOrWhiteSpace(edge.SourceId) || string.IsNullOrWhiteSpace(edge.TargetId) || edge.Label is null || edge.Label.Length > 240))

@@ -50,7 +50,7 @@ public sealed record VllmCompletionResult(
     int? CompletionTokens,
     int? TotalTokens);
 
-public sealed class VllmClient : IDisposable
+public sealed class VllmClient : ILlmCompletionTransport, IDisposable
 {
     private const int MaximumResponseBytes = 4 * 1024 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);

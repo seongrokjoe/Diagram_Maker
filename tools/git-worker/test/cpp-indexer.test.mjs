@@ -2,6 +2,68 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseCppFile, resolveCppCalls } from "../cpp-indexer.mjs";
 
+test("switch preserves fallthrough, no-match and break destinations", async () => {
+  const parsed = await parseCppFile("Switch.cpp", `void Save() {} void Run(int n) {
+    switch(n) { case 1: n++; case 2: Save(); break; } Save();
+  }`);
+  const run = parsed.symbols.find(symbol => symbol.simpleName === "Run");
+  const nodes = run.controlNodes;
+  const edges = run.controlEdges;
+  const decision = nodes.find(node => node.label.startsWith("switch"));
+  const secondCase = nodes.find(node => node.label === "case 2");
+  assert.ok(edges.some(edge => edge.targetId === secondCase.id && edge.label === "fallthrough"));
+  assert.ok(edges.some(edge => edge.sourceId === decision.id && edge.label === "일치 없음"));
+  const broken = nodes.find(node => node.kind === "break");
+  const after = edges.find(edge => edge.sourceId === broken.id);
+  assert.equal(nodes.find(node => node.id === after.targetId).kind, "call");
+});
+
+test("do while enters the body first and return has no unreachable successors", async () => {
+  const parsed = await parseCppFile("Loop.cpp", `void Save() {} void Run() {
+    do { Save(); } while(false); return; Save();
+  }`);
+  const run = parsed.symbols.find(symbol => symbol.simpleName === "Run");
+  const entry = run.controlNodes.find(node => node.kind === "entry");
+  const next = run.controlEdges.find(edge => edge.sourceId === entry.id);
+  assert.notEqual(run.controlNodes.find(node => node.id === next.targetId).kind, "loop");
+  assert.equal(run.controlNodes.filter(node => node.kind === "call").length, 1);
+});
+
+test("same-line calls remain distinct and nested calls precede the enclosing call", async () => {
+  const parsed = await parseCppFile("Calls.cpp", `int Parse() { return 1; } void Save(int n) {} void Run() { Save(Parse()); Save(1); Save(2); }`);
+  const run = parsed.symbols.find(symbol => symbol.simpleName === "Run");
+  assert.deepEqual(run.calls.map(call => call.name), ["Parse", "Save", "Save", "Save"]);
+  assert.equal(new Set(run.calls.map(call => call.startOffset)).size, 4);
+  assert.equal(resolveCppCalls([parsed]).edges.length, 4);
+});
+
+test("C++ sibling argument calls explicitly retain evaluation order uncertainty", async () => {
+  const parsed = await parseCppFile("Arguments.cpp", `int Read() { return 1; } int Next() { return 2; } void Save(int a, int b) {} void Run() { Save(Read(), Next()); }`);
+  const run = parsed.symbols.find(symbol => symbol.simpleName === "Run");
+  assert.ok(run.calls.filter(call => call.name !== "Save").every(call => call.controlPath.some(scope => scope.kind === "unordered")));
+});
+
+test("sequence facts distinguish switch branches and make fallthrough uncertainty explicit", async () => {
+  const parsed = await parseCppFile("Switch.cpp", `void Save() {} void Run(int n) {
+    switch(n) { case 1: Save(); break; default: Save(); break; }
+    switch(n) { case 1: Save(); default: Save(); }
+  }`);
+  const calls = parsed.symbols.find(symbol => symbol.simpleName === "Run").calls;
+  assert.deepEqual(calls.slice(0, 2).map(call => call.controlPath[0].branch), ["case 1", "default"]);
+  assert.ok(calls.slice(0, 2).every(call => call.controlPath[0].kind === "alt"));
+  assert.ok(calls.slice(2).every(call => call.controlPath[0].kind === "unordered"));
+});
+
+test("method owner preserves class versus struct identity and excludes namespace-only qualification", async () => {
+  const parsed = await parseCppFile("Owners.cpp", `struct S { void Run() {} }; class C { public: void Save() {} }; namespace N { void Read() {} }`);
+  const resolved = resolveCppCalls([parsed]);
+  const run = resolved.symbols.find(symbol => symbol.simpleName === "Run");
+  assert.equal(run.ownerSemanticKey, "type:S");
+  assert.equal(run.ownerKind, "type");
+  assert.equal(resolved.symbols.find(symbol => symbol.simpleName === "Save").ownerKind, "class");
+  assert.equal(resolved.symbols.find(symbol => symbol.simpleName === "Read").ownerSemanticKey, undefined);
+});
+
 test("C++ overload identities include canonical parameter types and qualifiers", async () => {
   const parsed = await parseCppFile("Service.cpp", `
     struct Service {
@@ -110,6 +172,36 @@ test("C++ control flow preserves assignments, suppresses nested calls, and group
   assert.ok(labels.includes('WRITE_LOG(true, "TEST %s", cjData.c_str());'));
   assert.ok(!labels.some((label) => label === "GetCJInfo(temp)" || label === "cjData.c_str()"));
   assert.ok(labels.includes("int a = 0;\nint b = 1;\nint c = 10;"));
+});
+
+test("C++ indexer extracts member visibility and separates switch cases", async () => {
+  const parsed = await parseCppFile("Service.cpp", `
+    class Service {
+      int count, limit;
+    public:
+      void Execute(int kind) {
+        switch (kind) {
+          case 1: Save(); break;
+          case 2: Load(); break;
+          default: Reset(); break;
+        }
+      }
+      void Save() {}
+      void Load() {}
+      void Reset() {}
+    };
+  `);
+
+  const service = parsed.symbols.find((symbol) => symbol.qualifiedName === "Service" && symbol.kind === "class");
+  assert.ok(service);
+  assert.ok(service.members.some((member) => member.name === "count" && member.accessibility === "private" && member.kind === "field"));
+  assert.ok(service.members.some((member) => member.name === "limit" && member.accessibility === "private" && member.kind === "field"));
+  assert.ok(service.members.some((member) => member.name === "Execute" && member.accessibility === "public" && member.kind === "method"));
+  const execute = parsed.symbols.find((symbol) => symbol.qualifiedName === "Service::Execute");
+  const branchLabels = execute.controlEdges.map((edge) => edge.label);
+  assert.ok(branchLabels.includes("case 1"));
+  assert.ok(branchLabels.includes("case 2"));
+  assert.ok(branchLabels.includes("default"));
 });
 
 test("indirect API uses an explicit alias and reports unresolved targets", async () => {
