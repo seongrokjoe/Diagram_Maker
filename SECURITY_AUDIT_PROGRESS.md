@@ -14,6 +14,14 @@
 
 ## 검증 및 다음 작업
 
+- 2026-09-10 첫 clean worktree 빌드는 x64 worker 32/web 45/번들 통과 후 khroma 고지 비교에서
+  실패했다. Git autocrlf가 검토 고지의 LF를 CRLF로 바꾼 것을 확인해 `packaging/licenses/** -text`
+  속성을 추가한다. 라이선스 검사 기준은 완화하지 않는다. 다음: 보완 커밋/checkout 검증 후 재빌드.
+
+- 2026-09-10 소스 `f027762` 커밋 완료. `%TEMP%/DiagramMaker-internal4-20260910`에
+  동일 소스의 깨끗한 detached worktree를 만들고 `0.1.0-internal.4 -SkipTests` 빌드를 시작했다.
+  기존 승인 캐시만 복사했으며, 다음은 실제 패키지/API/UI/LLM 두 모드/실행기/ZIP 검사다.
+
 - 2026-09-10 internal.4 전체 verify exit 0. .NET 168, worker 32, web 45, 정책 회귀 7,
   시작 11종(`internal-policy-XAatmd`), 선택 정책 API(`api-smoke-BahTIx`),
   기본 API(`api-smoke-cGJBxo`), Edge UI(`code-block-ui-1k7OGL`) 통과.

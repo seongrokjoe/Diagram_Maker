@@ -6,6 +6,14 @@
 
 ## 현재 상태
 
+- 2026-09-10 clean worktree 패키지 검사에서 Git autocrlf가 khroma 고지의 줄바꿈을 바꿔
+  원본 패키지와 SHA가 달라진 문제를 확인했다. `.gitattributes`로 검토 고지 바이트를 보존한다.
+  x64 worker 32/web 45 및 번들 빌드는 통과했다. 다음: 속성 보완 커밋 → clean checkout 고지 비교 → 재빌드.
+
+- 2026-09-10 internal.4 소스 커밋 `f027762` 생성. 비동기화 detached worktree
+  `%TEMP%/DiagramMaker-internal4-20260910`에서 동일 커밋/clean 상태로 패키지 빌드 중이다.
+  다음: 빌드 결과 확인 → 실제 패키지 API/UI/LLM 두 모드/CMD 실행기/ZIP 감사 → 배포 교체·push.
+
 - 2026-09-10 internal.4 전체 verify exit 0: .NET 168, worker 32, web 45, 정책 회귀 7,
   시작 11종, 기본/선택 정책 API와 Edge UI 통과. UI: `code-block-ui-1k7OGL`.
   검증 중 호출 디렉터리로 인해 라이선스 출력 경로가 OneDrive로 해석되어 중단됐고,

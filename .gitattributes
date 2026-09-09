@@ -1,0 +1,2 @@
+# Preserve reviewed license evidence byte-for-byte on every checkout.
+packaging/licenses/** -text
