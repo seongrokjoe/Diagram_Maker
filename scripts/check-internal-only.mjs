@@ -23,7 +23,7 @@ export function scanInternalOnly(root, { packaged = false } = {}) {
 }
 export function checkPackage(packageRoot) {
   const failures = scanInternalOnly(packageRoot, { packaged: true });
-  for (const required of ["DiagramMaker.Api.dll", "tools/git-worker/local-security.mjs", "config/network-policy.example.json", "licenses/sbom.cdx.json"])
+  for (const required of ["DiagramMaker.Api.dll", "tools/git-worker/local-security.mjs", "start.cmd", "start-with-network-policy.cmd", "config/network-policy.example.json", "licenses/sbom.cdx.json"])
     if (!fs.existsSync(path.join(packageRoot, required))) failures.push(`Missing ${required}`);
   try {
     const items = readLicenseBundle(path.join(packageRoot, "licenses"));

@@ -68,9 +68,8 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
         if (!options.Enabled) return;
 
         _endpoint = ValidateOptions(options);
-        if (handler is null && networkPolicy is null)
-            throw new InvalidOperationException("An approved network policy is required for LLM connections.");
-        networkPolicy?.ValidateLlm(_endpoint);
+        networkPolicy ??= ApprovedNetworkPolicy.Load(null);
+        networkPolicy.ValidateLlm(_endpoint);
         handler ??= new SocketsHttpHandler
         {
             AllowAutoRedirect = false,
@@ -79,7 +78,7 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
             Credentials = null,
             ConnectTimeout = TimeSpan.FromSeconds(options.ConnectTimeoutSeconds),
             PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-            ConnectCallback = networkPolicy!.ConnectLlmAsync
+            ConnectCallback = networkPolicy.ConnectLlmAsync
         };
         _client = new HttpClient(handler, disposeHandler: true) { Timeout = Timeout.InfiniteTimeSpan };
     }

@@ -29,3 +29,21 @@ test("frontend build policy requires a file and confines output to exact roots",
   fs.writeFileSync(process.env.DIAGRAMMAKER_NETWORK_POLICY_PATH, JSON.stringify({ LocalRoots: [] }));
   assert.throws(() => assertApprovedBuildPath(root));
 });
+
+test("basic frontend builds ignore leftover default policy but retain local path checks", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "diagram-basic-build-"));
+  t.after(() => rm(root, { recursive: true }));
+  const previous = { policy: process.env.DIAGRAMMAKER_NETWORK_POLICY_PATH, local: process.env.LOCALAPPDATA };
+  t.after(() => {
+    for (const [key, value] of [['DIAGRAMMAKER_NETWORK_POLICY_PATH', previous.policy], ['LOCALAPPDATA', previous.local]]) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  });
+  delete process.env.DIAGRAMMAKER_NETWORK_POLICY_PATH;
+  process.env.LOCALAPPDATA = root;
+  fs.mkdirSync(path.join(root, 'DiagramMaker'));
+  fs.writeFileSync(path.join(root, 'DiagramMaker/network-policy.json'), 'not-json');
+  assert.doesNotThrow(() => assertApprovedBuildPath(path.join(root, 'output')));
+  assert.throws(() => assertApprovedBuildPath(path.join(root, 'OneDrive/output')));
+  assert.throws(() => assertApprovedBuildPath('relative/path'));
+});

@@ -44,7 +44,7 @@ const server = spawn("dotnet", [path.join(root, "src/DiagramMaker.Api/bin/Releas
   cwd: path.join(root, "src/DiagramMaker.Api"), windowsHide: true,
   env: { ...process.env, ASPNETCORE_ENVIRONMENT: "Development", DOTNET_ENVIRONMENT: "Development",
     Storage__Provider: "InMemory", Llm__Enabled: "false", Security__TrustReverseProxyHeaders: "false",
-    DIAGRAMMAKER_LLM_POLICY_PATH: llmPolicy, DIAGRAMMAKER_NETWORK_POLICY_PATH: networkPolicy,
+    DIAGRAMMAKER_LLM_POLICY_PATH: llmPolicy, DIAGRAMMAKER_NETWORK_POLICY_PATH: process.argv.includes('--basic') ? '' : networkPolicy,
     GitWorker__ScriptPath: path.join(root, "tools/git-worker/index.mjs") },
   stdio: ["ignore", "pipe", "pipe"],
 });

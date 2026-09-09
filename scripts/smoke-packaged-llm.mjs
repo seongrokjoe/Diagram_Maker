@@ -13,6 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 assertLocalPath(root);
 assert.ok(process.argv[2], 'Pass the unpacked package directory under artifacts/stage');
 const packageRoot = await realpath(path.resolve(root, process.argv[2]));
+const basicMode = process.argv.includes('--basic');
 const relative = path.relative(await realpath(path.join(root, 'artifacts/stage')), packageRoot);
 assert.ok(relative && relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative));
 const fixture = await mkdtemp(path.join(root, 'artifacts/packaged-llm-'));
@@ -64,7 +65,7 @@ try {
     cwd: packageRoot, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, ASPNETCORE_ENVIRONMENT: 'Development', DOTNET_ENVIRONMENT: 'Development',
       Storage__Provider: 'InMemory', Security__TrustReverseProxyHeaders: 'false', CodexTest__Enabled: 'false',
-      DIAGRAMMAKER_LLM_POLICY_PATH: llmPolicy, DIAGRAMMAKER_NETWORK_POLICY_PATH: networkPolicy,
+      DIAGRAMMAKER_LLM_POLICY_PATH: llmPolicy, DIAGRAMMAKER_NETWORK_POLICY_PATH: basicMode ? '' : networkPolicy,
       GitWorker__NodeExecutable: path.join(packageRoot, 'runtime/node/node.exe'),
       GitWorker__ScriptPath: path.join(packageRoot, 'tools/git-worker/index.mjs') },
   });
@@ -100,8 +101,8 @@ try {
   mode = 'redirect'; await test('connection', 503);
   assert.equal(redirected, 0); checks.push('HTTP redirect rejected');
   await writeFile(path.join(fixture, 'result.json'), JSON.stringify({ status: 'passed', checks, requests,
-    syntheticOnly: true, corporateLlmTested: false }, null, 2));
-  console.log(`Packaged LLM transport: ${checks.length} checks passed. ${path.relative(root, fixture)}`);
+    networkMode: basicMode ? 'basic' : 'restricted', syntheticOnly: true, corporateLlmTested: false }, null, 2));
+  console.log(`Packaged LLM transport (${basicMode ? 'basic' : 'restricted'}): ${checks.length} checks passed. ${path.relative(root, fixture)}`);
 } catch (error) {
   await writeFile(path.join(fixture, 'result.json'), JSON.stringify({ status: 'failed', checks, error: String(error) }, null, 2));
   throw error;

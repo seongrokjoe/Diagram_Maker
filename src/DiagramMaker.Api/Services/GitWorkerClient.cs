@@ -234,7 +234,7 @@ public sealed class GitWorkerClient : IGitWorkerClient
         };
         startInfo.ArgumentList.Add(_scriptPath);
         DiagramMaker.Security.WorkerEnvironment.Apply(startInfo);
-        if (_networkPolicy is not null)
+        if (_networkPolicy is { IsRestricted: true })
             startInfo.Environment["DIAGRAMMAKER_LOCAL_ROOTS"] = JsonSerializer.Serialize(_networkPolicy.LocalRoots);
 
         using var process = new Process { StartInfo = startInfo };

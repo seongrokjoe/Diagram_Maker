@@ -17,7 +17,7 @@ try {
         npm.cmd test --prefix $packageRoot
         Assert-LastExitCode "$packageRoot tests"
     }
-    node --test scripts/license-policy.test.mjs scripts/check-internal-only.test.mjs
+    node --test scripts/license-policy.test.mjs scripts/check-internal-only.test.mjs scripts/offline-policy.test.mjs
     Assert-LastExitCode 'license policy regression tests'
     npm.cmd run build --prefix web -- --outDir ../artifacts/verify-web-dist --emptyOutDir
     Assert-LastExitCode 'frontend build'
@@ -34,6 +34,8 @@ try {
     Assert-LastExitCode 'internal startup rejection checks'
     node scripts/smoke-diagram-api.mjs
     Assert-LastExitCode 'synthetic loopback API regression'
+    node scripts/smoke-diagram-api.mjs --basic
+    Assert-LastExitCode 'basic mode synthetic loopback API regression'
     if (Test-Path -LiteralPath artifacts/ui-check/node_modules/playwright/package.json) {
         node scripts/smoke-code-block-ui.mjs
         Assert-LastExitCode 'synthetic code block UI regression'

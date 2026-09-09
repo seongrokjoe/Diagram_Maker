@@ -2,7 +2,6 @@
 setlocal
 set "APP_ROOT=%~dp0"
 set "POLICY_PATH=%LOCALAPPDATA%\DiagramMaker\llm-policy.json"
-set "NETWORK_POLICY_PATH=%LOCALAPPDATA%\DiagramMaker\network-policy.json"
 
 if not exist "%APP_ROOT%DiagramMaker.Api.exe" (
   echo [ERROR] DiagramMaker.Api.exe was not found.
@@ -17,13 +16,8 @@ if not exist "%POLICY_PATH%" (
   echo Run configure-llm.cmd first.
   exit /b 1
 )
-if not exist "%NETWORK_POLICY_PATH%" (
-  echo [ERROR] Run configure-network.cmd and obtain an approved network policy first.
-  exit /b 1
-)
 
 set "DIAGRAMMAKER_LLM_POLICY_PATH=%POLICY_PATH%"
-set "DIAGRAMMAKER_NETWORK_POLICY_PATH=%NETWORK_POLICY_PATH%"
 set "CodexTest__Enabled=false"
 set "NODE_OPTIONS="
 set "NODE_PATH="

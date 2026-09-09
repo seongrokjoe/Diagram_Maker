@@ -5,10 +5,12 @@ using Npgsql;
 
 namespace DiagramMaker.Security;
 
-// Loaded separately from application configuration. Environment/CLI Llm settings
-// cannot expand this administrator-owned allowlist. Empty lists deny access.
+// Optional administrator allowlist, enabled only by an explicit policy path.
+// Without it, configured endpoints/local paths still use the baseline safeguards.
+// An explicitly supplied policy always fails closed; app settings cannot widen it.
 public sealed class ApprovedNetworkPolicy
 {
+    internal bool IsRestricted { get; private init; } = true;
     public string[] LlmOrigins { get; init; } = [];
     public string[] LlmAddressRanges { get; init; } = [];
     public DatabaseTarget[] Databases { get; init; } = [];
@@ -16,10 +18,12 @@ public sealed class ApprovedNetworkPolicy
 
     public sealed record DatabaseTarget(string Address, int Port);
 
-    public static ApprovedNetworkPolicy Load()
+    public static ApprovedNetworkPolicy Load() => Load(Environment.GetEnvironmentVariable("DIAGRAMMAKER_NETWORK_POLICY_PATH"));
+
+    public static ApprovedNetworkPolicy Load(string? path)
     {
-        var path = Environment.GetEnvironmentVariable("DIAGRAMMAKER_NETWORK_POLICY_PATH")
-            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DiagramMaker", "network-policy.json");
+        // Do not auto-load a leftover policy from a previous installation.
+        if (string.IsNullOrWhiteSpace(path)) return new ApprovedNetworkPolicy { IsRestricted = false };
         LocalPathSafety.Validate(path);
         var policy = JsonSerializer.Deserialize<ApprovedNetworkPolicy>(File.ReadAllText(path),
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true, UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow })
@@ -42,7 +46,7 @@ public sealed class ApprovedNetworkPolicy
 
     public void ValidateLlm(Uri endpoint)
     {
-        if (!LlmOrigins.Any(origin => Uri.Compare(new Uri(origin), endpoint, UriComponents.SchemeAndServer,
+        if (IsRestricted && !LlmOrigins.Any(origin => Uri.Compare(new Uri(origin), endpoint, UriComponents.SchemeAndServer,
                 UriFormat.SafeUnescaped, StringComparison.OrdinalIgnoreCase) == 0))
             throw new InvalidOperationException("LLM destination is not approved by the network policy.");
     }
@@ -50,8 +54,8 @@ public sealed class ApprovedNetworkPolicy
     public void ValidateAddresses(IEnumerable<IPAddress> addresses)
     {
         var resolved = addresses.ToArray();
-        if (resolved.Length == 0 || resolved.Any(address => !LlmAddressRanges.Any(range =>
-                IPNetwork.Parse(range).Contains(address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address))))
+        if (resolved.Length == 0 || (IsRestricted && resolved.Any(address => !LlmAddressRanges.Any(range =>
+                IPNetwork.Parse(range).Contains(address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address)))))
             throw new InvalidOperationException("LLM address is outside the approved IP ranges.");
     }
 
@@ -77,8 +81,8 @@ public sealed class ApprovedNetworkPolicy
         var options = new NpgsqlConnectionStringBuilder(connectionString);
         // Npgsql resolves hostnames when opening each pooled connection. Literal
         // IPs make the allowlist binding stable, including after pool eviction.
-        if (!IPAddress.TryParse(options.Host, out var address) || !Databases.Any(target =>
-                IPAddress.Parse(target.Address).Equals(address) && target.Port == options.Port))
+        if (!IPAddress.TryParse(options.Host, out var address) || (IsRestricted && !Databases.Any(target =>
+                IPAddress.Parse(target.Address).Equals(address) && target.Port == options.Port)))
             throw new InvalidOperationException("Database requires an approved literal IP and port; host lists, sockets and DNS names are not accepted.");
         if (!IPAddress.IsLoopback(address) && options.SslMode != SslMode.VerifyFull)
             throw new InvalidOperationException("Remote database connections require SSL Mode=VerifyFull and a certificate valid for the approved IP.");
@@ -88,7 +92,7 @@ public sealed class ApprovedNetworkPolicy
     public void ValidateLocalPath(string path)
     {
         LocalPathSafety.Validate(path);
-        if (!LocalRoots.Any(root => LocalPathSafety.IsWithin(root, path)))
+        if (IsRestricted && !LocalRoots.Any(root => LocalPathSafety.IsWithin(root, path)))
             throw new InvalidOperationException("Path is outside the approved local roots.");
     }
 }

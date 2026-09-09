@@ -21,8 +21,8 @@ export function assertLocalBuildPath(candidate) {
 
 export function assertApprovedBuildPath(candidate) {
   assertLocalBuildPath(candidate);
-  const policyFile = process.env.DIAGRAMMAKER_NETWORK_POLICY_PATH
-    ?? path.join(process.env.LOCALAPPDATA ?? "", "DiagramMaker/network-policy.json");
+  const policyFile = process.env.DIAGRAMMAKER_NETWORK_POLICY_PATH;
+  if (!policyFile?.trim()) return;
   assertLocalBuildPath(policyFile);
   const policy = JSON.parse(fs.readFileSync(policyFile, "utf8").replace(/^\uFEFF/, ""));
   if (!Array.isArray(policy.LocalRoots) || !policy.LocalRoots.some(root => {

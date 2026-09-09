@@ -14,6 +14,26 @@
 
 ## 검증 및 다음 작업
 
+- 2026-09-10 internal.4 전체 verify exit 0. .NET 168, worker 32, web 45, 정책 회귀 7,
+  시작 11종(`internal-policy-XAatmd`), 선택 정책 API(`api-smoke-BahTIx`),
+  기본 API(`api-smoke-cGJBxo`), Edge UI(`code-block-ui-1k7OGL`) 통과.
+  npm 268/NuGet 24/SBOM 292 검증. 호출 위치에 따른 NuGet 출력 경로 오류는
+  비동기화 작업본에서 명령을 직접 실행해 해결했다. 공개 다운로드/실제 LLM·DB 호출 없음.
+  다음: 소스 커밋과 동일 커밋의 internal.4 빌드, 패키지/실행기 검사 후 ZIP 교체·push.
+
+- 2026-09-10 internal.4 재개: 기존 변경과 승인 범위를 확인하고 기본/선택 정책 안내,
+  두 모드의 API·패키지 LLM 검사, 명시 정책 누락/오류/빈 목록과 기본 경로/origin 거부 검사를 추가했다.
+  .NET 168, worker 32, web 45 통과. PowerShell 회귀의 모든 조건은 통과했으나 Windows Node가
+  동기 임시 폴더 삭제에서 0xC0000409로 종료했다(확장 권한/x64도 재현).
+  정리 코드를 기존 테스트와 같은 비동기 rm으로 바꿔 회귀 통과를 확인했다.
+  다음: 전체 verify → 소스 커밋 → internal.4 패키지/두 실행 모드 검증 → 구버전 ZIP 정리와 push.
+
+- 2026-09-10 후속 사용자 승인: 별도 network JSON 없는 기본 실행, 관리자 선택 정책,
+  이전 배포 ZIP/SHA 삭제, 새 internal.4 ZIP 생성과 기존 origin/main push.
+  미지정 시 기존 기본 위치의 network-policy.json도 읽지 않는다. 명시된 정책의 누락/오류/거부는
+  기본 모드로 자동 전환하지 않는다. 기존 경로/원문/리디렉션/Git 보호와 오프라인 빌드는 유지한다.
+  다음: 기본 모드와 선택 정책의 회귀, 전체 verify, ZIP 정리와 새 패키지 검증.
+
 - 2026-09-10 원격 배포 완료: 소스 `5295226`, 패키징 보완 `6b19242`, 릴리스 `2d12cd3`을
   기존 `origin/main`에 일반 push했고 exit 0 및 `e53efc2..2d12cd3` 갱신을 확인했다.
   최초 자동 승인 거부는 기존 origin의 소스/ZIP 배포 이력을 제시한 재검토로 해소했다.

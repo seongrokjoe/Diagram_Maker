@@ -1,7 +1,7 @@
 # AI Git Architecture Reviewer
 
-현재 사내 LLM 시험용 Windows 배포본은 [0.1.0-internal.3 ZIP](artifacts/release/DiagramMaker-0.1.0-internal.3-win-x64.zip)과
-[SHA-256](artifacts/release/DiagramMaker-0.1.0-internal.3-win-x64.zip.sha256)입니다.
+현재 사내 LLM 시험용 Windows 배포본은 [0.1.0-internal.4 ZIP](artifacts/release/DiagramMaker-0.1.0-internal.4-win-x64.zip)과
+[SHA-256](artifacts/release/DiagramMaker-0.1.0-internal.4-win-x64.zip.sha256)입니다.
 설정·검증 결과는 [배포 검증 보고서](SECURITY_AUDIT_REPORT.md)를 참조하세요.
 
 사내 Git 커밋의 변경 심볼과 중요한 호출 관계만 선별해 Mermaid 다이어그램으로 만드는 내부용 애플리케이션입니다. 외부 LLM fallback, CDN, telemetry, 임의 Git URL, 저장소 build·hook 실행은 지원하지 않습니다.
@@ -50,18 +50,20 @@ URL/click 라벨 5종의 실제 표시와 링크 동작 제거, 결과 트리 �
 node scripts/smoke-code-block-ui.mjs
 ```
 
-코드 블럭 기능의 별도 Windows 미리보기 패키지는 아래 명령으로 빌드하고 검사합니다. 기존 배포 ZIP을 보존하도록 별도 버전명을 사용합니다. 검증 결과와 실제 내부 LLM/PostgreSQL 연결 검증 상태는 [진행 기록](CODE_BLOCK_DIAGRAM_PROGRESS.md)에 기록합니다.
+Windows 패키지는 아래 명령으로 빌드하고 검사합니다. 빌드 스크립트는 같은 버전의 기존 ZIP을 덮어쓰지 않습니다. 검증 결과와 실제 내부 LLM/PostgreSQL 연결 검증 상태는 [진행 기록](CODE_BLOCK_DIAGRAM_PROGRESS.md)에 기록합니다.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1 -Version '0.1.0-internal.3'
-node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.3-win-x64
-node scripts/smoke-code-block-ui.mjs artifacts/stage/DiagramMaker-0.1.0-internal.3-win-x64
-node scripts/smoke-packaged-llm.mjs artifacts/stage/DiagramMaker-0.1.0-internal.3-win-x64
+powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1 -Version '0.1.0-internal.4'
+node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.4-win-x64
+node scripts/smoke-code-block-ui.mjs artifacts/stage/DiagramMaker-0.1.0-internal.4-win-x64
+node scripts/smoke-packaged-llm.mjs artifacts/stage/DiagramMaker-0.1.0-internal.4-win-x64
+node scripts/smoke-packaged-llm.mjs artifacts/stage/DiagramMaker-0.1.0-internal.4-win-x64 --basic
+node scripts/smoke-windows-launchers.mjs artifacts/stage/DiagramMaker-0.1.0-internal.4-win-x64
 ```
 
 ## 로컬 실행
 
-필수 도구는 승인된 .NET 9 SDK와 Node.js 24 및 오프라인 의존성 캐시입니다. 아래 사내 전용 정책을 준비한 뒤 비동기화 작업본에서 실행하고 `http://127.0.0.1:5080`을 엽니다.
+필수 도구는 승인된 .NET 9 SDK와 Node.js 24 및 오프라인 의존성 캐시입니다. LLM 설정을 준비한 뒤 비동기화 작업본에서 실행하고 `http://127.0.0.1:5080`을 엽니다. 별도 네트워크 정책 파일은 선택 사항입니다.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local.ps1
@@ -77,11 +79,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\stop-local.ps1
 
 ## 사내 전용 실행·빌드 정책
 
-외부 Codex 샘플 실행기·공급자·UI는 제거되었습니다. 예전 설정의 `CodexTest:Enabled=true`도 시작 단계에서 거부합니다. 과거 ZIP과 시험 기록은 이력 보존용이며 현재 사내 전용 배포본으로 사용하지 마세요.
+외부 Codex 샘플 실행기·공급자·UI는 제거되었습니다. 예전 설정의 `CodexTest:Enabled=true`도 시작 단계에서 거부합니다. 이전 배포 ZIP/SHA는 현재 배포 폴더에서 정리했으며 Git 이력과 checkpoint는 유지합니다.
 
 개발·검증·실행 폴더, 저장 데이터와 분석 저장소는 **OneDrive 밖의 승인된 로컬 경로**여야 합니다. OneDrive 이름/환경변수, 링크·정션·클라우드 placeholder를 검사합니다. 다른 동기화 제품이나 사용자 정의 동기화 폴더는 관리자가 동기화 제외를 확인해야 합니다. 현재 저장소가 OneDrive 아래라면 별도 로컬 작업본을 준비하세요.
 
-관리자가 `packaging/windows/config/network-policy.example.json`을 참고해 `%LOCALAPPDATA%/DiagramMaker/network-policy.json`을 준비합니다. `DIAGRAMMAKER_NETWORK_POLICY_PATH`로 다른 절대 경로를 지정할 수 있습니다. 빈 예제는 모든 연결과 작업 경로를 거부합니다.
+**기본 실행:** `configure-llm.cmd`에서 Endpoint·AllowedOrigin·Model을 설정하고 `start.cmd`로 실행합니다. 별도 IP/경로 허용목록은 필요하지 않으며 이전 설치의 `network-policy.json`도 자동으로 읽지 않습니다. origin 일치, 로컬 비동기화 경로, 프록시·리디렉션 차단과 Git 보호는 유지합니다.
+
+**선택 정책:** 관리자가 `configure-network.cmd` 또는 `packaging/windows/config/network-policy.example.json`으로 허용목록을 준비한 뒤 `start-with-network-policy.cmd`로 실행합니다. `DIAGRAMMAKER_NETWORK_POLICY_PATH`에 절대 경로를 지정해도 API·개발·빌드에 해당 정책이 적용됩니다. 명시한 정책의 누락·오류·거부는 기본 모드로 전환하지 않습니다. 빈 예제는 모든 연결과 작업 경로를 거부합니다.
 
 - `LocalRoots`: 작업본·배포 폴더·데이터·저장소·LLM 정책 파일이 속하는 비동기화 절대 경로.
 - `LlmOrigins`와 `LlmAddressRanges`: 승인된 scheme/host/port 및 IP CIDR 범위. DNS 응답 전부를 검사하고 검사한 IP에 직접 연결합니다. 프록시와 리디렉션은 사용하지 않습니다.
@@ -148,12 +152,12 @@ Windows x64 오프라인 패키지 생성:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1
 ```
 
-패키징 기본 버전은 `0.1.0-internal.1`이며 출력은 `artifacts/release/DiagramMaker-0.1.0-internal.1-win-x64.zip`과 SHA-256 파일입니다. 기존 ZIP이 있으면 새 버전명을 지정해야 합니다. 저장소에 남아 있는 `offline.15` ZIP에는 이번 소스 수정이 포함되지 않습니다. 새 배포본 확정 전 실제 사내 LLM의 의미 품질과 브라우저 확대·선택 동작을 확인해야 합니다.
+패키징 기본 버전은 `0.1.0-internal.4`이며 출력은 `artifacts/release/DiagramMaker-0.1.0-internal.4-win-x64.zip`과 SHA-256 파일입니다. 기존 ZIP이 있으면 새 버전명을 지정해야 합니다. 실제 사내 LLM의 의미 품질은 사내 환경에서 별도로 확인해야 합니다.
 
 승인된 Playwright를 미리 반입하고 패키징을 완료한 뒤 실제 배포 실행 파일의 오프라인 샘플을 검사할 수 있습니다.
 
 ```powershell
-node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.1-win-x64
+node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.4-win-x64
 ```
 
 격리된 메모리 저장소·동적 loopback 포트와 배포 start.cmd와 동일한 Development 환경에서 LLM과 개발용 생성 스텁을 끄고, 외부 페이지 요청과 생성 요청을 차단합니다. 배포 HTML/JS/CSS/Mermaid 파일의 SHA-256 일치와 4개 종류 × 4개 화면 폭의 모든 샘플을 확인합니다. 단계별 결과·파일 해시·스크린샷·서버 로그는 `artifacts/offline-preview-*/`에 저장합니다. 기존 운영 서버·저장 데이터·LLM 설정은 변경하지 않습니다.

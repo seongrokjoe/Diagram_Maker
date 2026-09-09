@@ -6,6 +6,21 @@
 
 ## 현재 상태
 
+- 2026-09-10 internal.4 전체 verify exit 0: .NET 168, worker 32, web 45, 정책 회귀 7,
+  시작 11종, 기본/선택 정책 API와 Edge UI 통과. UI: `code-block-ui-1k7OGL`.
+  검증 중 호출 디렉터리로 인해 라이선스 출력 경로가 OneDrive로 해석되어 중단됐고,
+  비동기화 작업본을 실제 작업 디렉터리로 지정한 전체 재실행을 통과했다.
+  다음: 검증 소스 커밋 → 동일 커밋의 internal.4 빌드 → 실제 패키지/실행기 검사 → ZIP 교체·push.
+
+- 2026-09-10 internal.4 재개 중: 기본 실행/선택 정책 안내와 API·LLM·시작 회귀를 보완했다.
+  .NET 168/worker 32/web 45 통과. 새 PowerShell 테스트의 Node 임시 정리 충돌을 해결했다.
+  다음: 전체 verify, 소스 커밋, internal.4 빌드·패키지 검사, 승인된 구버전 ZIP/SHA 정리와 origin push.
+
+- 2026-09-10 사용자 요청으로 실행 설정 간소화와 internal.4 배포를 진행한다.
+  기본 실행은 LLM 설정만 사용하고 네트워크 허용목록은 명시적 경로/전용 실행기로 선택한다.
+  이전 배포 ZIP/SHA 삭제는 이번 사용자가 명시적으로 승인했으며 과거 보존 지침보다 우선한다.
+  다음: 기본/명시적 정책 회귀 → 전체 verify → 구버전 정리 → internal.4 빌드/검증/기존 origin push.
+
 - 2026-09-10 사내 전용 정비 A4와 internal.3 Windows ZIP 검증 완료.
   전체 verify 및 실제 패키지 API/UI/합성 LLM 전송/ZIP 해시 검사가 통과했다.
   기존 checkpoint·작업 변경·과거 ZIP은 보존했다. 소스 커밋은 `5295226`, 패키징 보완은 `6b19242`.

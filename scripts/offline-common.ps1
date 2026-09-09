@@ -44,7 +44,7 @@ function Assert-OfflinePath([string]$Candidate) {
 function Assert-ApprovedWorkRoot([string]$Candidate) {
     Assert-OfflinePath $Candidate
     $policyAuditPath = $env:DIAGRAMMAKER_NETWORK_POLICY_PATH
-    if (-not $policyAuditPath) { $policyAuditPath = Join-Path $env:LOCALAPPDATA 'DiagramMaker\network-policy.json' }
+    if ([string]::IsNullOrWhiteSpace($policyAuditPath)) { return }
     Assert-OfflinePath $policyAuditPath
     if (-not (Test-Path -LiteralPath $policyAuditPath)) { throw 'An administrator-approved network-policy.json is required.' }
     $policyAuditData = Get-Content -LiteralPath $policyAuditPath -Raw -Encoding UTF8 | ConvertFrom-Json

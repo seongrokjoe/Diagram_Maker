@@ -3,7 +3,7 @@ Diagram Maker Windows x64 오프라인 설치
 
 1. 함께 제공된 .sha256 파일과 ZIP의 SHA-256을 비교한다.
 
-   certutil -hashfile DiagramMaker-0.1.0-internal.3-win-x64.zip SHA256
+   certutil -hashfile DiagramMaker-0.1.0-internal.4-win-x64.zip SHA256
 
 2. ZIP을 쓰기 가능한 로컬 폴더에 완전히 압축 해제한다.
    OneDrive 및 다른 동기화 폴더는 금지한다. C:\Tools\DiagramMaker 같은 비동기화 경로가 필수다.
@@ -12,11 +12,7 @@ Diagram Maker Windows x64 오프라인 설치
    Git 변경 분석은 설치된 네이티브 Git을 우선 사용한다. Git이 없으면 fallback Worker로 동작하지만,
    대용량 pack 저장소와 C++ 프로젝트 인덱싱은 네이티브 Git이 필요하다.
 
-4. configure-network.cmd로 정책 예제를 준비하고 관리자에게 승인을 받는다.
-   LocalRoots에 배포·데이터·저장소·LLM 정책 경로를, LlmOrigins/LlmAddressRanges에 내부 목적지만 등록한다.
-   빈 예제는 실행과 연결을 거부한다. 정책 ACL과 호스트 방화벽도 관리자가 적용해야 한다.
-
-   configure-llm.cmd를 실행한다.
+4. configure-llm.cmd를 실행한다.
    생성되는 정책 파일에서 승인된 사내 정보만 설정한다.
 
    Endpoint      : /v1/chat/completions까지 포함한 전체 URL
@@ -24,6 +20,15 @@ Diagram Maker Windows x64 오프라인 설치
    Model         : 승인된 모델명
 
 5. start.cmd를 실행하고 CMD 창을 닫지 않는다.
+   기본 실행에는 llm-policy.json만 필요하며 별도 IP/경로 허용목록은 필요하지 않다.
+   이전 설치의 network-policy.json은 자동으로 읽지 않는다.
+
+   관리자가 추가 허용목록을 적용할 때만 configure-network.cmd로 정책을 준비하고
+   start-with-network-policy.cmd로 실행한다. LocalRoots에는 배포·데이터·저장소·LLM 정책 폴더를,
+   LlmOrigins/LlmAddressRanges에는 승인된 목적지를 등록한다.
+   DIAGRAMMAKER_NETWORK_POLICY_PATH에 절대 경로를 지정하면 start.cmd도 해당 정책을 적용한다.
+   명시한 파일의 누락·오류·빈 허용목록은 실행/연결을 거부하며 기본 모드로 전환하지 않는다.
+   기본 모드에서도 origin 일치, 비동기화 로컬 경로, 프록시·리디렉션 차단은 유지된다.
 
 6. 다른 CMD 창에서 아래 명령을 순서대로 실행한다.
 
