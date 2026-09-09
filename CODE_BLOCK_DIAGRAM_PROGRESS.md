@@ -6,9 +6,11 @@
 
 ## 현재 상태
 
-- 2026-09-10 배포 마무리 재개: 사내 전용 정비 A4, 새 internal.3 Windows ZIP과 Git push를 진행한다.
-  기존 checkpoint·작업 변경·과거 ZIP은 보존한다. 패키지 검사의 구형 버튼 선택자를 수정했다.
-  다음: 비동기화 임시 작업본에서 전체 verify와 새 패키지 검증. 상세 기록은 SECURITY_AUDIT_PROGRESS.md.
+- 2026-09-10 사내 전용 정비 A4와 internal.3 Windows ZIP 검증 완료.
+  전체 verify 및 실제 패키지 API/UI/합성 LLM 전송/ZIP 해시 검사가 통과했다.
+  기존 checkpoint·작업 변경·과거 ZIP은 보존했다. 소스 커밋은 `5295226`, 패키징 보완은 `6b19242`.
+  최신 ZIP: `artifacts/release/DiagramMaker-0.1.0-internal.3-win-x64.zip`.
+  검증·설정 안내: `SECURITY_AUDIT_REPORT.md`. 다음: 릴리스 커밋과 origin/main push 최종 확인.
 
 - 2026-09-09 사내 전용 보안·라이선스 정비 시작. 새 사용자 승인 기준과 단계별 결과는
   `SECURITY_AUDIT_PROGRESS.md`를 먼저 확인한다. 아래 기록은 정비 전 기능의 이력이다.
@@ -81,6 +83,13 @@
 4. 각 단계의 실제 파일/검증 명령/결과/남은 작업을 아래 변경 이력에 기록한다.
 
 ## 변경 이력
+
+- 2026-09-10 internal.3 패키지 최종 통과: 소스 `6b19242`/clean, 1,816 파일, 94,119,000 bytes.
+  SHA-256 `fd7bc703dab5879711098662f61c1ac73950ac4fbd1efe170e562bc50b850068`.
+  패키지 API/5종/C++/Mermaid `offline-preview-IgdXfH`, UI `code-block-ui-bmv0yA`,
+  합성 LLM 전송/실패 거부 5종 `packaged-llm-GjKh3r`, ZIP 전체 바이트/고지 감사 통과.
+  실제 사내 LLM/DB는 환경 미제공으로 미실시이며 사내 테스트 절차를 최종 보고서에 남겼다.
+  남은 작업: ZIP과 보고서 커밋, 일반 push와 원격 SHA 확인.
 
 - 2026-09-10 사내 전용 정비 최종 회귀 통과: .NET 163, worker 32, web 44, 정책 회귀 6,
   API/Edge UI, 시작 거부 5종, npm/NuGet 고지 해시와 SBOM 검사 통과.
