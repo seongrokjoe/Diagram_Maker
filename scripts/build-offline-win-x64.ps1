@@ -171,9 +171,9 @@ Assert-LastExitCode 'package external inference exclusion'
 $sourceCommit = 'unavailable'
 $sourceTreeDirty = $null
 if (Test-Path -LiteralPath (Join-Path $projectRoot '.git')) {
-    $sourceCommit = (git -C $projectRoot rev-parse HEAD).Trim()
+    $sourceCommit = (git -c "safe.directory=$projectRoot" -C $projectRoot rev-parse HEAD).Trim()
     Assert-LastExitCode 'source commit metadata'
-    $sourceChanges = @(git -C $projectRoot status --porcelain)
+    $sourceChanges = @(git -c "safe.directory=$projectRoot" -C $projectRoot status --porcelain)
     Assert-LastExitCode 'source working tree metadata'
     $sourceTreeDirty = $sourceChanges.Count -gt 0
 }

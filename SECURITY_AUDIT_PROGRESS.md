@@ -14,6 +14,12 @@
 
 ## 검증 및 다음 작업
 
+- 2026-09-10 소스 커밋 `5295226` 생성. 미리보기 cb.1/cb.2 ZIP의 기존 해시도 일치하며 이력으로 보존했다.
+  패키지 출처를 기록하기 위해 비동기화 작업본에 동일 커밋과 소스를 복제했다.
+  샌드박스/빌드 계정 차이로 Git 소유자 검사가 발생하여, 패키지 메타데이터 조회에만 검증된
+  projectRoot의 명령별 safe.directory를 지정했다. 사용자 전역 Git 설정은 변경하지 않았다.
+  다음: 보완된 패키징 스크립트로 internal.3 완성 및 ZIP/실행 검증.
+
 - 2026-09-10 전체 verify exit 0: .NET 163, worker 32, web 44, 정책 회귀 6,
   npm 268/NuGet 24 고지·해시 및 SBOM 292 구성요소 통과.
   시작 거부 5종 `internal-policy-KZyeEu`, API `api-smoke-5mUqKG`, Edge UI `code-block-ui-GJndSr` 통과.
