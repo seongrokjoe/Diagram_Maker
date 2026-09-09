@@ -1,6 +1,8 @@
-import { useEffect, useId, useRef, useState, type CSSProperties, type MouseEvent } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import type { DiagramArtifact } from "./types";
 import { clampZoom, renderAlias as alias, renderElementMap, zoomScrollDelta } from "./diagramInteraction";
+import { mermaidSafetyError } from "./mermaidSafety";
+import { prepareMermaidDisplay } from "./mermaidDisplay";
 
 export type DiagramSelection = { kind: "node" | "edge"; id: string };
 export type DiagramInlineEdit = DiagramSelection & { value: string };
@@ -33,10 +35,24 @@ function loadMermaid(): Promise<MermaidApi> {
   return mermaidPromise;
 }
 
-function sanitizeSvg(svg: string): string {
+function sanitizeSvg(svg: string, displayMarker = ""): string {
   const parser = new DOMParser();
   const document = parser.parseFromString(svg, "image/svg+xml");
-  document.querySelectorAll("script, foreignObject, iframe, object, embed, image, a").forEach((element) => element.remove());
+  document.querySelectorAll("script, foreignObject, iframe, object, embed, image, animate, animateMotion, animateTransform, set").forEach((element) => element.remove());
+  // Exported SVG has no application CSP. Remove CSS imports, escaped tokens and
+  // every URL except local fragment references before rendering or downloading.
+  document.querySelectorAll("style").forEach(element => {
+    const css = element.textContent ?? "";
+    if (/[@\\]/.test(css) || [...css.matchAll(/url\(([^)]+)\)/gi)]
+      .some(([, ref]) => !ref.trim().replace(/^['"]|['"]$/g, "").startsWith("#"))) element.remove();
+  });
+  // Some renderers auto-link ordinary URL text. Keep the visible label while
+  // discarding the link element and all of its navigation behavior.
+  document.querySelectorAll("a").forEach(element => element.replaceWith(...element.childNodes));
+  if (displayMarker) {
+    const text = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_TEXT);
+    while (text.nextNode()) text.currentNode.nodeValue = text.currentNode.nodeValue?.split(displayMarker).join("") ?? "";
+  }
   document.querySelectorAll("*").forEach((element) => {
     for (const attribute of [...element.attributes]) {
       const name = attribute.name.toLowerCase();
@@ -44,7 +60,8 @@ function sanitizeSvg(svg: string): string {
       const unsafeReference = (name === "href" || name === "xlink:href") && !value.startsWith("#");
       const unsafeUrl = [...value.matchAll(/url\(([^)]+)\)/g)]
         .some(([, reference]) => !reference.trim().replace(/^['"]|['"]$/g, "").startsWith("#"));
-      if (name.startsWith("on") || unsafeReference || value.startsWith("javascript:") || unsafeUrl) element.removeAttribute(attribute.name);
+      if (name.startsWith("on") || unsafeReference || value.startsWith("javascript:") || unsafeUrl ||
+        (name === "style" && /[@\\]/.test(value))) element.removeAttribute(attribute.name);
     }
   });
   return new XMLSerializer().serializeToString(document.documentElement);
@@ -66,6 +83,8 @@ function renderMermaid(mermaid: MermaidApi, id: string, source: string): Promise
 }
 
 type MermaidPreviewProps = {
+  toolbarContent?: ReactNode;
+  fitLabel?: string;
   source: string;
   artifact?: DiagramArtifact;
   downloadName?: string;
@@ -86,7 +105,7 @@ type MermaidPreviewProps = {
 
 export function MermaidPreview({ source, artifact, downloadName = "diagram", editable = false, compact = false,
   zoomable = false, interactive = false, selected = emptySelections, inlineEdit, onSelect, onEditRequest, onInlineEditChange,
-  onInlineEditCommit, onInlineEditCancel, onInteractionReady, onSaveRevision }: MermaidPreviewProps) {
+  onInlineEditCommit, onInlineEditCancel, onInteractionReady, onSaveRevision, toolbarContent, fitLabel = "100%로 초기화" }: MermaidPreviewProps) {
   const id = useId().replaceAll(":", "_");
   const canvasRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState(source);
@@ -127,17 +146,20 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
     setRendering(true);
     const timer = window.setTimeout(() => {
       const renderSource = editable ? draft : source;
-      if (/```|%%|javascript:|https?:\/\/|\bclick\s/i.test(renderSource)) {
-        setError("외부 링크, click, Mermaid directive 또는 코드 펜스는 사용할 수 없습니다.");
+      const blocked = mermaidSafetyError(renderSource);
+      if (blocked) {
+        setError(blocked);
+        interactionReady.current?.(false);
         setRendering(false);
         return;
       }
       const renderId = `diagram_${id}_${Date.now()}`;
+      const display = prepareMermaidDisplay(renderSource);
       void loadMermaid()
-        .then((mermaid) => renderMermaid(mermaid, renderId, renderSource))
+        .then((mermaid) => renderMermaid(mermaid, renderId, display.source))
         .then((result) => {
           if (!active) return;
-          const decorated = decorateSvg(sanitizeSvg(result.svg), artifact, []);
+          const decorated = decorateSvg(sanitizeSvg(result.svg, display.marker), artifact, []);
           setSvg(decorated.svg);
           setBaseSize(fittedSvgSize(decorated.svg, canvasRef.current, compact));
           interactionReady.current?.(interactive && decorated.mappingComplete);
@@ -229,7 +251,8 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
 
   return <>
     {!compact && <div className="diagram-actions">
-      {zoomable && <><button type="button" className="secondary zoom-button" disabled={zoom <= 0.5} onClick={() => zoomFromCenter(-0.1)} aria-label="축소">−</button><span className="zoom-status">{Math.round(zoom * 100)}%</span><button type="button" className="secondary zoom-button" disabled={zoom >= 3} onClick={() => zoomFromCenter(0.1)} aria-label="확대">＋</button><button type="button" className="secondary" disabled={zoom === 1} onClick={() => setZoom(1)}>100%로 초기화</button></>}
+      {toolbarContent}
+      {zoomable && <><button type="button" className="secondary zoom-button" disabled={zoom <= 0.5} onClick={() => zoomFromCenter(-0.1)} aria-label="축소">−</button><span className="zoom-status">{Math.round(zoom * 100)}%</span><button type="button" className="secondary zoom-button" disabled={zoom >= 3} onClick={() => zoomFromCenter(0.1)} aria-label="확대">＋</button><button type="button" className="secondary" onClick={() => { setZoom(1); canvasRef.current?.scrollTo(0, 0); }}>{fitLabel}</button></>}
       <button type="button" className="secondary" disabled={!svg} onClick={() => downloadSvg(svg, `${downloadName}.svg`)}>SVG 다운로드</button>
       <button type="button" className="secondary" disabled={!svg} onClick={() => void downloadPng(svg, `${downloadName}.png`)}>PNG 다운로드</button>
       {editable && <button type="button" className="secondary" disabled={draft === source || saving} onClick={() => setDraft(source)}>편집 취소</button>}
@@ -359,7 +382,7 @@ function fittedSvgSize(svg: string, canvas: HTMLDivElement | null, compact: bool
   const naturalWidth = Math.max(1, viewBox?.[2] || Number.parseFloat(root.getAttribute("width") ?? "800") || 800);
   const naturalHeight = Math.max(1, viewBox?.[3] || Number.parseFloat(root.getAttribute("height") ?? "500") || 500);
   const availableWidth = Math.max(1, (canvas?.clientWidth ?? naturalWidth) - (compact ? 10 : 40));
-  const availableHeight = compact ? 98 : Number.POSITIVE_INFINITY;
+  const availableHeight = compact ? 98 : canvas?.closest(".code-block-result-content") ? Math.max(320, window.innerHeight - 300) : Number.POSITIVE_INFINITY;
   const fit = Math.min(1, availableWidth / naturalWidth, availableHeight / naturalHeight);
   return { width: Math.round(naturalWidth * fit), height: Math.round(naturalHeight * fit) };
 }

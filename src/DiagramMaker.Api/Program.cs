@@ -9,38 +9,34 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
-var codexTestsEnabled = builder.Configuration.GetValue<bool>("CodexTest:Enabled");
+if (builder.Configuration.GetValue<bool>("CodexTest:Enabled"))
+    throw new InvalidOperationException("External inference test mode has been removed.");
+var networkPolicy = ApprovedNetworkPolicy.Load();
+networkPolicy.ValidateLocalPath(builder.Environment.ContentRootPath);
+networkPolicy.ValidateLocalPath(AppContext.BaseDirectory);
+builder.Services.AddSingleton(networkPolicy);
 var explicitLlmPolicyPath = Environment.GetEnvironmentVariable("DIAGRAMMAKER_LLM_POLICY_PATH");
 var defaultLlmPolicyPath = Path.Combine(
     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
     "DiagramMaker",
     "llm-policy.json");
 var llmPolicyPath = string.IsNullOrWhiteSpace(explicitLlmPolicyPath) ? defaultLlmPolicyPath : explicitLlmPolicyPath;
-if (!codexTestsEnabled && !string.IsNullOrWhiteSpace(explicitLlmPolicyPath) && !Path.IsPathFullyQualified(llmPolicyPath))
+if (!string.IsNullOrWhiteSpace(explicitLlmPolicyPath) && !Path.IsPathFullyQualified(llmPolicyPath))
 {
     throw new InvalidOperationException("DIAGRAMMAKER_LLM_POLICY_PATH must be an absolute path.");
 }
-if (!codexTestsEnabled && File.Exists(llmPolicyPath))
+if (File.Exists(llmPolicyPath))
 {
+    networkPolicy.ValidateLocalPath(llmPolicyPath);
     builder.Configuration.AddJsonFile(llmPolicyPath, optional: false, reloadOnChange: false);
     builder.Configuration.AddEnvironmentVariables();
 }
-else if (!codexTestsEnabled && !string.IsNullOrWhiteSpace(explicitLlmPolicyPath))
+else if (!string.IsNullOrWhiteSpace(explicitLlmPolicyPath))
 {
     throw new FileNotFoundException("The configured Diagram Maker LLM policy file does not exist.", llmPolicyPath);
 }
-var codexTestOptions = builder.Configuration.GetSection(CodexTestOptions.SectionName).Get<CodexTestOptions>() ?? new();
-codexTestOptions.Validate(builder.Environment.IsDevelopment(), builder.Configuration["urls"]);
-builder.Services.AddSingleton(codexTestOptions);
-if (codexTestOptions.Enabled)
-{
-    builder.Configuration["Storage:Provider"] = "LocalFile";
-    builder.Configuration["Storage:LocalFilePath"] = Path.Combine(codexTestOptions.RuntimeRoot, "store.json");
-    builder.Configuration["Security:TrustReverseProxyHeaders"] = "false";
-    builder.Configuration["Llm:Enabled"] = "true";
-    builder.Configuration["Llm:AllowDevelopmentStub"] = "false";
-    builder.Configuration["Llm:Model"] = codexTestOptions.Model ?? "codex-cli-default";
-}
+// App configuration cannot activate a synthetic generation fallback.
+builder.Configuration["Llm:AllowDevelopmentStub"] = "false";
 builder.Logging.ClearProviders();
 builder.Logging.AddSimpleConsole(options =>
 {
@@ -51,6 +47,10 @@ builder.Services.Configure<StorageOptions>(builder.Configuration.GetSection(Stor
 builder.Services.Configure<SecurityOptions>(builder.Configuration.GetSection(SecurityOptions.SectionName));
 builder.Services.Configure<GitWorkerOptions>(builder.Configuration.GetSection(GitWorkerOptions.SectionName));
 builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection(LlmOptions.SectionName));
+builder.Services.AddOptions<CodeBlockOptions>().Bind(builder.Configuration.GetSection(CodeBlockOptions.SectionName))
+    .Validate(o => o.MaximumBlocks is > 0 and <= 100 && o.MaximumBlockCharacters > 0 && o.MaximumTotalCharacters > 0 &&
+        o.MaximumQuestions is >= 0 and <= 5 && o.ParserTimeoutSeconds > 0 && o.HeartbeatSeconds >= 1 &&
+        o.LeaseSeconds >= o.HeartbeatSeconds * 3, "Invalid code block limits.").ValidateOnStart();
 builder.Services.AddProblemDetails();
 builder.Services.AddCors(options => options.AddPolicy("development", policy =>
     policy.WithOrigins("http://localhost:5173").AllowAnyHeader().AllowAnyMethod()));
@@ -59,9 +59,11 @@ builder.Services.AddSingleton<IAppStore>(services =>
 {
     var options = services.GetRequiredService<IOptions<StorageOptions>>().Value;
     var environment = services.GetRequiredService<IWebHostEnvironment>();
+    if (options.Provider.Equals("LocalFile", StringComparison.OrdinalIgnoreCase))
+        networkPolicy.ValidateLocalPath(Path.GetFullPath(options.LocalFilePath, environment.ContentRootPath));
     return options.Provider.ToLowerInvariant() switch
     {
-        "postgresql" => new PostgresAppStore(options.ConnectionString ?? throw new InvalidOperationException("Storage:ConnectionString is required.")),
+        "postgresql" => new PostgresAppStore(networkPolicy.ValidateDatabase(options.ConnectionString ?? throw new InvalidOperationException("Storage:ConnectionString is required."))),
         "localfile" => new LocalFileAppStore(Path.GetFullPath(options.LocalFilePath, environment.ContentRootPath)),
         "inmemory" => new InMemoryAppStore(),
         _ => throw new InvalidOperationException($"Unsupported Storage:Provider '{options.Provider}'.")
@@ -78,26 +80,35 @@ builder.Services.AddScoped<MermaidDslRevisionService>();
 builder.Services.AddScoped<DiagramRevisionService>();
 builder.Services.AddSingleton(services => new VllmClient(
     services.GetRequiredService<IOptions<LlmOptions>>().Value,
-    services.GetRequiredService<ILogger<VllmClient>>()));
-builder.Services.AddSingleton<ICodexProcessRunner, CodexProcessRunner>();
-builder.Services.AddSingleton(services => new CodexCliCompletionTransport(codexTestOptions,
-    services.GetRequiredService<IOptions<LlmOptions>>().Value, services.GetRequiredService<ICodexProcessRunner>()));
-builder.Services.AddSingleton<ILlmCompletionTransport>(services => codexTestOptions.Enabled
-    ? services.GetRequiredService<CodexCliCompletionTransport>() : services.GetRequiredService<VllmClient>());
-if (codexTestOptions.Enabled) builder.Services.AddSingleton<CodexSampleCatalog>();
+    services.GetRequiredService<ILogger<VllmClient>>(), networkPolicy: networkPolicy));
+builder.Services.AddSingleton<ILlmCompletionTransport>(services => services.GetRequiredService<VllmClient>());
 builder.Services.AddSingleton<StructuredLlmCompletion>();
 builder.Services.AddSingleton<IInternalLlmClient, InternalLlmClient>();
 builder.Services.AddSingleton<GitWorkerClient>();
-builder.Services.AddSingleton<IGitWorkerClient>(services => codexTestOptions.Enabled
-    ? new SampleGitWorkerClient(services.GetRequiredService<GitWorkerClient>(), services.GetRequiredService<CodexSampleCatalog>())
-    : services.GetRequiredService<GitWorkerClient>());
+builder.Services.AddSingleton<IGitWorkerClient>(services => services.GetRequiredService<GitWorkerClient>());
 builder.Services.AddScoped<NaturalDiagramService>();
+builder.Services.AddScoped<CodeBlockWorkspaceService>();
+builder.Services.AddSingleton<CodeBlockAnalyzer>();
+builder.Services.AddSingleton<CodeBlockGroupingService>();
+builder.Services.AddSingleton<CodeBlockProjectionService>();
+builder.Services.AddScoped<CodeBlockRunProcessor>();
+builder.Services.AddHostedService<CodeBlockWorker>();
 builder.Services.AddScoped<AnalysisJobProcessor>();
 builder.Services.AddScoped<AnalysisPlanProcessor>();
 builder.Services.AddHostedService<AnalysisWorker>();
 builder.Services.AddHostedService<AnalysisPlanWorker>();
 
 var app = builder.Build();
+if (app.Environment.IsDevelopment())
+{
+    var urls = builder.Configuration["urls"];
+    if (string.IsNullOrWhiteSpace(urls) || urls.Split(';').Any(value =>
+        !Uri.TryCreate(value, UriKind.Absolute, out var uri) || !System.Net.IPAddress.TryParse(uri.Host, out var address) ||
+        !System.Net.IPAddress.IsLoopback(address)))
+        throw new InvalidOperationException("Local identity mode requires explicit loopback IP bindings.");
+}
+// Validate the configured transport before serving requests or starting workers.
+_ = app.Services.GetRequiredService<ILlmCompletionTransport>();
 app.UseExceptionHandler();
 app.Use(async (context, next) =>
 {
@@ -114,18 +125,17 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseMiddleware<InternalIdentityMiddleware>();
-if (codexTestOptions.Enabled) app.Use(SampleTestEndpoints.GuardAsync);
+app.Use(CodeBlockEndpoints.GuardAsync);
 var localWebRoot = Path.GetFullPath("../../web/dist", app.Environment.ContentRootPath);
 var packagedWebRoot = Path.GetFullPath("wwwroot", AppContext.BaseDirectory);
 var selectedWebRoot = app.Environment.IsDevelopment() && Directory.Exists(localWebRoot)
     ? localWebRoot
     : packagedWebRoot;
-if (codexTestOptions.Enabled && Directory.Exists(Path.Combine(codexTestOptions.RuntimeRoot, "web")))
-    selectedWebRoot = Path.Combine(codexTestOptions.RuntimeRoot, "web");
 if (!Directory.Exists(selectedWebRoot))
 {
     throw new InvalidOperationException($"Static web directory does not exist: {selectedWebRoot}");
 }
+networkPolicy.ValidateLocalPath(selectedWebRoot);
 var staticFiles = new PhysicalFileProvider(selectedWebRoot);
 app.Lifetime.ApplicationStopped.Register(staticFiles.Dispose);
 app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = staticFiles });
@@ -134,24 +144,19 @@ app.UseStaticFiles(new StaticFileOptions { FileProvider = staticFiles });
 await using (var scope = app.Services.CreateAsyncScope())
 {
     await scope.ServiceProvider.GetRequiredService<IAppStore>().InitializeAsync(CancellationToken.None);
-    if (codexTestOptions.Enabled)
-        await scope.ServiceProvider.GetRequiredService<CodexSampleCatalog>().InitializeAsync(
-            scope.ServiceProvider.GetRequiredService<IAppStore>(), CancellationToken.None);
 }
 
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", service = "diagram-maker-api" }));
+app.MapCodeBlocks();
 
 var api = app.MapGroup("/api/v1");
 api.MapGet("/runtime-info", (IServiceProvider services) => Results.Ok(new
 {
-    mode = codexTestOptions.Enabled ? "codex-sample" : "normal",
-    llmProvider = codexTestOptions.Enabled ? "codex-cli" : "internal-vllm",
-    sampleOnly = codexTestOptions.Enabled,
-    model = codexTestOptions.Enabled ? codexTestOptions.Model ?? "CLI 기본 모델" : null,
-    capabilities = new { thinkingControl = !codexTestOptions.Enabled, exactTokenLimit = !codexTestOptions.Enabled },
-    codex = codexTestOptions.Enabled ? services.GetRequiredService<CodexCliCompletionTransport>().Status : null
+    mode = "normal",
+    llmProvider = "internal-vllm",
+    llmConfigured = services.GetRequiredService<ILlmCompletionTransport>().IsEnabled,
+    capabilities = new { thinkingControl = true, exactTokenLimit = true }
 }));
-if (codexTestOptions.Enabled) app.MapSampleTests();
 
 api.MapGet("/repositories", async (HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
 {

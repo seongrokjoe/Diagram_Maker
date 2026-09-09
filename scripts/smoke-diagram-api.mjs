@@ -6,11 +6,18 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { smokeCodeBlocks } from "./code-block-smoke.mjs";
+import { assertLocalPath, gitEnvironment } from "../tools/git-worker/local-security.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+assertLocalPath(root);
 await mkdir(path.join(root, "artifacts"), { recursive: true });
 const fixture = await mkdtemp(path.join(root, "artifacts", "api-smoke-"));
-const git = (...args) => execFileSync("git", args, { cwd: fixture, encoding: "utf8", windowsHide: true }).trim();
+const git = (...args) => execFileSync("git", args, { cwd: fixture, encoding: "utf8", windowsHide: true, env: gitEnvironment() }).trim();
+const llmPolicy = path.join(fixture, "disabled-llm.json");
+const networkPolicy = path.join(fixture, "test-network-policy.json");
+await writeFile(llmPolicy, JSON.stringify({ Llm: { Enabled: false, AllowDevelopmentStub: false } }));
+await writeFile(networkPolicy, JSON.stringify({ LocalRoots: [root], LlmOrigins: [], LlmAddressRanges: [], Databases: [] }));
 git("init", "-b", "main");
 git("config", "user.name", "Synthetic Test");
 git("config", "user.email", "synthetic@example.invalid");
@@ -37,7 +44,8 @@ const server = spawn("dotnet", [path.join(root, "src/DiagramMaker.Api/bin/Releas
   cwd: path.join(root, "src/DiagramMaker.Api"), windowsHide: true,
   env: { ...process.env, ASPNETCORE_ENVIRONMENT: "Development", DOTNET_ENVIRONMENT: "Development",
     Storage__Provider: "InMemory", Llm__Enabled: "false", Security__TrustReverseProxyHeaders: "false",
-    DIAGRAMMAKER_LLM_POLICY_PATH: "", GitWorker__ScriptPath: path.join(root, "tools/git-worker/index.mjs") },
+    DIAGRAMMAKER_LLM_POLICY_PATH: llmPolicy, DIAGRAMMAKER_NETWORK_POLICY_PATH: networkPolicy,
+    GitWorker__ScriptPath: path.join(root, "tools/git-worker/index.mjs") },
   stdio: ["ignore", "pipe", "pipe"],
 });
 server.stdout.on("data", data => { output += data; });
@@ -68,6 +76,7 @@ try {
     throw new Error(`Timed out: ${url}`);
   }
   const repository = await request("/repositories", "POST", { name: "API smoke", localPath: fixture, defaultBranch: "main", allowedRoles: ["Reviewer"] }, 201);
+  await smokeCodeBlocks(request, poll);
   const queued = await request("/analysis-plans", "POST", { repositoryId: repository.id, baseRevision: baseSha, targetRevision: targetSha, useLlmGrouping: false }, 202);
   let plan = await poll(`/analysis-plans/${queued.id}`, ["Ready"]);
   const change = plan.candidates.find(item => item.qualifiedName === "Smoke.Service.Run");

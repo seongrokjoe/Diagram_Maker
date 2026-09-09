@@ -107,6 +107,12 @@ public sealed partial class DiagramRevisionService(
                 string.IsNullOrWhiteSpace(edge.Type) ? DefaultEdgeType(basis.Type) : edge.Type.Trim(), edge.Label.Trim(),
                 "unchanged", Confidence.Inferred, [],
                 basis.Type.Equals("sequence", StringComparison.OrdinalIgnoreCase) ? index + 1 : null)).ToArray();
+        if (basis.Provenance.Contains("code-block"))
+            edges = edges.Select(edge => !existingEdges.TryGetValue(edge.Id, out var original) || original.SourceId != edge.SourceId ||
+                original.TargetId != edge.TargetId || original.Type != edge.Type || original.Label != edge.Label
+                ? edge with { RelationOrigin = "user", Confidence = Confidence.Inferred, EvidenceIds = [], SourceFactIds = [], Context = null,
+                    ControlPath = null, Label = edge.Label.StartsWith("사용자 제공:", StringComparison.Ordinal) ? edge.Label : "사용자 제공: " + edge.Label }
+                : edge).ToArray();
         return basis with
         {
             Title = document.Title.Trim(),

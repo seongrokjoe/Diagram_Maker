@@ -38,7 +38,7 @@ public sealed class LlmOptions
 {
     public const string SectionName = "Llm";
     public bool Enabled { get; set; }
-    public bool AllowDevelopmentStub { get; set; } = true;
+    public bool AllowDevelopmentStub { get; set; }
     public string? Endpoint { get; set; }
     public string? AllowedOrigin { get; set; }
     public string Model { get; set; } = "internal-code-model";

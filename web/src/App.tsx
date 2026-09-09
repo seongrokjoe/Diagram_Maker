@@ -1,11 +1,12 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { AnalysisWorkspace } from "./AnalysisWorkspace";
+import { CodeBlockWorkspace } from "./CodeBlockWorkspace";
 import { api } from "./api";
 import { DiagramEditor } from "./DiagramEditor";
 import { PresetPicker } from "./PresetPicker";
 import { RepositoryRuleEditor } from "./RepositoryRuleEditor";
-import { SampleTestWorkspace } from "./SampleTestWorkspace";
-import type { RuntimeInfo } from "./sampleTestTypes";
+
+import type { RuntimeInfo } from "./runtimeTypes";
 import { elapsedLabel, useElapsedSeconds } from "./useElapsedSeconds";
 import type {
   DiagramPreset,
@@ -19,7 +20,7 @@ import type {
   RepositoryInspection,
 } from "./types";
 
-type Tab = "natural" | "analysis" | "repositories" | "llm";
+type Tab = "natural" | "analysis" | "code-block" | "repositories" | "llm";
 type LlmTestKind = "connection" | "diagram" | "thinking";
 type LlmTestValue = LlmConnectionTestResult | LlmContractTestResult | LlmThinkingContractTestResult;
 const diagramTypes: Array<{ value: DiagramType; label: string }> = [
@@ -38,11 +39,11 @@ export default function App() {
   // Never mount the ordinary repository/prompt controls until server mode is known.
   if (!runtime) return <main className="panel"><p>{startupError || "실행 환경 확인 중…"}</p>
     {startupError && <button type="button" onClick={() => window.location.reload()}>다시 확인</button>}</main>;
-  return runtime.mode === "codex-sample" ? <SampleTestWorkspace initialRuntime={runtime} /> : <NormalApp />;
+  return <NormalApp />;
 }
 
 function NormalApp() {
-  const [tab, setTab] = useState<Tab>("natural");
+  const [tab, setTab] = useState<Tab>(() => new URLSearchParams(window.location.search).has("codeWorkspace") ? "code-block" : "natural");
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [naturalRecord, setNaturalRecord] = useState<NaturalDiagramRecord | null>(null);
   const [naturalPrompt, setNaturalPrompt] = useState("");
@@ -175,9 +176,10 @@ function NormalApp() {
     <header className="topbar"><div><p className="eyebrow">INTERNAL · SOURCE SAFE</p><h1>AI Git Architecture Reviewer</h1></div><span className="network-badge">외부 전송 없음</span></header>
     <nav className="tabs" aria-label="주요 기능">
       <button className={tab === "natural" ? "active" : ""} onClick={() => setTab("natural")}>자연어 다이어그램</button>
+      <button className={tab === "code-block" ? "active" : ""} onClick={() => setTab("code-block")}>코드 블럭 다이어그램</button>
       <button className={tab === "analysis" ? "active" : ""} onClick={() => setTab("analysis")}>Git 변경 분석</button>
       <button className={tab === "repositories" ? "active" : ""} onClick={() => setTab("repositories")}>저장소 관리</button>
-      <button className={tab === "llm" ? "active" : ""} onClick={() => setTab("llm")}>사내 LLM 점검</button>
+      <button className={tab === "llm" ? "active" : ""} onClick={() => setTab("llm")}>LLM 점검</button>
     </nav>
     {error && <div className="error-panel" role="alert">{error}</div>}
     <main>
@@ -211,6 +213,7 @@ function NormalApp() {
       </section>}
 
       {tab === "analysis" && <AnalysisWorkspace repositories={repositories} reportError={reportError} />}
+      <div hidden={tab !== "code-block"}><CodeBlockWorkspace /></div>
 
       {tab === "repositories" && <section className="repository-layout">
         <form className="panel controls" onSubmit={registerRepository}><p className="section-label">ADMIN</p><h2>사내 PC의 Git 저장소 등록</h2>

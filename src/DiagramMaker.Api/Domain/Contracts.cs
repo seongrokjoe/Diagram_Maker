@@ -437,7 +437,8 @@ public sealed record DiagramEdge(
     IReadOnlyList<ControlScope>? ControlPath = null,
     DiagramChangeMarker? ChangeMarker = null,
     IReadOnlyList<string>? SourceFactIds = null,
-    CodeContext? Context = null);
+    CodeContext? Context = null,
+    string? RelationOrigin = null);
 
 public sealed record DiagramChangeMarker(
     DiagramChangeKind Kind,
@@ -461,7 +462,9 @@ public sealed record SequenceBlock(string Id, string Kind, string Label,
     IReadOnlyList<SequenceBlock> Children, string? EdgeId = null,
     IReadOnlyList<string>? ParticipantIds = null, string? DetailPageId = null);
 
-public sealed record DiagramPage(string Id, string Title, DiagramArtifact Diagram);
+public sealed record DiagramPage(string Id, string Title, DiagramArtifact Diagram,
+    string? Level = null, IReadOnlyList<string>? BlockIds = null, IReadOnlyList<string>? SymbolIds = null,
+    string? ResultKind = null);
 public sealed record DiagramViewDocument(string OverviewPageId, IReadOnlyList<DiagramPage> Pages,
     IReadOnlyList<ChangeCoverage> Coverage);
 public sealed record ChangeCoverage(string ChangeId, string State, IReadOnlyList<string> PageIds, string? Reason = null,
@@ -484,10 +487,11 @@ public sealed record PageChangeExplanation(string ChangeId, string Summary,
     IReadOnlyList<string> FactIds, IReadOnlyList<string> NodeIds, IReadOnlyList<string> EdgeIds);
 public sealed record DiagramExplanation(string Summary, IReadOnlyList<PageChangeExplanation> Changes,
     IReadOnlyList<string> FactIds, IReadOnlyList<string> EvidenceIds, string Status,
-    IReadOnlyList<string> Warnings, string Basis = "GeneratedSource");
+    IReadOnlyList<string> Warnings, string Basis = "GeneratedSource",
+    IReadOnlyList<CodeBlockBehavior>? Behaviors = null);
 public sealed record DiagramPlanReview(bool Accepted, IReadOnlyList<string> Issues);
 public sealed record SemanticGeneration(DiagramIr Diagram, string Status, IReadOnlyList<string> Warnings,
-    IReadOnlyList<string> InstructionResults, int Attempts, DiagramExplanation? Explanation = null);
+    IReadOnlyList<string> InstructionResults, int Attempts, DiagramExplanation? Explanation = null, string? FailureStage = null);
 
 public sealed record DiagramArtifact(
     Guid Id,

@@ -159,13 +159,12 @@ public sealed class NaturalDiagramService(
         int version,
         CancellationToken cancellationToken)
     {
+        _ = environment; // Constructor retained for existing integrations.
         var preset = presets.Resolve(view.DiagramType, view.PresetId);
         DiagramIr? ir = null;
         if (llm.IsEnabled)
             ir = await llm.GenerateNaturalDiagramAsync(request.Prompt, view.DiagramType, request.EnableThinking, preset, view.Overrides, cancellationToken);
-        if (ir is null && _options.AllowDevelopmentStub && environment.IsDevelopment())
-            ir = CreateDeterministicDiagram(request with { DiagramType = view.DiagramType, PresetId = view.PresetId, Style = view.Overrides });
-        if (ir is null) throw new InvalidOperationException("The internal LLM is unavailable and no external fallback is permitted.");
+        if (ir is null) throw new LlmClientException("LLM_DISABLED", "The internal LLM is unavailable; generation requires the approved internal server.");
         ir = ApplyPreset(ir, preset, view.Overrides);
         return new DiagramArtifact(Guid.NewGuid(), ir.Type, version, ir, compiler.Compile(ir), DateTimeOffset.UtcNow);
     }
@@ -217,46 +216,4 @@ public sealed class NaturalDiagramService(
         return ir with { Direction = direction, Nodes = nodes, Edges = edges };
     }
 
-    private static DiagramIr CreateDeterministicDiagram(NaturalDiagramRequest request)
-    {
-        var type = ResolveType(request.DiagramType, request.Prompt);
-        var normalized = request.Prompt.Replace("=>", "->", StringComparison.Ordinal).Replace("→", "->", StringComparison.Ordinal);
-        var labels = normalized.Split("->", StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-            .Select(static value => Regex.Replace(value, @"\s+", " ").Trim(' ', '.', ','))
-            .Where(static value => value.Length > 0)
-            .Take(12)
-            .ToArray();
-        if (labels.Length < 2)
-        {
-            labels = ["사용자", ShortLabel(request.Prompt), "결과"];
-        }
-
-        var nodes = labels.Select((label, index) => new DiagramNode(
-            $"n{index + 1}", ShortLabel(label), index == 0 ? "actor" : "component", null,
-            "unchanged", Confidence.Inferred, [])).ToArray();
-        var edges = Enumerable.Range(0, nodes.Length - 1).Select(index => new DiagramEdge(
-            $"e{index + 1}", nodes[index].Id, nodes[index + 1].Id, "flow",
-            type == "sequence" ? "요청" : string.Empty, "unchanged", Confidence.Inferred, [], index + 1)).ToArray();
-        return new DiagramIr(type, ShortLabel(request.Prompt), nodes, edges,
-            ["Development deterministic mode: configure the internal LLM for semantic generation."], []);
-    }
-
-    private static string ResolveType(string requested, string prompt)
-    {
-        if (!requested.Equals("auto", StringComparison.OrdinalIgnoreCase))
-        {
-            return requested.ToLowerInvariant();
-        }
-
-        if (prompt.Contains("시퀀스", StringComparison.OrdinalIgnoreCase) || prompt.Contains("sequence", StringComparison.OrdinalIgnoreCase)) return "sequence";
-        if (prompt.Contains("클래스", StringComparison.OrdinalIgnoreCase) || prompt.Contains("class", StringComparison.OrdinalIgnoreCase)) return "class";
-        if (prompt.Contains("상태", StringComparison.OrdinalIgnoreCase) || prompt.Contains("state", StringComparison.OrdinalIgnoreCase)) return "state";
-        return "flowchart";
-    }
-
-    private static string ShortLabel(string value)
-    {
-        var label = Regex.Replace(value, @"\s+", " ").Trim();
-        return label.Length <= 80 ? label : label[..77] + "...";
-    }
 }

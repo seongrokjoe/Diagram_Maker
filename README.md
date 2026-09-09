@@ -17,9 +17,47 @@
 - 자연어 다이어그램도 요청 하나에 최대 4개 형식과 샘플 프리셋을 적용하고 결과를 하나의 이력으로 관리
 - Mermaid를 브라우저에서 지연 로드해 미리보기, 렌더링된 노드·관계 직접 삭제, 실행 취소·다시 실행, 구조 편집 리비전, SVG/PNG 다운로드 제공
 
+## 코드 블럭 다이어그램
+
+`코드 블럭 다이어그램` 탭에서 작업 제목을 입력하고 C/C++ 또는 C# 파일·함수·내부 구문을 직접 붙여 넣은 뒤 **다이어그램 생성**을 누릅니다. 제목의 안내 문구는 실제 값이 아니며 저장·생성 시 제목 입력이 필요합니다. Git 등록은 필요하지 않습니다. 최초 언어는 C/C++이고 다음 블럭은 직전 언어를 따릅니다.
+
+새 작업은 그룹 1개와 블럭 1개로 시작합니다. 그룹은 사용자가 지정하며 자동 분할하지 않습니다. 기본 출력은 그룹별 자동 추천 1종이고 Flow, Sequence, Class, State, 코드 관계도를 최대 5종 선택합니다. 모호한 호출은 최대 5개를 한 번 질문하며 연결 없음·모르겠음·건너뛰기를 지원합니다. 사용자 관계는 출처를 표시하고 코드 실행 순서로 추정하지 않습니다.
+
+**코드 구성**에서는 왼쪽 그룹 목록 상단의 **+ 블럭 추가 / + 그룹 추가**를 사용합니다. 새 블럭은 선택 그룹에 들어가며, 오른쪽 카드에서 소속 그룹을 변경할 수 있습니다. 그룹별 마지막 편집 카드를 기억하며 제목·코드·언어·설명을 편집하고 그룹 안에서 순서를 변경할 수 있습니다. 빈 그룹도 저장되지만 생성에서는 제외됩니다. 그룹 제목과 옵션은 오른쪽 최상단에, 병합·빈 그룹 삭제는 **그룹 관리**에 있습니다. 출력은 **종류 추가**에서 선택하며 프리셋·상세도·보완 요청은 그룹 전체에 적용됩니다.
+
+**사용자 관계 추가 / Thinking**은 그룹별 옵션이며 새 그룹에서는 꺼져 있습니다. 사용자 관계를 해제하면 입력은 보존하고 생성에서는 제외합니다. 블럭 이동으로 그룹을 가로지르는 관계도 적용 제외로 표시합니다. Thinking은 해당 그룹의 코드 이해·추천·계획·의미 검토에 적용됩니다. 기존 전역 옵션과 사용자 관계는 그룹 설정으로 이어받으며 과거 생성 결과는 유지합니다. API 그룹 입력의 선택 필드 `enableThinking`, `enableUserRelations`를 지원하고, 기존 JSON 저장소는 별도 데이터베이스 마이그레이션 없이 읽을 수 있습니다.
+
+**다이어그램 결과**에서는 종류 → 그룹 → 요약/상세 트리를 사용합니다. 화살표·Home/End로 이동하고 Enter로 선택하거나 펼칩니다. 확대·맞춤 보기·구조 편집·다운로드는 캔버스 도구 모음에 있으며, 동작 설명과 원본 근거는 필요할 때 펼칩니다. 작업·생성 이력·결과 위치·화면은 주소에 보존하고 새로고침 시 복원합니다. 단일 함수에서 요약과 상세가 같으면 한 페이지만 표시합니다.
+
+초안 저장·생성 시 서버에 원문을 저장하며 결과·근거·편집·생성 이력은 작업 삭제 전까지 보존합니다. 저장한 작업은 주소의 `codeWorkspace`로 새로고침해 다시 열 수 있습니다. 탭 전환은 미저장 초안을 유지하지만 브라우저를 닫기 전에는 초안을 저장해야 합니다. 과거 근거는 당시 코드 스냅샷을 보여 줍니다. 한 결과 재생성 시 나머지 결과를 재사용하며 실패 시 이전 결과를 실패 표시와 함께 유지합니다.
+
+내부 LLM이 활성화되면 코드 이해·종류 추천·의미 단계 계획·근거/제어 검증·의미 검토를 수행합니다. 비활성 또는 실패 시 정적 결과를 **의미 설명 미완료 / Partial**로 표시합니다. State는 같은 변수의 조건과 대입 근거가 필요하며 enum 이름만으로 생성하지 않습니다. 큰 입력은 함수별로 나누고 한 함수·제어 문맥이 모델 한도를 넘으면 원문을 자르지 않고 제한을 안내합니다.
+
+LLM 구성 여부와 실패 단계가 표시되며 미설정·요청 실패·검증 실패 결과는 완성 그림으로 열리지 않습니다. **정적 구조 열기**로 별도 확인할 수 있습니다. 이전 성공 그림은 재생성 실패에도 유지됩니다. 같은 분기의 연속 처리는 근거를 보존한 의미 단계로 묶고, 조건·반복·함수 경계를 넘는 묶음은 거부합니다. 코드 전용 `code-block-v2` / `code-block-semantic-v2`는 기존 결과 캐시와 구분합니다. 이번 개선은 합성 코드와 테스트 전용 가상 LLM으로 검증하며 실제 사내 모델 연결은 검증 범위에서 제외합니다.
+
+URL과 `click`이 포함된 일반 라벨은 표시할 수 있습니다. 실행 가능한 링크·click 명령·설정 지시문은 차단하며 Mermaid strict와 SVG 정제를 유지합니다. 자동으로 링크가 된 표시 문자열은 링크 동작만 제거하고 글자는 보존합니다.
+
+`CodeBlocks` 설정 기본값: `MaximumBlocks=20`, `MaximumBlockCharacters=20000`, `MaximumTotalCharacters=100000`, `MaximumQuestions=5`, `ParserTimeoutSeconds=120`, `LeaseSeconds=90`, `HeartbeatSeconds=15`. InMemory/LocalFile/Postgres 저장소를 지원하며 LocalFile은 단일 서버 프로세스용입니다. 보존·소유자·내부 LLM 정책은 [SECURITY.md](SECURITY.md)를 참조하세요.
+
+`verify.ps1`은 코드 블럭 단위/API 회귀 검증을 포함합니다. 아래 선택 UI 검증은 기존 `artifacts/ui-check` Playwright 설치와 Windows Edge를 사용하며, 설치되어 있으면 `verify.ps1`에서도 수행합니다.
+URL/click 라벨 5종의 실제 표시와 링크 동작 제거, 결과 트리 키보드 탐색, 접힘·선택 위치·과거 생성본·편집 이력 복원도 검사합니다. 화면 탐색과 새로고침에는 생성 요청이 발생하지 않는지 확인합니다.
+
+```powershell
+node scripts/smoke-code-block-ui.mjs
+```
+
+코드 블럭 기능의 별도 Windows 미리보기 패키지는 아래 명령으로 빌드하고 검사합니다. 기존 배포 ZIP을 보존하도록 별도 버전명을 사용합니다. 검증 결과와 실제 내부 LLM/PostgreSQL 연결 검증 상태는 [진행 기록](CODE_BLOCK_DIAGRAM_PROGRESS.md)에 기록합니다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1 -Version '0.1.0-internal.3'
+node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.3-win-x64
+node scripts/smoke-code-block-ui.mjs artifacts/stage/DiagramMaker-0.1.0-internal.3-win-x64
+node scripts/smoke-packaged-llm.mjs artifacts/stage/DiagramMaker-0.1.0-internal.3-win-x64
+```
+
 ## 로컬 실행
 
-필수 도구는 .NET 9 SDK와 Node.js 24입니다. 저장소 루트에서 다음을 실행하고 `http://localhost:5080`을 엽니다.
+필수 도구는 승인된 .NET 9 SDK와 Node.js 24 및 오프라인 의존성 캐시입니다. 아래 사내 전용 정책을 준비한 뒤 비동기화 작업본에서 실행하고 `http://127.0.0.1:5080`을 엽니다.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local.ps1
@@ -33,42 +71,25 @@ powershell -ExecutionPolicy Bypass -File .\scripts\stop-local.ps1
 
 프론트엔드 HMR만 필요하면 `npm.cmd run dev --prefix .\web`을 사용합니다.
 
-## 사내 서버 점검 중: Codex 샘플 테스트
+## 사내 전용 실행·빌드 정책
 
-사내 LLM 연결 설정을 바꾸지 않고 **합성 샘플만** Codex CLI로 생성하는 별도 개발 모드입니다. 현재 대화창을 서버로 사용하는 것이 아니며, 샘플과 준비된 요청이 OpenAI 서비스로 전송됩니다. 인터넷 연결과 해당 계정의 Codex 사용 권한/사용량이 필요합니다. 사내 모델의 결과·속도·Thinking·seed·temperature·토큰 상한을 동일하게 재현하지는 않습니다.
+외부 Codex 샘플 실행기·공급자·UI는 제거되었습니다. 예전 설정의 `CodexTest:Enabled=true`도 시작 단계에서 거부합니다. 과거 ZIP과 시험 기록은 이력 보존용이며 현재 사내 전용 배포본으로 사용하지 마세요.
 
-1. .NET 9 SDK, Node.js 24, Codex CLI를 설치하고 터미널에서 `codex login`으로 ChatGPT 계정에 로그인합니다. API 키 로그인은 이 모드에서 사용하지 않습니다.
-2. `scripts/start-codex-test.cmd`를 더블클릭합니다. 최초 실행은 빌드가 필요할 수 있습니다. 브라우저는 `http://127.0.0.1:5081`로 열립니다(`localhost`가 아닌 표시된 주소 사용).
-3. C++ 패킷 처리 또는 C# 주문 처리 샘플에서 **샘플 변경점 분석 → Codex로 다이어그램 그리기**를 누릅니다. 자연어 예제는 곧바로 생성할 수 있습니다. 전체 4종 대신 한 가지 형식만 선택하면 호출량을 줄일 수 있습니다.
-4. 동작 요약·예외 경로·연결된 요소·상세화 중 수정 요청을 선택하여 다시 그립니다. 기존 화면의 확대/축소, 노드 Delete, 편집 저장, 결과 이력도 확인할 수 있습니다. 직접 입력한 편집 내용은 로컬에만 남고 LLM 재생성에는 사용하지 않습니다.
-5. `scripts/stop-codex-test.cmd`로 종료합니다. 기존 사내 앱과 저장소/초안은 영향을 받지 않습니다.
+개발·검증·실행 폴더, 저장 데이터와 분석 저장소는 **OneDrive 밖의 승인된 로컬 경로**여야 합니다. OneDrive 이름/환경변수, 링크·정션·클라우드 placeholder를 검사합니다. 다른 동기화 제품이나 사용자 정의 동기화 폴더는 관리자가 동기화 제외를 확인해야 합니다. 현재 저장소가 OneDrive 아래라면 별도 로컬 작업본을 준비하세요.
 
-테스트 전용 빌드·저장소·결과·프로세스 상태는 `artifacts/codex-test/`에 분리됩니다. 시작할 때 새로운 합성 Git 저장소를 만들고 이전 결과는 보존합니다. 실수로 수정한 샘플은 실행 중 분석이 거부되며 재시작하면 새 샘플로 복구됩니다. 임의 저장소, 파일 업로드, 자유 프롬프트 및 기존 API를 통한 생성 우회는 차단합니다. 저장된 결과 조회에는 모델 호출이 없고, 다시 그리기는 매번 새로운 요청입니다. 의미 검토에 실패한 정적 대체 결과를 Codex 생성 성공으로 간주하지 않습니다.
+관리자가 `packaging/windows/config/network-policy.example.json`을 참고해 `%LOCALAPPDATA%/DiagramMaker/network-policy.json`을 준비합니다. `DIAGRAMMAKER_NETWORK_POLICY_PATH`로 다른 절대 경로를 지정할 수 있습니다. 빈 예제는 모든 연결과 작업 경로를 거부합니다.
 
-선택 실행 옵션:
+- `LocalRoots`: 작업본·배포 폴더·데이터·저장소·LLM 정책 파일이 속하는 비동기화 절대 경로.
+- `LlmOrigins`와 `LlmAddressRanges`: 승인된 scheme/host/port 및 IP CIDR 범위. DNS 응답 전부를 검사하고 검사한 IP에 직접 연결합니다. 프록시와 리디렉션은 사용하지 않습니다.
+- `Databases`: 승인된 리터럴 IP와 포트. 원격 PostgreSQL은 해당 IP 인증서와 `SSL Mode=VerifyFull`이 필요합니다.
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-codex-test.ps1 -NoBrowser -Port 5081
-# 다른 설치 위치/사용 가능한 모델을 명시할 때만 추가:
-# -CodexExecutable 'C:\Tools\Codex\codex.exe' -Model '<계정에서 사용 가능한 모델 ID>'
-```
+정책 파일의 승인과 ACL은 관리자가 관리합니다. 파일 내용만으로 관리자 승인을 인증하지 않으며, 같은 OS 계정이 정책을 바꿀 수 있다면 OS 권한 분리가 필요합니다. 호스트 방화벽은 인터넷 송신을 차단하고 승인된 내부 목적지만 허용해야 합니다. 앱 검사를 호스트 전체의 통신 차단 증명으로 간주하지 않습니다.
 
-Codex CLI 0.153.4의 기능 구성을 기준으로 작성했으며 시작 전 필요한 플래그/기능을 검사합니다. 로그인·사용량·필수 격리 옵션 오류는 화면에 표시하고 자동으로 사내 서버나 다른 공급자로 전환하지 않습니다. 사용량 제한/재로그인 후에는 테스트 앱을 재시작하세요. 테스트 실행 파일과 샘플 입력은 운영 오프라인 ZIP에 포함하지 않으며, Production에서는 이 모드를 실행할 수 없습니다.
+빌드 도구·잠금 버전의 NuGet/npm 캐시와 Node x64 ZIP/체크섬은 승인된 사내 절차로 미리 반입합니다. NuGet 소스는 비우고 npm은 offline/ignore-scripts/no-audit로 실행합니다. 캐시가 없으면 다운로드하지 않고 실패합니다. 라이선스 검사는 로컬 고지만 읽습니다. 취약점 상태는 별도의 승인된 내부 피드로 검토해야 합니다.
 
-개발 검증은 `verify.ps1`의 가짜 CLI 통합 테스트까지 포함하며 **실제 Codex 호출은 하지 않습니다**. 실제 품질 확인은 위 실행기로 직접 수행합니다. 관련 공식 문서: [Codex 자동 실행](https://learn.chatgpt.com/docs/non-interactive-mode), [로그인](https://learn.chatgpt.com/docs/auth).
+검증 결과는 `artifacts/license-audit/`의 npm/NuGet 인벤토리·고지·CycloneDX SBOM에 남깁니다. 기존 설치본으로 검사하려면 `verify.ps1 -UseInstalledDependencies`를 사용할 수 있지만 배포 빌드는 항상 캐시에서 npm ci로 다시 설치합니다. UI 검사는 미리 반입한 `artifacts/ui-check/node_modules/playwright`와 Edge가 있을 때 수행합니다.
 
-가짜 CLI 통합 검사의 서버 로그는 성공·실패 모두 `artifacts/codex-smoke-*/server.log`에 남습니다. 분석 실패 시 검사 출력의 분석 ID와 해당 로그를 함께 확인합니다.
-
-Windows에 Edge가 설치되어 있으면 전체 검증 후 아래 선택 검증으로 자연어 4종 다이어그램의 버튼·마우스 휠 확대, 노드/관계 이름 클릭·Delete, 실행 취소/다시 실행, 편집 저장·이력 복원, SVG/PNG 다운로드와 Git 4종의 관계 이름 매핑·변경 문구 가독성을 확인할 수 있습니다. 가짜 CLI와 별도 임시 샘플만 사용하며 원본 SVG, 스크린샷, 단계별 `result.json`과 `server.log`는 `artifacts/ui-smoke-*/`에 남깁니다. 실패 시 `failure.png`와 `failure.html`로 당시 화면을 확인할 수 있고, 실행이 중단되면 `result.json`의 마지막 점검 단계에서 이어서 조사할 수 있습니다.
-
-```powershell
-npm.cmd install --prefix artifacts/ui-check --no-save --package-lock=false playwright
-node scripts/smoke-diagram-ui.mjs
-```
-
-이 검사는 1,024·1,250·1,366·1,920px 폭의 샘플 표시, 빠른 페이지 전환 시 그림과 설명의 일치, 의미 설명 미완료·구형 이력·수동 편집 안내도 확인합니다. 샘플과 페이지를 전환할 때 추가 LLM 호출이 발생하지 않는지 검사합니다.
-
-샘플 카드는 창 전체 폭이 아니라 실제 패널 너비에 맞춰 열 수를 조정합니다. 좁은 자연어 입력 패널에서도 카드가 과도하게 압축되지 않도록 최소 180px을 확보하며, 패널 자체가 그보다 좁으면 한 열로 맞춥니다.
+컨테이너는 `scripts/build-container.ps1`로 이미 준비된 Linux 산출물만 복사합니다. 로컬에 반입된 digest 고정 런타임 이미지, 해당 이미지의 OS SBOM과 승인 기록이 필수이며 자동 pull이나 컨테이너 내 패키지 설치는 하지 않습니다. Windows ZIP을 Linux 산출물로 사용할 수 없습니다.
 
 ## Git 변경 분석 사용법
 
@@ -107,7 +128,7 @@ LLM 비활성화·입력 한도·근거 또는 의미 검토 실패 시 정적 �
 }
 ```
 
-**사내 LLM 점검** 메뉴와 `test-llm.cmd`는 고정된 합성 데이터만 사용합니다. Git 다이어그램의 의미 설계에는 선택 변경과 관련 선언·제어 흐름·호출 근거 및 필요한 소스 조각을 전송합니다. 기존 내부 vLLM 연결·정확한 origin 검증·비밀 마스킹 정책을 그대로 사용하며 외부 모델로 자동 전환하지 않습니다.
+**LLM 점검** 메뉴와 `test-llm.cmd`는 고정된 합성 데이터만 사용합니다. Git 다이어그램의 의미 설계에는 선택 변경과 관련 선언·제어 흐름·호출 근거 및 필요한 소스 조각을 전송합니다. 기존 내부 vLLM 연결·정확한 origin 검증·비밀 마스킹 정책을 그대로 사용하며 외부 모델로 자동 전환하지 않습니다.
 
 ## 검증과 오프라인 패키지
 
@@ -123,19 +144,19 @@ Windows x64 오프라인 패키지 생성:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1
 ```
 
-패키징 기본 버전은 `0.1.0-offline.16`이며 출력은 `artifacts/release/DiagramMaker-0.1.0-offline.16-win-x64.zip`과 SHA-256 파일입니다. 저장소에 남아 있는 `offline.15` ZIP에는 이번 소스 수정이 포함되지 않습니다. 새 배포본 확정 전 실제 사내 LLM의 의미 품질과 브라우저 확대·선택 동작을 확인해야 합니다.
+패키징 기본 버전은 `0.1.0-internal.1`이며 출력은 `artifacts/release/DiagramMaker-0.1.0-internal.1-win-x64.zip`과 SHA-256 파일입니다. 기존 ZIP이 있으면 새 버전명을 지정해야 합니다. 저장소에 남아 있는 `offline.15` ZIP에는 이번 소스 수정이 포함되지 않습니다. 새 배포본 확정 전 실제 사내 LLM의 의미 품질과 브라우저 확대·선택 동작을 확인해야 합니다.
 
-패키징을 완료한 뒤 위 Playwright 준비 절차를 사용해 실제 배포 실행 파일의 오프라인 샘플을 검사할 수 있습니다.
+승인된 Playwright를 미리 반입하고 패키징을 완료한 뒤 실제 배포 실행 파일의 오프라인 샘플을 검사할 수 있습니다.
 
 ```powershell
-node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-offline.16-win-x64
+node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.1-win-x64
 ```
 
 격리된 메모리 저장소·동적 loopback 포트와 배포 start.cmd와 동일한 Development 환경에서 LLM과 개발용 생성 스텁을 끄고, 외부 페이지 요청과 생성 요청을 차단합니다. 배포 HTML/JS/CSS/Mermaid 파일의 SHA-256 일치와 4개 종류 × 4개 화면 폭의 모든 샘플을 확인합니다. 단계별 결과·파일 해시·스크린샷·서버 로그는 `artifacts/offline-preview-*/`에 저장합니다. 기존 운영 서버·저장 데이터·LLM 설정은 변경하지 않습니다.
 
 실제 사내 LLM의 설명 품질은 자동 검사만으로 보증하지 않습니다. 배포 승인 전 sctcconfig의 `21e5a3b5564b7bcefc7a5ec07c8b616def279509` → `30a065c9a96db55747220d1fcd23911a44ae4f94`를 사내 LLM으로 재생성하여 CSV 항목 구성·내보내기·파일 읽기·두 검증, 네 필드 조회와 모드 차이 조건, 문자열 포함 검증에서 CSV 헤더 일치 검증으로의 변경을 확인해야 합니다. 유지된 차이 건수 0 검증을 신규 기능으로 설명하지 않는지도 확인합니다. 이 실제 모델 검증은 아직 수행하지 않았으며, 실제 저장소 코드를 합성 샘플용 외부 모델 경로로 보내지 않습니다.
 
-`verify.ps1`은 .NET, Git 워커, 프런트엔드 상호작용 단위 테스트, 번들 생성, npm 보안·라이선스 검사 및 격리된 loopback API 검증을 실행합니다. API 검증은 4개 다이어그램의 페이지 조회·노드 삭제·리비전 충돌·코드 근거·신원 검사를 확인하며 합성 저장소를 `artifacts/api-smoke-*`에 남깁니다. 화면 픽셀/마우스 테스트나 실제 LLM의 의미 품질 검증을 대신하지 않습니다.
+`verify.ps1`은 .NET, Git 워커, 프런트엔드 상호작용 단위 테스트, 번들 생성, 로컬 라이선스·배포 경로 검사 및 격리된 loopback API 검증을 실행합니다. API 검증은 4개 다이어그램의 페이지 조회·노드 삭제·리비전 충돌·코드 근거·신원 검사를 확인하며 합성 저장소를 `artifacts/api-smoke-*`에 남깁니다. 화면 픽셀/마우스 테스트나 실제 LLM의 의미 품질 검증을 대신하지 않습니다.
 
 ## 현재 제한
 

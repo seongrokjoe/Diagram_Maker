@@ -1,55 +1,19 @@
 import fs from "node:fs";
 import path from "node:path";
-import process from "node:process";
-
-const [outputArgument, ...rootArguments] = process.argv.slice(2);
-if (!outputArgument || rootArguments.length === 0) {
-  process.stderr.write("Usage: node scripts/collect-npm-licenses.mjs <output> <node_modules> [...]\n");
-  process.exit(2);
-}
-
-const outputRoot = path.resolve(outputArgument);
-fs.mkdirSync(outputRoot, { recursive: true });
-const packages = new Map();
-
-function scanNodeModules(nodeModulesPath) {
-  if (!fs.existsSync(nodeModulesPath)) return;
-  for (const entry of fs.readdirSync(nodeModulesPath, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name === ".bin") continue;
-    const fullPath = path.join(nodeModulesPath, entry.name);
-    if (entry.name.startsWith("@")) {
-      for (const scoped of fs.readdirSync(fullPath, { withFileTypes: true })) {
-        if (scoped.isDirectory()) inspectPackage(path.join(fullPath, scoped.name));
-      }
-    } else {
-      inspectPackage(fullPath);
-    }
-  }
-}
-
-function inspectPackage(packagePath) {
-  const manifestPath = path.join(packagePath, "package.json");
-  if (!fs.existsSync(manifestPath)) return;
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-  const key = `${manifest.name}@${manifest.version}`;
-  if (!packages.has(key)) {
-    const destination = path.join(outputRoot, key.replaceAll(/[^A-Za-z0-9._-]/g, "_"));
+import { inspectNpmRoots } from "./license-policy.mjs";
+try {
+  const [output, ...roots] = process.argv.slice(2);
+  if (!output || !roots.length) throw new Error("Usage: collect-npm-licenses.mjs <output> <node_modules> [...]");
+  const packages = inspectNpmRoots(roots);
+  fs.mkdirSync(output, { recursive: true });
+  for (const item of packages) {
+    const destination = path.join(output, (item.name + "@" + item.version).replaceAll(/[^A-Za-z0-9._-]/g, "_"));
     fs.mkdirSync(destination, { recursive: true });
-    for (const name of fs.readdirSync(packagePath)) {
-      if (/^(licen[cs]e|copying|notice)(\..*)?$/i.test(name)) {
-        const source = path.join(packagePath, name);
-        if (fs.statSync(source).isFile()) fs.copyFileSync(source, path.join(destination, name));
-      }
-    }
-    packages.set(key, typeof manifest.license === "string" ? manifest.license : manifest.license?.type ?? "UNKNOWN");
+    for (const file of item.texts) fs.copyFileSync(file, path.join(destination, path.basename(file)));
+    if (item.installed) fs.copyFileSync(path.join(item.directory, "package.json"), path.join(destination, "package.json"));
+    if (item.supplemental) fs.copyFileSync(item.supplemental, path.join(destination, "LICENSE-EXPRESSION.txt"));
   }
-  scanNodeModules(path.join(packagePath, "node_modules"));
-}
-
-for (const root of rootArguments) scanNodeModules(path.resolve(root));
-const inventory = [...packages]
-  .sort(([left], [right]) => left.localeCompare(right))
-  .map(([name, license]) => `${name}\t${license}`)
-  .join("\n");
-fs.writeFileSync(path.join(outputRoot, "_inventory.tsv"), `${inventory}\n`, "utf8");
-process.stdout.write(`Collected license metadata for ${packages.size} npm packages.\n`);
+  fs.writeFileSync(path.join(output, "_inventory.json"), JSON.stringify(packages.map(({ directory, texts, supplemental, ...item }) => item), null, 2));
+  fs.writeFileSync(path.join(output, "_inventory.tsv"), packages.map(p => [p.name + "@" + p.version, p.declared, p.selected, p.installed ? "installed" : "optional-not-installed"].join("\t")).join("\n") + "\n");
+  console.log("Collected " + packages.length + " reviewed npm license records.");
+} catch (error) { console.error(error.message); process.exitCode = 1; }

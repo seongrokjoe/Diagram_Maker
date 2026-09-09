@@ -20,7 +20,7 @@ async function createParser() {
   return parser;
 }
 
-async function getParser() {
+export async function getParser() {
   parserPromise ??= createParser();
   return parserPromise;
 }
@@ -86,23 +86,24 @@ function declaratorIdentifier(declarator) {
   return null;
 }
 
-function removeUtf8Ranges(node, ranges) {
-  const bytes = Buffer.from(node.text, "utf8");
+function removeSourceRanges(node, ranges) {
+  // web-tree-sitter's JS indices and strings both use UTF-16 code units.
+  const source = node.text;
   const normalized = ranges
     .map(({ startIndex, endIndex }) => ({
       start: Math.max(0, startIndex - node.startIndex),
-      end: Math.min(bytes.length, endIndex - node.startIndex),
+      end: Math.min(source.length, endIndex - node.startIndex),
     }))
     .filter((range) => range.end > range.start)
     .sort((left, right) => left.start - right.start);
   const chunks = [];
   let offset = 0;
   for (const range of normalized) {
-    if (range.start > offset) chunks.push(bytes.subarray(offset, range.start));
+    if (range.start > offset) chunks.push(source.slice(offset, range.start));
     offset = Math.max(offset, range.end);
   }
-  if (offset < bytes.length) chunks.push(bytes.subarray(offset));
-  return Buffer.concat(chunks).toString("utf8");
+  if (offset < source.length) chunks.push(source.slice(offset));
+  return chunks.join("");
 }
 
 function canonicalType(value) {
@@ -125,14 +126,14 @@ function parameterTypes(declarator) {
       if (identifier) ranges.push(identifier);
       const defaultValue = field(parameter, "default_value");
       if (defaultValue) {
-        const prefix = Buffer.from(parameter.text, "utf8").subarray(0, defaultValue.startIndex - parameter.startIndex);
-        const equalsAt = prefix.lastIndexOf("=".charCodeAt(0));
+        const prefix = parameter.text.slice(0, defaultValue.startIndex - parameter.startIndex);
+        const equalsAt = prefix.lastIndexOf("=");
         ranges.push({
           startIndex: equalsAt >= 0 ? parameter.startIndex + equalsAt : defaultValue.startIndex,
           endIndex: defaultValue.endIndex,
         });
       }
-      return canonicalType(removeUtf8Ranges(parameter, ranges));
+      return canonicalType(removeSourceRanges(parameter, ranges));
     })
     .filter(Boolean);
   return values.length === 1 && values[0] === "void" ? [] : values;
@@ -333,6 +334,8 @@ function buildControlFlow(functionNode, calls) {
       label: label.slice(0, 1000),
       startLine: syntaxNode?.startPosition.row + 1 || functionNode.startPosition.row + 1,
       endLine: syntaxNode?.endPosition.row + 1 || functionNode.endPosition.row + 1,
+      startOffset: syntaxNode?.startIndex ?? functionNode.startIndex,
+      endOffset: syntaxNode?.endIndex ?? functionNode.endIndex,
       callOrder,
     };
     nodes.push(item);
@@ -345,10 +348,12 @@ function buildControlFlow(functionNode, calls) {
   };
   const bodyNode = field(functionNode, "body");
   const entry = addNode("entry", "시작", {
+    startIndex: functionNode.startIndex, endIndex: bodyNode?.startIndex ?? functionNode.startIndex,
     startPosition: functionNode.startPosition,
     endPosition: bodyNode?.startPosition ?? functionNode.startPosition,
   });
   const exit = addNode("exit", "종료", {
+    startIndex: Math.max(functionNode.startIndex, functionNode.endIndex - 1), endIndex: functionNode.endIndex,
     startPosition: { row: functionNode.endPosition.row },
     endPosition: functionNode.endPosition,
   });
@@ -368,6 +373,7 @@ function buildControlFlow(functionNode, calls) {
         }
         const label = grouped.map((item) => compactStatement(item, "처리")).join("\n").slice(0, 1000);
         const operation = addNode("operation", label, {
+          startIndex: grouped[0].startIndex, endIndex: grouped.at(-1).endIndex,
           startPosition: grouped[0].startPosition,
           endPosition: grouped.at(-1).endPosition,
         });
@@ -436,7 +442,8 @@ function buildControlFlow(functionNode, calls) {
       const body = field(statement, "body");
       const loopHeader = statement.type === "do_statement"
         ? (field(statement, "condition") ?? statement)
-        : { startPosition: statement.startPosition, endPosition: body?.startPosition ?? statement.endPosition };
+        : { startPosition: statement.startPosition, endPosition: body?.startPosition ?? statement.endPosition,
+          startIndex: statement.startIndex, endIndex: body?.startIndex ?? statement.endIndex };
       const loop = addNode("loop", conditionLabel(statement), loopHeader);
       const postTest = statement.type === "do_statement";
       const bodyEntry = postTest ? addNode("operation", "반복 처리 시작", body ?? statement) : null;
@@ -546,6 +553,8 @@ export async function parseCppFile(filepath, content, projectPath = null) {
           kind: node.type.startsWith("class") ? "class" : "type",
           parameterCount: null,
           signature: node.text.split(/\r?\n/, 1)[0].slice(0, 240),
+          startOffset: node.startIndex,
+          endOffset: node.endIndex,
           filePath: filepath,
           projectPath,
           startLine: node.startPosition.row + 1,
@@ -583,6 +592,8 @@ export async function parseCppFile(filepath, content, projectPath = null) {
           kind: ownerParts.length > 0 || alreadyQualified ? "method" : "function",
           parameterCount,
           signature: node.text.split("{")[0].replace(/\s+/g, " ").trim().slice(0, 240),
+          startOffset: node.startIndex,
+          endOffset: node.endIndex,
           filePath: filepath,
           projectPath,
           startLine: node.startPosition.row + 1,

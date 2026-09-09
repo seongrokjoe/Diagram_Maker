@@ -8,6 +8,12 @@ namespace DiagramMaker.Services;
 public interface IInternalLlmClient
 {
     bool IsEnabled { get; }
+    Task<CodeBlockUnderstanding?> UnderstandCodeBlocksAsync(CodeBlockWorkspaceInput input, CodeBlockGraph graph,
+        CodeBlockGroupSelection group, IReadOnlyList<DiagramAvailability> availability, CancellationToken cancellationToken) =>
+        Task.FromResult<CodeBlockUnderstanding?>(null);
+    Task<SemanticGeneration?> PlanCodeBlockDiagramAsync(DiagramIr candidate, CodeBlockWorkspaceInput input, CodeBlockGraph graph,
+        CodeBlockUnderstanding? understanding, DiagramViewSelection selection, CancellationToken cancellationToken) =>
+        Task.FromResult<SemanticGeneration?>(null);
     Task<ChangeUnderstanding?> UnderstandChangesAsync(EvidenceBundle bundle, bool enableThinking, CancellationToken cancellationToken) =>
         Task.FromResult<ChangeUnderstanding?>(null);
     Task<SemanticGeneration?> PlanDiagramAsync(DiagramIr candidate, EvidenceBundle bundle, ChangeUnderstanding? understanding,

@@ -8,8 +8,11 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import { smokeCodeBlocks } from './code-block-smoke.mjs';
+import { assertLocalPath } from '../tools/git-worker/local-security.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+assertLocalPath(root);
 assert.ok(process.argv[2], 'Pass the unpacked package directory under artifacts/stage');
 const stageRoot = await realpath(path.join(root, 'artifacts', 'stage'));
 const packageRoot = await realpath(path.resolve(root, process.argv[2]));
@@ -21,12 +24,17 @@ await mkdir(path.join(root, 'artifacts'), { recursive: true });
 const run = await mkdtemp(path.join(root, 'artifacts/offline-preview-'));
 const policy = path.join(run, 'disabled-llm.json');
 await writeFile(policy, JSON.stringify({ Llm: { Enabled: false } }));
+const networkPolicy = path.join(run, 'test-network-policy.json');
+await writeFile(networkPolicy, JSON.stringify({ LocalRoots: [root], LlmOrigins: [], LlmAddressRanges: [], Databases: [] }));
 let output = '';
 const server = spawn(path.join(packageRoot, 'DiagramMaker.Api.exe'), ['--urls', 'http://127.0.0.1:0'], {
   cwd: packageRoot, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   env: { ...process.env, ASPNETCORE_ENVIRONMENT: 'Development', DOTNET_ENVIRONMENT: 'Development',
     Storage__Provider: 'InMemory', Llm__Enabled: 'false', CodexTest__Enabled: 'false',
-    Llm__AllowDevelopmentStub: 'false', Security__TrustReverseProxyHeaders: 'false', DIAGRAMMAKER_LLM_POLICY_PATH: policy },
+    GitWorker__NodeExecutable: path.join(packageRoot, 'runtime/node/node.exe'),
+    GitWorker__ScriptPath: path.join(packageRoot, 'tools/git-worker/index.mjs'),
+    Llm__AllowDevelopmentStub: 'false', Security__TrustReverseProxyHeaders: 'false', DIAGRAMMAKER_LLM_POLICY_PATH: policy,
+    DIAGRAMMAKER_NETWORK_POLICY_PATH: networkPolicy },
 });
 let startupError;
 server.on('error', error => { startupError = error; });
@@ -105,6 +113,43 @@ try {
   assert.deepEqual(errors, []);
   assert.deepEqual(remoteRequests, [], 'previews must work with no external connections');
   assert.deepEqual(mutations, [], 'previews must not request generation');
+  await page.getByRole('button', { name: '코드 블럭 다이어그램', exact: true }).click();
+  await page.locator('.code-block-workspace').getByRole('button', { name: '다이어그램 생성', exact: true }).waitFor();
+  await page.locator('.code-block-workspace').screenshot({ path: path.join(run, 'code-block-workspace.png') });
+  const codeArtifacts = [];
+  async function codeRequest(url, method = 'GET', body, status = 200) {
+    const response = await fetch(origin + '/api/v1' + url, { method, headers: { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30000) });
+    const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value));
+    if (method === 'GET' && value.mermaidDsl) codeArtifacts.push(value);
+    return value;
+  }
+  async function codePoll(url, terminal) {
+    for (let i = 0; i < 120; i++) { const value = await codeRequest(url); if (terminal.includes(value.state)) return value;
+      assert.notEqual(value.state, 'Failed', JSON.stringify(value)); await delay(250); }
+    throw new Error('Packaged code block worker timed out');
+  }
+  await smokeCodeBlocks(codeRequest, codePoll);
+  assert.equal(new Set(codeArtifacts.map(a => a.type)).size, 5);
+  for (const [index, artifact] of codeArtifacts.entries()) {
+    // Parse and render every generated code page with the actual packaged runtime.
+    await page.evaluate(async ({ index, dsl }) => {
+      const { svg } = await window.mermaid.render(`packaged_code_${index}`, dsl);
+      let result = document.getElementById('packaged-code-result');
+      if (!result) {
+        result = document.createElement('section'); result.id = 'packaged-code-result';
+        result.style.cssText = 'width:1200px;padding:24px;background:white'; document.body.append(result);
+      }
+      result.innerHTML = svg;
+      const rendered = result.querySelector('svg');
+      if (!rendered || !rendered.getBoundingClientRect().height) throw new Error('Generated code SVG is empty');
+    }, { index, dsl: artifact.mermaidDsl });
+    await page.locator('#packaged-code-result').screenshot({ path: path.join(run, `code-${artifact.type}-${index}.png`) });
+  }
+  assert.deepEqual(errors, []);
+  assert.deepEqual(remoteRequests, [], 'generated code diagrams must render without external connections');
+  checks.push('packaged code-block tab, five formats, C++ stdin worker, evidence, clarification, edits and deletion');
+  checks.push(`all ${codeArtifacts.length} generated code pages rendered using packaged Mermaid`);
   await saveResult('passed');
   console.log(`Offline previews passed: 4 diagram types × 4 widths, packaged Mermaid, LLM disabled. ${path.relative(root, run)}`);
 } catch (error) {

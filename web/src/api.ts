@@ -1,4 +1,4 @@
-import type { RuntimeInfo, SampleCatalog, SampleGenerateInput, SampleGenerateResult } from "./sampleTestTypes";
+import type { RuntimeInfo } from "./runtimeTypes";
 import type {
   AnalysisGroupSelection,
   AnalysisHistorySummary,
@@ -23,7 +23,7 @@ import type {
   RepositoryInspection,
 } from "./types";
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+export async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
     headers: { "Content-Type": "application/json", ...init?.headers },
@@ -53,12 +53,6 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   runtimeInfo: () => request<RuntimeInfo>("/api/v1/runtime-info"),
-  sampleCatalog: () => request<SampleCatalog>("/api/v1/sample-tests/scenarios"),
-  prepareSample: (scenarioId: string) => request<{ id: string }>(`/api/v1/sample-tests/${encodeURIComponent(scenarioId)}/plan`, { method: "POST" }),
-  generateSample: (scenarioId: string, input: SampleGenerateInput, signal?: AbortSignal) =>
-    request<SampleGenerateResult>(`/api/v1/sample-tests/${encodeURIComponent(scenarioId)}/generate`, {
-      method: "POST", body: JSON.stringify(input), signal,
-    }),
   listRepositories: () => request<Repository[]>("/api/v1/repositories"),
   inspectRepository: (localPath: string) =>
     request<RepositoryInspection>("/api/v1/repositories/inspect", {

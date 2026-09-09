@@ -3,16 +3,20 @@ Diagram Maker Windows x64 오프라인 설치
 
 1. 함께 제공된 .sha256 파일과 ZIP의 SHA-256을 비교한다.
 
-   certutil -hashfile DiagramMaker-0.1.0-offline.15-win-x64.zip SHA256
+   certutil -hashfile DiagramMaker-0.1.0-internal.3-win-x64.zip SHA256
 
 2. ZIP을 쓰기 가능한 로컬 폴더에 완전히 압축 해제한다.
-   OneDrive 동기화 폴더보다 C:\Tools\DiagramMaker 같은 로컬 경로를 권장한다.
+   OneDrive 및 다른 동기화 폴더는 금지한다. C:\Tools\DiagramMaker 같은 비동기화 경로가 필수다.
 
 3. CMD에서 git --version을 실행한다.
    Git 변경 분석은 설치된 네이티브 Git을 우선 사용한다. Git이 없으면 fallback Worker로 동작하지만,
    대용량 pack 저장소와 C++ 프로젝트 인덱싱은 네이티브 Git이 필요하다.
 
-4. configure-llm.cmd를 실행한다.
+4. configure-network.cmd로 정책 예제를 준비하고 관리자에게 승인을 받는다.
+   LocalRoots에 배포·데이터·저장소·LLM 정책 경로를, LlmOrigins/LlmAddressRanges에 내부 목적지만 등록한다.
+   빈 예제는 실행과 연결을 거부한다. 정책 ACL과 호스트 방화벽도 관리자가 적용해야 한다.
+
+   configure-llm.cmd를 실행한다.
    생성되는 정책 파일에서 승인된 사내 정보만 설정한다.
 
    Endpoint      : /v1/chat/completions까지 포함한 전체 URL
@@ -28,7 +32,7 @@ Diagram Maker Windows x64 오프라인 설치
 
    이 시험은 고정된 합성 데이터만 사용하며 실제 저장소나 사용자 prompt를 보내지 않는다.
 
-7. 브라우저에서 http://localhost:5080 을 연다.
+7. 브라우저에서 http://127.0.0.1:5080 을 연다.
 
 8. Git 변경 분석은 다음 순서로 사용한다.
 
@@ -38,6 +42,13 @@ Diagram Maker Windows x64 오프라인 설치
    - 사전 분석 결과에서 표시할 변경 심볼을 체크하고 그룹을 조정한다.
    - 각 그룹에서 메서드 흐름도, 호출 시퀀스, 클래스 관계 또는 코드 관계도 형식과 샘플을 선택한 후 생성한다.
    - 결과 탭에서 SVG 또는 PNG로 다운로드한다.
+
+   코드 블럭 기능은 Git 등록 없이 시험할 수 있다.
+   - 코드 블럭 다이어그램 탭에서 작업 제목과 합성 C/C++ 또는 C# 코드를 입력한다.
+   - 그룹별 출력 종류를 선택하고 다이어그램 생성을 누른다.
+   - 의미 설명 완료 여부, 조건·반복·반환 흐름, 각 단계의 원본 근거를 확인한다.
+   - 저장한 작업을 새로고침하고 결과·근거·편집 이력이 복원되는지 확인한다.
+   - 연결 점검 3종의 통과만으로 실제 모델의 코드 해석 품질을 판정하지 않는다.
 
 9. 종료할 때 start.cmd가 실행 중인 CMD에서 Ctrl+C를 누른다.
 

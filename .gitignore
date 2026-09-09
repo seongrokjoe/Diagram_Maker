@@ -18,6 +18,8 @@ node_modules/
 appsettings.Production.json
 llm-policy.json
 llm-policy.local.json
+network-policy.json
+network-policy.local.json
 LocalAssist_Company_LLM_Integration_Reference_KO.txt
 *.user
 *.suo

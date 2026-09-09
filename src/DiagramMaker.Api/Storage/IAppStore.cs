@@ -2,7 +2,7 @@ using DiagramMaker.Domain;
 
 namespace DiagramMaker.Storage;
 
-public interface IAppStore : IAsyncDisposable
+public interface IAppStore : IAsyncDisposable, ICodeBlockStore
 {
     Task InitializeAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<RepositoryDefinition>> ListRepositoriesAsync(CancellationToken cancellationToken);

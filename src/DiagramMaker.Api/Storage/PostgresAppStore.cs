@@ -5,7 +5,7 @@ using NpgsqlTypes;
 
 namespace DiagramMaker.Storage;
 
-public sealed class PostgresAppStore : IAppStore
+public sealed partial class PostgresAppStore : IAppStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly NpgsqlDataSource _dataSource;
@@ -87,6 +87,7 @@ public sealed class PostgresAppStore : IAppStore
 
         await using var command = _dataSource.CreateCommand(sql);
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await InitializeCodeBlocksAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<RepositoryDefinition>> ListRepositoriesAsync(CancellationToken cancellationToken)
@@ -329,7 +330,21 @@ public sealed class PostgresAppStore : IAppStore
             VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT (id) DO UPDATE SET payload=EXCLUDED.payload, revision=EXCLUDED.revision
             """;
-        await using var command = _dataSource.CreateCommand(sql);
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        if (record.SourceKind == "code-block")
+        {
+            // Match deletion's workspace-first lock order. An edit cannot survive
+            // deleting its source workspace, even if it raced the HTTP ownership check.
+            await using var guard = new NpgsqlCommand("""
+                SELECT w.id FROM code_block_workspaces w JOIN code_block_runs r ON r.workspace_id=w.id
+                WHERE r.id=$1 AND w.owner_user_id=$2 FOR UPDATE OF w
+                """, connection, transaction);
+            guard.Parameters.AddWithValue(record.SourceId);
+            guard.Parameters.AddWithValue(record.OwnerUserId);
+            if (await guard.ExecuteScalarAsync(cancellationToken) is null) throw new KeyNotFoundException();
+        }
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue(record.Id);
         command.Parameters.AddWithValue(record.RootArtifactId);
         command.Parameters.AddWithValue(record.OwnerUserId);
@@ -337,6 +352,7 @@ public sealed class PostgresAppStore : IAppStore
         command.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(record, JsonOptions));
         command.Parameters.AddWithValue(record.CreatedAt);
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public Task<DiagramRevisionRecord?> GetDiagramRevisionAsync(Guid id, CancellationToken cancellationToken) =>

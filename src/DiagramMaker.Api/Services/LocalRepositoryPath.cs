@@ -16,6 +16,7 @@ public static class LocalRepositoryPath
         }
 
         var fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(candidate));
+        DiagramMaker.Security.LocalPathSafety.Validate(fullPath);
         if (fullPath.StartsWith("\\\\", StringComparison.Ordinal))
         {
             throw new ArgumentException("Network paths are not supported in local-only mode.");

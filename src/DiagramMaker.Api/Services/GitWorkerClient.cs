@@ -64,15 +64,27 @@ public sealed class GitWorkerClient : IGitWorkerClient
 
     public GitWorkerClient(
         IOptions<GitWorkerOptions> options,
-        IWebHostEnvironment environment)
+        IWebHostEnvironment environment,
+        DiagramMaker.Security.ApprovedNetworkPolicy? networkPolicy = null)
     {
         _options = options.Value;
         _scriptPath = Path.GetFullPath(_options.ScriptPath, environment.ContentRootPath);
+        _networkPolicy = networkPolicy;
+        _networkPolicy?.ValidateLocalPath(_scriptPath);
+    }
+
+    private readonly DiagramMaker.Security.ApprovedNetworkPolicy? _networkPolicy;
+
+    private string ValidateRepositoryPath(string path)
+    {
+        var normalized = LocalRepositoryPath.NormalizeAndValidate(path);
+        _networkPolicy?.ValidateLocalPath(normalized);
+        return normalized;
     }
 
     public async Task<GitRepositoryInspection> InspectAsync(string localPath, CancellationToken cancellationToken)
     {
-        var repositoryPath = LocalRepositoryPath.NormalizeAndValidate(localPath);
+        var repositoryPath = ValidateRepositoryPath(localPath);
         var result = await RunWorkerAsync<GitRepositoryInspection>(new
         {
             command = "inspect",
@@ -88,7 +100,7 @@ public sealed class GitWorkerClient : IGitWorkerClient
         AnalyzeRequest request,
         CancellationToken cancellationToken)
     {
-        var repositoryPath = LocalRepositoryPath.NormalizeAndValidate(repository.LocalPath);
+        var repositoryPath = ValidateRepositoryPath(repository.LocalPath);
         return await RunWorkerAsync<GitComparison>(new
         {
             command = "compare",
@@ -111,7 +123,7 @@ public sealed class GitWorkerClient : IGitWorkerClient
         int limit,
         CancellationToken cancellationToken)
     {
-        var repositoryPath = LocalRepositoryPath.NormalizeAndValidate(repository.LocalPath);
+        var repositoryPath = ValidateRepositoryPath(repository.LocalPath);
         return await RunWorkerAsync<GitCommitSummary[]>(new
         {
             command = "commits",
@@ -130,7 +142,7 @@ public sealed class GitWorkerClient : IGitWorkerClient
         string revision,
         CancellationToken cancellationToken)
     {
-        var repositoryPath = LocalRepositoryPath.NormalizeAndValidate(repository.LocalPath);
+        var repositoryPath = ValidateRepositoryPath(repository.LocalPath);
         var commits = await RunWorkerAsync<GitCommitSummary[]>(new
         {
             command = "commits",
@@ -152,7 +164,7 @@ public sealed class GitWorkerClient : IGitWorkerClient
         string targetRevision,
         CancellationToken cancellationToken)
     {
-        var repositoryPath = LocalRepositoryPath.NormalizeAndValidate(repository.LocalPath);
+        var repositoryPath = ValidateRepositoryPath(repository.LocalPath);
         return await RunWorkerAsync<PreparedRepositoryAnalysis>(new
         {
             command = "prepare",
@@ -182,7 +194,7 @@ public sealed class GitWorkerClient : IGitWorkerClient
         int endLine,
         CancellationToken cancellationToken)
     {
-        var repositoryPath = LocalRepositoryPath.NormalizeAndValidate(repository.LocalPath);
+        var repositoryPath = ValidateRepositoryPath(repository.LocalPath);
         return await RunWorkerAsync<EvidenceSnippet>(new
         {
             command = "evidence",
@@ -221,6 +233,9 @@ public sealed class GitWorkerClient : IGitWorkerClient
             WorkingDirectory = Path.GetDirectoryName(_scriptPath)!
         };
         startInfo.ArgumentList.Add(_scriptPath);
+        DiagramMaker.Security.WorkerEnvironment.Apply(startInfo);
+        if (_networkPolicy is not null)
+            startInfo.Environment["DIAGRAMMAKER_LOCAL_ROOTS"] = JsonSerializer.Serialize(_networkPolicy.LocalRoots);
 
         using var process = new Process { StartInfo = startInfo };
         try
@@ -268,11 +283,11 @@ public sealed class GitWorkerClient : IGitWorkerClient
             var failure = JsonSerializer.Deserialize<WorkerFailure>(stderr, JsonOptions);
             if (failure is not null && !string.IsNullOrWhiteSpace(failure.ErrorCode))
             {
-                var detail = string.IsNullOrWhiteSpace(failure.Message) ? "No diagnostic was returned." : failure.Message;
+                var safeCode = System.Text.RegularExpressions.Regex.IsMatch(failure.ErrorCode, "^GIT_[A-Z_]{1,64}$")
+                    ? failure.ErrorCode : "GIT_WORKER_FAILED";
                 return new GitWorkerException(
-                    failure.ErrorCode,
-                    $"Git worker failed ({failure.Backend ?? "unknown"}): {Limit(detail, 8_000)}",
-                    failure.Backend);
+                    safeCode,
+                    "Git worker could not read the approved local repository. Raw worker output is suppressed.");
             }
         }
         catch (JsonException)
@@ -280,7 +295,7 @@ public sealed class GitWorkerClient : IGitWorkerClient
             // Older workers returned plain text. Preserve it for the internal log.
         }
 
-        return new GitWorkerException("GIT_WORKER_FAILED", $"Git worker failed: {Limit(stderr, 8_000)}");
+        return new GitWorkerException("GIT_WORKER_FAILED", "Git worker failed. Raw worker output is suppressed.");
     }
 
     private static void TryKillProcessTree(Process process)

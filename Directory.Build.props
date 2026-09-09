@@ -5,5 +5,8 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <Deterministic>true</Deterministic>
+    <NuGetAudit>false</NuGetAudit>
+    <RestoreIgnoreFailedSources>false</RestoreIgnoreFailedSources>
+    <RestoreConfigFile>$(MSBuildThisFileDirectory)NuGet.Config</RestoreConfigFile>
   </PropertyGroup>
 </Project>

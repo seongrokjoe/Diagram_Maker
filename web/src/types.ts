@@ -136,6 +136,7 @@ export type CodeContext = {
 };
 
 export type DiagramExplanation = {
+  behaviors?: Array<{ id: string; summary: string; factIds: string[]; nodeIds: string[]; edgeIds: string[] }> | null;
   summary: string;
   changes: Array<{ changeId: string; summary: string; factIds: string[]; nodeIds: string[]; edgeIds: string[] }>;
   factIds: string[]; evidenceIds: string[];

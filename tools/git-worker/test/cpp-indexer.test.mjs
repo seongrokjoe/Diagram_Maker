@@ -227,3 +227,7 @@ test("indirect API uses an explicit alias and reports unresolved targets", async
   assert.equal(resolved.excludedCallCount, 1);
   assert.equal(resolved.excludedCalls[0].reason, "indirectTypeUnresolved");
 });
+test("Unicode parameter names and defaults preserve canonical C++ types", async () => {
+  const parsed = await parseCppFile("unicode.cpp", 'void save(const char* 메시지 = "한글 😀", int 횟수 = 1) {}');
+  assert.equal(parsed.symbols[0].semanticKey, "function:save(const char*,int)");
+});

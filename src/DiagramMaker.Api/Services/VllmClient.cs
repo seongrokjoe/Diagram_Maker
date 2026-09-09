@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using DiagramMaker.Configuration;
+using DiagramMaker.Security;
 
 namespace DiagramMaker.Services;
 
@@ -59,13 +60,17 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
     private readonly HttpClient? _client;
     private readonly Uri? _endpoint;
 
-    public VllmClient(LlmOptions options, ILogger<VllmClient>? logger = null, HttpMessageHandler? handler = null)
+    public VllmClient(LlmOptions options, ILogger<VllmClient>? logger = null, HttpMessageHandler? handler = null,
+        ApprovedNetworkPolicy? networkPolicy = null)
     {
         _options = options;
         _logger = logger;
         if (!options.Enabled) return;
 
         _endpoint = ValidateOptions(options);
+        if (handler is null && networkPolicy is null)
+            throw new InvalidOperationException("An approved network policy is required for LLM connections.");
+        networkPolicy?.ValidateLlm(_endpoint);
         handler ??= new SocketsHttpHandler
         {
             AllowAutoRedirect = false,
@@ -73,7 +78,8 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
             UseProxy = false,
             Credentials = null,
             ConnectTimeout = TimeSpan.FromSeconds(options.ConnectTimeoutSeconds),
-            PooledConnectionLifetime = TimeSpan.FromMinutes(5)
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+            ConnectCallback = networkPolicy!.ConnectLlmAsync
         };
         _client = new HttpClient(handler, disposeHandler: true) { Timeout = Timeout.InfiniteTimeSpan };
     }

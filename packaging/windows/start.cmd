@@ -2,6 +2,7 @@
 setlocal
 set "APP_ROOT=%~dp0"
 set "POLICY_PATH=%LOCALAPPDATA%\DiagramMaker\llm-policy.json"
+set "NETWORK_POLICY_PATH=%LOCALAPPDATA%\DiagramMaker\network-policy.json"
 
 if not exist "%APP_ROOT%DiagramMaker.Api.exe" (
   echo [ERROR] DiagramMaker.Api.exe was not found.
@@ -16,9 +17,18 @@ if not exist "%POLICY_PATH%" (
   echo Run configure-llm.cmd first.
   exit /b 1
 )
-if not exist "%APP_ROOT%data" mkdir "%APP_ROOT%data"
+if not exist "%NETWORK_POLICY_PATH%" (
+  echo [ERROR] Run configure-network.cmd and obtain an approved network policy first.
+  exit /b 1
+)
 
 set "DIAGRAMMAKER_LLM_POLICY_PATH=%POLICY_PATH%"
+set "DIAGRAMMAKER_NETWORK_POLICY_PATH=%NETWORK_POLICY_PATH%"
+set "CodexTest__Enabled=false"
+set "NODE_OPTIONS="
+set "NODE_PATH="
+set "DOTNET_STARTUP_HOOKS="
+set "DOTNET_CLI_TELEMETRY_OPTOUT=1"
 set "ASPNETCORE_ENVIRONMENT=Development"
 set "ASPNETCORE_URLS=http://127.0.0.1:5080"
 set "Llm__AllowDevelopmentStub=false"

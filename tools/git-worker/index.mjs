@@ -1,3 +1,4 @@
+import { gitEnvironment, validateGitStorage } from "./local-security.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -56,6 +57,7 @@ function validateRepositoryDirectory(repositoryPath) {
   if (!stat.isDirectory()) {
     throw new WorkerError("GIT_REPOSITORY_INVALID", "Repository path is not a directory");
   }
+  validateGitStorage(dir);
   return dir;
 }
 
@@ -133,12 +135,7 @@ function runProcess(executable, args, options = {}) {
 async function runGit(input, dir, args, options = {}) {
   const executable = input.gitExecutable || "git";
   const gitArgs = dir ? ["-C", dir, ...args] : args;
-  const environment = {
-    ...process.env,
-    GIT_OPTIONAL_LOCKS: "0",
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_NO_REPLACE_OBJECTS: "1",
-  };
+  const environment = gitEnvironment();
   const result = await runProcess(executable, gitArgs, {
     input: options.input,
     maxOutputBytes: options.maxOutputBytes,
@@ -190,12 +187,7 @@ function searchCommitsNative(input, dir, revision, query, skip, limit) {
     "--format=%H%x1f%P%x1f%aI%x1f%s%x1f%an%x1f%ae%x1e",
     "--end-of-options", revision,
   ];
-  const environment = {
-    ...process.env,
-    GIT_OPTIONAL_LOCKS: "0",
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_NO_REPLACE_OBJECTS: "1",
-  };
+  const environment = gitEnvironment();
   return new Promise((resolve, reject) => {
     let child;
     try {

@@ -7,7 +7,9 @@ import { deleteDiagramSelection } from "./diagramInteraction";
 import { DiagramExplanationPanel } from "./DiagramExplanationPanel";
 
 type EditInput = { rootArtifactId: string; parentRevisionId?: string; expectedVersion: number; document: DiagramEditDocument };
-export function DiagramEditor({ artifact, downloadName, zoomable = false, onSave, onPreview, onOpenDetail, reportError, showExplanation = false, onEvidence }: {
+export function DiagramEditor({ artifact, downloadName, zoomable = false, onSave, onPreview, onOpenDetail, reportError, showExplanation = false, onEvidence, collapsibleExplanation = false, canvasToolbar = false }: {
+  collapsibleExplanation?: boolean;
+  canvasToolbar?: boolean;
   showExplanation?: boolean;
   onEvidence?: (id: string) => void;
   artifact: DiagramArtifact;
@@ -267,7 +269,7 @@ export function DiagramEditor({ artifact, downloadName, zoomable = false, onSave
       <span>표시 리비전: v{displayed.version}{selectedRevision ? " · 구조 편집" : " · 생성 원본"}</span>
       <div className="button-row">
         {revisions.length > 0 && <label className="inline-select">리비전<select value={selectedRevisionId} disabled={editing} onChange={(event) => setSelectedRevisionId(event.target.value)}><option value="">생성 원본 v{artifact.version}</option>{revisions.map((revision) => <option key={revision.id} value={revision.id}>편집 v{revision.version}</option>)}</select></label>}
-        {!editing && <button type="button" className="secondary" disabled={!editingLatest && revisions.length > 0} onClick={beginEdit}>구조 편집</button>}
+        {!editing && !canvasToolbar && <button type="button" className="secondary" disabled={!editingLatest && revisions.length > 0} onClick={beginEdit}>구조 편집</button>}
       </div>
     </div>
     {editing && <div className="direct-edit-toolbar">
@@ -282,10 +284,18 @@ export function DiagramEditor({ artifact, downloadName, zoomable = false, onSave
       .filter(node => node?.detailPageId).map(node => <button type="button" className="secondary" key={node!.id}
         onClick={() => onOpenDetail(node!.detailPageId!)}>{node!.label} · 세부 보기</button>)}
     {editing && draft.nodes.length === 0 ? <div className="empty-state">모든 노드를 삭제했습니다. 실행 취소하거나 새 노드를 추가하세요. 저장하려면 노드가 하나 이상 필요합니다.</div> : <MermaidPreview source={currentArtifact.mermaidDsl} artifact={currentArtifact} downloadName={`${downloadName}-v${displayed.version}`}
+      toolbarContent={canvasToolbar && !editing ? <button className="secondary" disabled={!editingLatest && revisions.length > 0} onClick={beginEdit}>구조 편집</button> : undefined}
+      fitLabel={canvasToolbar ? "맞춤 보기" : undefined}
       zoomable={zoomable} interactive={editing || Boolean(onOpenDetail)} selected={selection} inlineEdit={inlineEdit} onSelect={selectItem} onEditRequest={editing ? requestInlineEdit : undefined}
       onInlineEditChange={(value) => setInlineEdit((current) => current ? { ...current, value } : null)}
       onInlineEditCommit={commitInlineEdit} onInlineEditCancel={() => setInlineEdit(null)} onInteractionReady={setDirectEditingAvailable} />}
-    {showExplanation && <DiagramExplanationPanel explanation={artifact.explanation} diagram={artifact.ir} edited={editing || Boolean(selectedRevision)} onEvidence={onEvidence} />}
+    {onEvidence && selection.map(item => {
+      const ids = item.kind === "node" ? currentArtifact.ir.nodes.find(n => n.id === item.id)?.evidenceIds : currentArtifact.ir.edges.find(e => e.id === item.id)?.evidenceIds;
+      return ids?.map((id, index) => <button key={`${item.id}-${id}`} className="secondary" onClick={() => onEvidence(id)}>선택 단계 원본 근거 {index + 1}</button>);
+    })}
+    {showExplanation && (collapsibleExplanation ? <details className="code-block-explanation"><summary>동작 설명과 원본 근거</summary>
+      <DiagramExplanationPanel explanation={artifact.explanation} diagram={artifact.ir} edited={editing || Boolean(selectedRevision)} onEvidence={onEvidence} />
+    </details> : <DiagramExplanationPanel explanation={artifact.explanation} diagram={artifact.ir} edited={editing || Boolean(selectedRevision)} onEvidence={onEvidence} />)}
     {previewError && <p className="warning">{previewError} 마지막 정상 미리보기를 유지합니다.</p>}
     <details><summary>Mermaid DSL 확인</summary><pre>{currentArtifact.mermaidDsl}</pre></details>
     {editing && <section className="structure-editor-panel">

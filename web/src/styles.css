@@ -314,3 +314,88 @@ pre { overflow: auto; max-height: 260px; padding: 14px; background: #101c2d; col
 .sample-source-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .sample-source-grid pre { overflow: auto; max-height: 360px; white-space: pre; }
 @media (max-width: 800px) { .sample-source-grid { grid-template-columns: 1fr; } .sample-workspace { padding: 12px; } }
+:root { --code-block-border: #c9d6e4; }
+.code-block-workspace { display: grid; gap: 16px; min-width: 0; }
+.code-block-inputs { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); }
+.code-block-workspace .form-row { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
+.code-block-workspace label { display: grid; gap: 5px; margin: 8px 0; }
+.code-block-workspace input[type="checkbox"] { width: auto; }
+.code-block-source { font-family: Consolas, monospace; tab-size: 4; width: 100%; resize: vertical; }
+.code-block-group { padding: 16px 0; border-top: 1px solid var(--code-block-border); }
+.code-block-workspace details > summary { cursor: pointer; padding: 10px 0; }
+.code-block-evidence pre { overflow: auto; max-height: 420px; white-space: pre; }
+.code-block-workspace button { margin: 3px; }
+.code-block-workspace > .panel { min-height: 0; }
+.code-block-workspace > button, .code-block-workspace .form-row > button, .code-block-workspace > .panel button:not([class]) {
+  border: 1px solid #9eb3ca; background: #f4f8fc; color: #244f7d; padding: 9px 13px; border-radius: 3px; font-weight: 700;
+}
+.code-block-workspace button:disabled { opacity: .5; cursor: default; }
+.code-block-workspace input, .code-block-workspace select { max-width: 100%; min-width: 0; }
+.code-block-workspace fieldset { margin: 12px 0; min-width: 0; }
+.code-block-workspace .code-block-controls { display: grid; gap: 16px; padding: 0; border: 0; margin: 0; }
+.code-block-controls > .panel { min-height: 0; }
+.code-block-controls > button, .code-block-controls > .panel button:not([class]) {
+  border: 1px solid #9eb3ca; background: #f4f8fc; color: #244f7d; padding: 9px 13px; border-radius: 3px; font-weight: 700;
+}
+.code-block-workspace label:has(input[type="checkbox"]) { display: flex; flex-direction: row; align-items: center; gap: 8px; }
+.code-block-workspace input[type="checkbox"] { width: auto; flex: 0 0 auto; }
+.code-block-workspace [hidden] { display: none !important; }
+body:has(main > div:not([hidden]) > .code-block-workspace) { min-width: 0; }
+.code-block-workspace[data-screen="results"] .code-block-toolbar > p,
+.code-block-workspace[data-screen="results"] .code-block-title-row { display: none; }
+.code-block-workspace button:not([class]) { padding: 8px 12px; border: 1px solid #bdcce0; border-radius: 6px; background: #f8fafc; color: #163a67; }
+.code-block-composer, .code-block-results { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 16px; align-items: start; }
+.code-block-editing, .code-block-result-content { display: grid; gap: 16px; min-width: 0; }
+.code-block-lists, .code-block-result-sidebar { min-width: 0; position: sticky; top: 12px; max-height: calc(100vh - 32px); overflow: auto; }
+.code-block-workspace .panel { min-height: 0; }
+.code-block-list { display: grid; gap: 6px; }
+.code-block-workspace .code-block-list-item { display: grid; text-align: left; padding: 10px 12px; margin: 0; border: 1px solid #dbe3ee; border-radius: 8px; background: #f8fafc; color: #22334e; overflow-wrap: anywhere; }
+.code-block-list-item small { color: #64748b; margin-top: 3px; }
+.code-block-workspace .code-block-list-item[aria-pressed="true"] { border-color: #2563eb; background: #eff6ff; box-shadow: inset 3px 0 #2563eb; }
+.code-block-scope { padding: 10px 12px; border-radius: 8px; background: #eff6ff; color: #1e40af; }
+.code-block-screen-tabs { display: flex; gap: 0; border-bottom: 1px solid #cbd6e2; margin: 20px -25px -25px; padding: 0 25px; }
+.code-block-workspace .code-block-screen-tab { margin: 0 0 -1px; border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; padding: 16px 22px; color: #58708f; font-weight: 700; }
+.code-block-workspace .code-block-screen-tab[aria-selected="true"] { border-bottom-color: #2563eb; background: #eff6ff; color: #1d4ed8; }
+.code-block-screen-tab:focus-visible, .code-block-card-toggle:focus-visible { outline: 2px solid #2563eb; outline-offset: -3px; }
+.code-block-add-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.code-block-workspace .code-block-add-actions button { margin: 0; padding: 10px 4px; font-size: 13px; white-space: nowrap; }
+.code-block-group-header, .code-block-card-body, .code-block-cards, .code-block-relations { display: grid; gap: 16px; min-width: 0; }
+.code-block-group-options { display: flex; flex-wrap: wrap; gap: 16px 28px; padding: 12px 0; border-bottom: 1px solid #dbe3ee; }
+.code-block-group-options label { font-size: 14px; }
+.code-block-relation { border: 1px solid #dbe3ee; border-radius: 6px; padding: 12px; min-width: 0; }
+.code-block-relation .form-row > label { flex: 1 1 150px; }
+.code-block-card-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.code-block-card-heading h3 { flex: 1 1 180px; min-width: 0; margin: 0; }
+.code-block-workspace .code-block-card-toggle { width: 100%; margin: 0; padding: 10px 0; border: 0; background: transparent; color: #163a67; text-align: left; font-weight: 700; overflow-wrap: anywhere; }
+.code-block-card-toggle small { display: inline-block; margin-left: 8px; color: #64748b; font-weight: 400; }
+.code-block-card-actions { display: flex; align-items: center; flex-wrap: wrap; }
+.code-block-card-body { border-top: 1px solid #dbe3ee; padding-top: 16px; margin-top: 8px; }
+.code-block-card-body .form-row > label:first-child { flex: 1 1 200px; }
+.code-block-generate-actions { display: flex; justify-content: flex-end; padding: 8px 0; }
+.code-block-workspace .code-block-generate { min-height: 52px; min-width: 220px; margin: 0; padding: 15px 28px; font-size: 17px; }
+.code-block-title-row label { flex: 1 1 280px; max-width: 560px; }
+.code-block-workspace input[aria-invalid="true"] { border-color: #b91c1c; }
+.code-block-result-tree [role="treeitem"] { padding: 10px 8px; cursor: pointer; border-radius: 6px; overflow-wrap: anywhere; }
+.code-block-result-tree [aria-selected="true"] { background: #dbeafe; color: #1e40af; }
+.code-block-result-tree [role="treeitem"]:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }
+.code-block-result-tree [aria-level="1"] { font-weight: 700; border-top: 1px solid #e2e8f0; }
+.code-block-result-content .diagram-canvas { min-height: 400px; max-height: 75vh; overflow: auto; }
+.code-block-result-content .diagram-actions { position: sticky; top: 0; z-index: 1; background: white; padding: 10px 0; flex-wrap: wrap; }
+.code-block-result-content .diagram-actions > * { flex-shrink: 0; white-space: nowrap; }
+.code-block-workspace .code-block-evidence { position: fixed; right: 24px; bottom: 24px; z-index: 30; width: min(800px, calc(100vw - 48px)); max-height: 65vh; overflow: auto; box-shadow: 0 12px 50px #10213a40; border: 1px solid #94a3b8; }
+@media (max-width: 1000px) {
+  .code-block-composer, .code-block-results { grid-template-columns: 230px minmax(0, 1fr); }
+}
+@media (max-width: 720px) {
+  body:has(main > div:not([hidden]) > .code-block-workspace) main { padding: 12px; }
+  body:has(main > div:not([hidden]) > .code-block-workspace) .tabs { padding: 0 12px; flex-wrap: wrap; }
+  body:has(main > div:not([hidden]) > .code-block-workspace) .tabs button { padding: 12px; }
+  body:has(main > div:not([hidden]) > .code-block-workspace) .topbar { height: auto; padding: 18px 12px; }
+  body:has(main > div:not([hidden]) > .code-block-workspace) .topbar h1 { font-size: 18px; }
+  .code-block-workspace .panel { padding: 16px; }
+  .code-block-screen-tabs { margin: 16px -16px -16px; padding: 0 16px; }
+  .code-block-workspace .code-block-screen-tab { flex: 1; padding: 15px 8px; }
+  .code-block-workspace .code-block-generate { width: 100%; }
+  .code-block-composer, .code-block-results { grid-template-columns: minmax(0, 1fr); }
+  .code-block-lists, .code-block-result-sidebar { position: static; max-height: 360px; }
+}

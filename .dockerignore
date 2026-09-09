@@ -6,4 +6,16 @@
 .env
 repositories
 postgres-data
+artifacts
+data
+.codex
+.agents
+**/llm-policy*.json
+**/network-policy*.json
+!packaging/windows/config/*.example.json
+LocalAssist_Company_LLM_Integration_Reference_KO.txt
+start-local-test.bat
+stop-local-test.bat
+**/*.user
+**/*.suo
 AI_Git_Architecture_Reviewer_상세설계서.docx

@@ -1,0 +1,15 @@
+import type { DiagramAvailability, DiagramViewSelection } from "./types";
+export type CodeBlockInput = { id: string; language: "cpp" | "csharp"; title: string; code: string; description?: string };
+export type CodeBlockGroup = { id: string; title: string; blockIds: string[]; views?: DiagramViewSelection[]; enableThinking?: boolean; enableUserRelations?: boolean };
+export type CodeBlockRelation = { id: string; fromBlockId: string; toBlockId: string; kind: "calls" | "uses" | "dataflow"; origin: "user"; description: string };
+export type CodeBlockDraft = { title: string; blocks: CodeBlockInput[]; groups?: CodeBlockGroup[]; relations?: CodeBlockRelation[]; enableThinking: boolean };
+export type CodeBlockWorkspaceRecord = { id: string; revision: number; input: CodeBlockDraft; updatedAt: string };
+export type CodeBlockWorkspaceSummary = { id: string; revision: number; title: string; blockCount: number; updatedAt: string };
+export type CodeBlockQuestion = { id: string; prompt: string; fromBlockId: string; evidenceIds: string[]; options: Array<{ id: string; label: string }> };
+export type CodeBlockView = { viewId: string; selection: DiagramViewSelection; state: string; pages: Array<{ id: string; title: string; artifactId: string;
+  level?: string; blockIds?: string[]; symbolIds?: string[]; resultKind?: string }>;
+  warnings: string[]; errorMessage?: string; reused: boolean; llmStatus: string; failureStage?: string };
+export type CodeBlockRun = { id: string; workspaceId: string; inputRevision: number; revision: number; state: string; progress: number; stageMessage: string;
+  createdAt: string; groups: CodeBlockGroup[]; questions: CodeBlockQuestion[]; results: Array<{ groupId: string; title: string; blockIds: string[]; views: CodeBlockView[]; availability: DiagramAvailability[] }>;
+  warnings: string[]; errorMessage?: string };
+export type CodeBlockEvidence = { blockId: string; blockTitle: string; startLine: number; endLine: number; content: string; contentHash: string };

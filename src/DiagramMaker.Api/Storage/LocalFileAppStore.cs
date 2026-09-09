@@ -4,7 +4,7 @@ using DiagramMaker.Domain;
 
 namespace DiagramMaker.Storage;
 
-public sealed class LocalFileAppStore(string filePath) : IAppStore
+public sealed partial class LocalFileAppStore(string filePath) : IAppStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -44,8 +44,14 @@ public sealed class LocalFileAppStore(string filePath) : IAppStore
                 await _inner.SaveAnalysisAsync(Deserialize<AnalysisJob>(json), cancellationToken), cancellationToken);
             await LoadRecordsAsync(_planDirectory, async json =>
                 await _inner.SaveAnalysisPlanAsync(Deserialize<AnalysisPlan>(json), cancellationToken), cancellationToken);
+            await InitializeCodeBlocksAsync(cancellationToken);
             await LoadRecordsAsync(_diagramRevisionDirectory, async json =>
-                await _inner.SaveDiagramRevisionAsync(Deserialize<DiagramRevisionRecord>(json), cancellationToken), cancellationToken);
+            {
+                var revision = Deserialize<DiagramRevisionRecord>(json);
+                if (revision.SourceKind != "code-block" || await _inner.GetCodeBlockRunAsync(revision.SourceId, cancellationToken) is not null)
+                    await _inner.SaveDiagramRevisionAsync(revision, cancellationToken);
+                else File.Delete(Path.Combine(_diagramRevisionDirectory, $"{revision.Id:N}.json"));
+            }, cancellationToken);
         }
         catch (JsonException exception)
         {
@@ -112,8 +118,13 @@ public sealed class LocalFileAppStore(string filePath) : IAppStore
 
     public async Task SaveDiagramRevisionAsync(DiagramRevisionRecord record, CancellationToken cancellationToken)
     {
-        await _inner.SaveDiagramRevisionAsync(record, cancellationToken);
-        await PersistRecordAsync(_diagramRevisionDirectory, record.Id, record, cancellationToken);
+        if (record.SourceKind == "code-block") await _codeFileGate.WaitAsync(cancellationToken);
+        try
+        {
+            await _inner.SaveDiagramRevisionAsync(record, cancellationToken);
+            await PersistRecordAsync(_diagramRevisionDirectory, record.Id, record, cancellationToken);
+        }
+        finally { if (record.SourceKind == "code-block") _codeFileGate.Release(); }
     }
 
     public Task<DiagramRevisionRecord?> GetDiagramRevisionAsync(Guid id, CancellationToken cancellationToken) =>
@@ -129,6 +140,7 @@ public sealed class LocalFileAppStore(string filePath) : IAppStore
     {
         await _inner.DisposeAsync();
         _fileLock.Dispose();
+        _codeFileGate.Dispose();
     }
 
     private async Task PersistRepositoriesAsync(CancellationToken cancellationToken)

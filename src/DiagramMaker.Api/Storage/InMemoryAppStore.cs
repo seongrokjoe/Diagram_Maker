@@ -3,7 +3,7 @@ using DiagramMaker.Domain;
 
 namespace DiagramMaker.Storage;
 
-public sealed class InMemoryAppStore : IAppStore
+public sealed partial class InMemoryAppStore : IAppStore
 {
     private readonly ConcurrentDictionary<Guid, RepositoryDefinition> _repositories = new();
     private readonly ConcurrentDictionary<Guid, AnalysisJob> _analyses = new();
@@ -169,7 +169,12 @@ public sealed class InMemoryAppStore : IAppStore
 
     public Task SaveDiagramRevisionAsync(DiagramRevisionRecord record, CancellationToken cancellationToken)
     {
-        _diagramRevisions[record.Id] = record;
+        lock (_codeBlockGate)
+        {
+            if (record.SourceKind == "code-block" && (!_codeRuns.TryGetValue(record.SourceId, out var run) || run.OwnerUserId != record.OwnerUserId))
+                throw new KeyNotFoundException("The code block source no longer exists.");
+            _diagramRevisions[record.Id] = record;
+        }
         return Task.CompletedTask;
     }
 

@@ -2,8 +2,10 @@ import { build } from "esbuild";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertApprovedBuildPath } from "./offline-policy.mjs";
 
 const projectDirectory = dirname(fileURLToPath(import.meta.url));
+assertApprovedBuildPath(projectDirectory);
 const repositoryDirectory = resolve(projectDirectory, "..");
 const outputArgumentIndex = process.argv.indexOf("--outDir");
 const requestedOutput = outputArgumentIndex >= 0 ? process.argv[outputArgumentIndex + 1] : "dist";
@@ -12,6 +14,9 @@ const outputDirectory = resolve(projectDirectory, requestedOutput);
 const relativeOutput = relative(repositoryDirectory, outputDirectory);
 if (relativeOutput.startsWith("..") || isAbsolute(relativeOutput))
   throw new Error("The build output must remain inside the repository.");
+if (outputDirectory !== resolve(projectDirectory, "dist") && !relativeOutput.startsWith("artifacts" + (process.platform === "win32" ? "\\" : "/")))
+  throw new Error("The build output must be web/dist or a child of artifacts.");
+assertApprovedBuildPath(outputDirectory);
 const assetsDirectory = resolve(outputDirectory, "assets");
 const vendorDirectory = resolve(outputDirectory, "vendor");
 

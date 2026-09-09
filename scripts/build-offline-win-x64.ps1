@@ -1,10 +1,11 @@
 param(
-    [string]$Version = '0.1.0-offline.16',
-    [string]$NodeVersion = '24.12.0',
+    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$')][string]$Version = '0.1.0-internal.3',
+    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')][string]$NodeVersion = '24.12.0',
     [switch]$SkipTests
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'offline-common.ps1')
 
 function Assert-LastExitCode([string]$Step) {
     if ($LASTEXITCODE -ne 0) { throw "$Step failed with exit code $LASTEXITCODE" }
@@ -19,6 +20,7 @@ function Assert-ChildPath([string]$Parent, [string]$Candidate) {
 }
 
 $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+Assert-ApprovedWorkRoot $projectRoot
 $artifactRoot = Join-Path $projectRoot 'artifacts'
 $releaseRoot = Join-Path $artifactRoot 'release'
 $cacheRoot = Join-Path $artifactRoot 'cache'
@@ -33,16 +35,18 @@ $assetName = "DiagramMaker-$Version-win-x64.zip"
 $assetPath = Join-Path $releaseRoot $assetName
 
 foreach ($path in @($stageRoot, $releaseRoot, $buildRoot)) { Assert-ChildPath $artifactRoot $path }
+foreach ($path in @($artifactRoot, $stageRoot, $releaseRoot, $buildRoot, $cacheRoot)) { Assert-ApprovedWorkRoot $path }
+if (Test-Path -LiteralPath $assetPath) { throw 'This release already exists. Choose a new version to preserve prior packages.' }
 if (Test-Path -LiteralPath $stageRoot) { Remove-Item -LiteralPath $stageRoot -Recurse -Force }
 if (Test-Path -LiteralPath $buildRoot) { Remove-Item -LiteralPath $buildRoot -Recurse -Force }
 New-Item -ItemType Directory -Path $stageRoot, $releaseRoot, $cacheRoot, $webRoot, $workerRoot -Force | Out-Null
 
-foreach ($name in @('package.json', 'package-lock.json', 'index.html', 'tsconfig.json', 'tsconfig.app.json', 'tsconfig.node.json', 'vite.config.mjs', 'build.mjs')) {
+foreach ($name in @('package.json', 'package-lock.json', 'index.html', 'tsconfig.json', 'tsconfig.app.json', 'tsconfig.node.json', 'vite.config.mjs', 'build.mjs', 'offline-policy.mjs')) {
     Copy-Item -LiteralPath (Join-Path $sourceWebRoot $name) -Destination $webRoot
 }
 Copy-Item -LiteralPath (Join-Path $sourceWebRoot 'src') -Destination $webRoot -Recurse
 Copy-Item -LiteralPath (Join-Path $sourceWebRoot 'test') -Destination $webRoot -Recurse
-foreach ($name in @('package.json', 'package-lock.json', 'index.mjs', 'cpp-indexer.mjs')) {
+foreach ($name in @('package.json', 'package-lock.json', 'index.mjs', 'cpp-indexer.mjs', 'code-block-parser.mjs', 'local-security.mjs')) {
     Copy-Item -LiteralPath (Join-Path $sourceWorkerRoot $name) -Destination $workerRoot
 }
 $workerTestRoot = Join-Path $workerRoot 'test'
@@ -52,12 +56,8 @@ Copy-Item -Path (Join-Path $sourceWorkerRoot 'test\*.mjs') -Destination $workerT
 $nodeArchiveName = "node-v$NodeVersion-win-x64.zip"
 $nodeArchive = Join-Path $cacheRoot $nodeArchiveName
 $nodeChecksums = Join-Path $cacheRoot "node-v$NodeVersion-SHASUMS256.txt"
-$nodeBaseUri = "https://nodejs.org/dist/v$NodeVersion"
-if (-not (Test-Path -LiteralPath $nodeArchive)) {
-    Invoke-WebRequest -UseBasicParsing -Uri "$nodeBaseUri/$nodeArchiveName" -OutFile $nodeArchive
-}
-if (-not (Test-Path -LiteralPath $nodeChecksums)) {
-    Invoke-WebRequest -UseBasicParsing -Uri "$nodeBaseUri/SHASUMS256.txt" -OutFile $nodeChecksums
+if (-not (Test-Path -LiteralPath $nodeArchive) -or -not (Test-Path -LiteralPath $nodeChecksums)) {
+    throw 'Pre-provisioned Node archive and approved checksums are required. No download is permitted.'
 }
 $expectedLine = Get-Content -LiteralPath $nodeChecksums | Where-Object { $_ -match "\s$([regex]::Escape($nodeArchiveName))$" } | Select-Object -First 1
 if (-not $expectedLine) { throw "Node.js checksum was not found for $nodeArchiveName" }
@@ -73,13 +73,13 @@ $targetNode = Join-Path $nodeExtractRoot 'node.exe'
 $targetNpmCli = Join-Path $nodeExtractRoot 'node_modules\npm\bin\npm-cli.js'
 
 if (-not $SkipTests) {
-    dotnet restore (Join-Path $projectRoot 'DiagramMaker.sln') --locked-mode
+    dotnet restore (Join-Path $projectRoot 'DiagramMaker.sln') --locked-mode --configfile (Join-Path $projectRoot 'NuGet.Config')
     Assert-LastExitCode 'dotnet restore'
     dotnet test (Join-Path $projectRoot 'DiagramMaker.sln') -c Release --no-restore
     Assert-LastExitCode 'dotnet test'
 }
 
-& $targetNode $targetNpmCli ci --prefix $workerRoot --ignore-scripts
+& $targetNode $targetNpmCli ci --prefix $workerRoot --offline --ignore-scripts --no-audit --no-fund
 Assert-LastExitCode 'git worker npm ci'
 Push-Location $workerRoot
 try {
@@ -89,23 +89,21 @@ try {
 finally {
     Pop-Location
 }
-& $targetNode $targetNpmCli audit --prefix $workerRoot --audit-level=low
-Assert-LastExitCode 'git worker audit'
 
-& $targetNode $targetNpmCli ci --prefix $webRoot
+& $targetNode $targetNpmCli ci --prefix $webRoot --offline --ignore-scripts --no-audit --no-fund
 Assert-LastExitCode 'web npm ci'
 Push-Location $webRoot
 try {
-    & $targetNode $targetNpmCli test
+    & $targetNode --test @(Get-ChildItem -LiteralPath 'test' -Filter '*.test.mjs' | ForEach-Object { $_.FullName })
     Assert-LastExitCode 'web interaction tests'
-    & $targetNode $targetNpmCli run build
+    & $targetNode (Join-Path $webRoot 'node_modules/typescript/bin/tsc') -b
+    Assert-LastExitCode 'web TypeScript build'
+    & $targetNode (Join-Path $webRoot 'build.mjs')
 }
 finally {
     Pop-Location
 }
 Assert-LastExitCode 'web build'
-& $targetNode $targetNpmCli audit --prefix $webRoot --audit-level=low
-Assert-LastExitCode 'web audit'
 & $targetNode (Join-Path $projectRoot 'scripts\check-npm-licenses.mjs') (Join-Path $webRoot 'node_modules') (Join-Path $workerRoot 'node_modules')
 Assert-LastExitCode 'npm license policy check'
 
@@ -119,7 +117,9 @@ foreach ($nativePrebuildRoot in @(
     }
 }
 
-dotnet publish $apiProject -c Release -r win-x64 --self-contained true -o $stageRoot
+dotnet restore $apiProject -r win-x64 --locked-mode --configfile (Join-Path $projectRoot 'NuGet.Config')
+Assert-LastExitCode 'offline publish restore'
+dotnet publish $apiProject -c Release -r win-x64 --self-contained true --no-restore -o $stageRoot
 Assert-LastExitCode 'win-x64 self-contained publish'
 
 $wwwroot = Join-Path $stageRoot 'wwwroot'
@@ -132,6 +132,8 @@ $packagedWorker = Join-Path $stageRoot 'tools\git-worker'
 New-Item -ItemType Directory -Path $packagedWorker -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $workerRoot 'index.mjs') -Destination $packagedWorker
 Copy-Item -LiteralPath (Join-Path $workerRoot 'cpp-indexer.mjs') -Destination $packagedWorker
+Copy-Item -LiteralPath (Join-Path $workerRoot 'code-block-parser.mjs') -Destination $packagedWorker
+Copy-Item -LiteralPath (Join-Path $workerRoot 'local-security.mjs') -Destination $packagedWorker
 Copy-Item -LiteralPath (Join-Path $workerRoot 'package.json') -Destination $packagedWorker
 Copy-Item -LiteralPath (Join-Path $workerRoot 'package-lock.json') -Destination $packagedWorker
 Copy-Item -LiteralPath (Join-Path $workerRoot 'node_modules') -Destination $packagedWorker -Recurse
@@ -157,47 +159,24 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'THIRD_PARTY_NOTICES.md') -Destin
 Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE_POLICY.md') -Destination $licenseRoot
 Copy-Item -LiteralPath (Join-Path $nodeExtractRoot 'LICENSE') -Destination (Join-Path $licenseRoot 'NODE_LICENSE.txt')
 
-$packageLockPath = Join-Path $projectRoot 'src\DiagramMaker.Api\packages.lock.json'
-$packageLock = Get-Content -LiteralPath $packageLockPath -Raw | ConvertFrom-Json
-$targetFramework = $packageLock.dependencies.'net9.0'
-if (-not $targetFramework) { throw 'NuGet lock file does not contain the net9.0 target framework.' }
-$globalPackages = if ($env:NUGET_PACKAGES) {
-    [System.IO.Path]::GetFullPath($env:NUGET_PACKAGES)
-} else {
-    Join-Path ([Environment]::GetFolderPath('UserProfile')) '.nuget\packages'
-}
-if (-not (Test-Path -LiteralPath $globalPackages)) {
-    throw "NuGet global package directory does not exist: $globalPackages"
-}
-$nugetLicenseRoot = Join-Path $licenseRoot 'nuget'
-New-Item -ItemType Directory -Path $nugetLicenseRoot -Force | Out-Null
-$nugetInventory = @()
-foreach ($library in $targetFramework.PSObject.Properties) {
-    $packageId = $library.Name
-    $packageVersion = [string]$library.Value.resolved
-    $source = Join-Path $globalPackages (Join-Path $packageId.ToLowerInvariant() $packageVersion.ToLowerInvariant())
-    if (-not (Test-Path -LiteralPath $source)) {
-        throw "NuGet package directory does not exist: $packageId $packageVersion"
-    }
-    $destination = Join-Path $nugetLicenseRoot ("$packageId-$packageVersion" -replace '[^A-Za-z0-9._-]', '_')
-    New-Item -ItemType Directory -Path $destination -Force | Out-Null
-    Get-ChildItem -LiteralPath $source -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match '^(license|copying|notice|third.?party|.+\.nuspec)' } |
-        Copy-Item -Destination $destination -Force
-    if ($packageId -eq 'Npgsql') {
-        Copy-Item -LiteralPath (Join-Path $projectRoot 'packaging\licenses\NPGSQL_LICENSE.txt') `
-            -Destination (Join-Path $destination 'LICENSE.txt') -Force
-    }
-    $nugetInventory += "$packageId`t$packageVersion`t$($library.Value.type)"
-}
-$nugetInventory | Sort-Object | Set-Content -LiteralPath (Join-Path $nugetLicenseRoot '_inventory.tsv') -Encoding UTF8
+& (Join-Path $PSScriptRoot 'collect-nuget-licenses.ps1') -OutputRoot (Join-Path $licenseRoot 'nuget') -RuntimeAssetsPath (Join-Path $projectRoot 'src/DiagramMaker.Api/obj/project.assets.json')
+$runtimeInfo = & $targetNode -p 'JSON.stringify({version: process.version, versions: process.versions})' | ConvertFrom-Json
+$runtimeInfo | Add-Member -NotePropertyName sha256 -NotePropertyValue (Get-FileHash -LiteralPath $targetNode -Algorithm SHA256).Hash.ToLowerInvariant()
+$runtimeInfo | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $licenseRoot 'node-runtime.json') -Encoding UTF8
+& $targetNode (Join-Path $PSScriptRoot 'create-sbom.mjs') $licenseRoot (Join-Path $licenseRoot 'sbom.cdx.json')
+Assert-LastExitCode 'package SBOM'
+& $targetNode (Join-Path $PSScriptRoot 'check-internal-only.mjs') $stageRoot
+Assert-LastExitCode 'package external inference exclusion'
 
-$dotnetRoot = Split-Path -Parent (Get-Command dotnet).Source
-Copy-Item -LiteralPath (Join-Path $dotnetRoot 'LICENSE.txt') -Destination (Join-Path $licenseRoot 'DOTNET_LICENSE.txt')
-Copy-Item -LiteralPath (Join-Path $dotnetRoot 'ThirdPartyNotices.txt') -Destination (Join-Path $licenseRoot 'DOTNET_THIRD_PARTY_NOTICES.txt')
-
-$sourceCommit = try { (git -C $projectRoot rev-parse HEAD).Trim() } catch { 'unavailable' }
-$sourceTreeDirty = try { @((git -C $projectRoot status --porcelain --untracked-files=no)).Count -gt 0 } catch { $null }
+$sourceCommit = 'unavailable'
+$sourceTreeDirty = $null
+if (Test-Path -LiteralPath (Join-Path $projectRoot '.git')) {
+    $sourceCommit = (git -C $projectRoot rev-parse HEAD).Trim()
+    Assert-LastExitCode 'source commit metadata'
+    $sourceChanges = @(git -C $projectRoot status --porcelain)
+    Assert-LastExitCode 'source working tree metadata'
+    $sourceTreeDirty = $sourceChanges.Count -gt 0
+}
 $manifest = [ordered]@{
     product = 'Diagram Maker'
     version = $Version
@@ -214,7 +193,6 @@ $manifest = [ordered]@{
 }
 $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stageRoot 'manifest.json') -Encoding UTF8
 
-if (Test-Path -LiteralPath $assetPath) { Remove-Item -LiteralPath $assetPath -Force }
 Compress-Archive -Path (Join-Path $stageRoot '*') -DestinationPath $assetPath -CompressionLevel Optimal
 $assetHash = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
 "$assetHash  $assetName" | Set-Content -LiteralPath "$assetPath.sha256" -Encoding ASCII

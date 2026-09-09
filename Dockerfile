@@ -1,35 +1,20 @@
-FROM node:24-bookworm-slim AS web-build
-WORKDIR /src/web
-COPY web/package.json web/package-lock.json ./
-RUN npm ci
-COPY web/ ./
-RUN npm run build
-
-FROM node:24-bookworm-slim AS git-worker-build
-WORKDIR /src/tools/git-worker
-COPY tools/git-worker/package.json tools/git-worker/package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts
-COPY tools/git-worker/index.mjs ./
-
-FROM mcr.microsoft.com/dotnet/sdk:9.0 AS api-build
-WORKDIR /src
-COPY Directory.Build.props global.json ./
-COPY src/DiagramMaker.Api/DiagramMaker.Api.csproj src/DiagramMaker.Api/
-RUN dotnet restore src/DiagramMaker.Api/DiagramMaker.Api.csproj
-COPY src/DiagramMaker.Api/ src/DiagramMaker.Api/
-RUN dotnet publish src/DiagramMaker.Api/DiagramMaker.Api.csproj -c Release --no-restore -o /out
-
-FROM node:24-bookworm-slim AS node-runtime
-
-FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
+# Use scripts/build-container.ps1 with an approved, locally loaded digest.
+# The build context contains only reviewed prebuilt Linux runtime artifacts.
+ARG DOTNET_RUNTIME_IMAGE
+FROM ${DOTNET_RUNTIME_IMAGE}
 WORKDIR /app
-COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
-COPY --from=api-build /out/ ./
-COPY --from=web-build /src/web/dist/ ./wwwroot/
-COPY --from=git-worker-build /src/tools/git-worker/ ./tools/git-worker/
+COPY api/ ./
+COPY wwwroot/ ./wwwroot/
+COPY worker/ ./tools/git-worker/
+COPY runtime/node /usr/local/bin/node
+COPY licenses/ ./licenses/
 ENV ASPNETCORE_URLS=http://+:8080 \
+    ASPNETCORE_ENVIRONMENT=Production \
+    GitWorker__NodeExecutable=/usr/local/bin/node \
     GitWorker__ScriptPath=/app/tools/git-worker/index.mjs \
-    Security__RepositoryRoot=/repositories
+    DIAGRAMMAKER_NETWORK_POLICY_PATH=/policy/network-policy.json \
+    DIAGRAMMAKER_LLM_POLICY_PATH=/policy/llm-policy.json \
+    DOTNET_CLI_TELEMETRY_OPTOUT=1
 EXPOSE 8080
 USER app
 ENTRYPOINT ["dotnet", "DiagramMaker.Api.dll"]

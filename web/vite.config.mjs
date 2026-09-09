@@ -3,8 +3,10 @@ import react from "@vitejs/plugin-react";
 import { copyFileSync, createReadStream, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertApprovedBuildPath } from "./offline-policy.mjs";
 
 const projectDirectory = dirname(fileURLToPath(import.meta.url));
+assertApprovedBuildPath(projectDirectory);
 const mermaidRuntime = resolve(projectDirectory, "node_modules/mermaid/dist/mermaid.min.js");
 
 export default defineConfig({
@@ -26,6 +28,7 @@ export default defineConfig({
     },
   ],
   server: {
+    host: "127.0.0.1",
     port: 5173,
     proxy: {
       "/api": "http://localhost:5080",

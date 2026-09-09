@@ -19,10 +19,14 @@ export function DiagramExplanationPanel({ explanation, edited, onEvidence, diagr
     </p>}
     {explanation && <>
       <h4>동작 설명</h4><p className="page-behavior">{explanation.summary}</p>
-      <h4>핵심 변경</h4>
+      {explanation.behaviors != null ? <><h4>핵심 동작</h4><ul>{explanation.behaviors.map((behavior, index) => <li key={`${behavior.id}-${index}`}>{behavior.summary}
+        {onEvidence && [...new Set([...(diagram?.nodes.filter(n => behavior.nodeIds.includes(n.id)).flatMap(n => n.evidenceIds) ?? []),
+          ...(diagram?.edges.filter(e => behavior.edgeIds.includes(e.id)).flatMap(e => e.evidenceIds) ?? [])])].map((id, i) =>
+          <button className="text-button" key={id} onClick={() => onEvidence(id)}>원본 근거 {i + 1}</button>)}
+      </li>)}</ul></> : <><h4>핵심 변경</h4>
       {explanation.changes.length > 0 ? <ul>{explanation.changes.map((change, index) =>
         <li key={`${change.changeId}-${index}`} data-change-id={change.changeId}>{change.summary}</li>)}</ul> :
-        <p className="help">{explanation.status === "Semantic" ? "이 페이지에 연결된 변경 설명이 없습니다." : "변경 전후의 의미 비교를 완료하지 못했습니다."}</p>}
+        <p className="help">{explanation.status === "Semantic" ? "이 페이지에 연결된 변경 설명이 없습니다." : "변경 전후의 의미 비교를 완료하지 못했습니다."}</p>}</>}
       {explanation.status === "Semantic" && <ResultNotices notices={explanation.warnings} title="페이지 분석 안내" />}
       {onEvidence && <div className="page-evidence"><EvidenceBrowser evidenceIds={explanation.evidenceIds} diagram={diagram} onEvidence={onEvidence} /></div>}
     </>}
