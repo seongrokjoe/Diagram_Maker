@@ -14,6 +14,11 @@
 
 ## 검증 및 다음 작업
 
+- 2026-09-10 원격 배포 완료: 소스 `5295226`, 패키징 보완 `6b19242`, 릴리스 `2d12cd3`을
+  기존 `origin/main`에 일반 push했고 exit 0 및 `e53efc2..2d12cd3` 갱신을 확인했다.
+  최초 자동 승인 거부는 기존 origin의 소스/ZIP 배포 이력을 제시한 재검토로 해소했다.
+  GitHub의 파일 크기 권고 경고 외 실패 없음. 다음: 사내의 승인된 실제 LLM/DB 시험 결과 확인.
+
 - 2026-09-10 A4 완료: internal.3 빌드 exit 0. 패키지 소스는 `6b19242`, sourceTreeDirty=false.
   x64 worker 32/web 44, npm 268/NuGet 11/Node 포함 SBOM 280 구성요소 통과.
   실제 패키지 API/5종 7페이지/C++/4종×4개 폭: `offline-preview-IgdXfH` 통과.

@@ -10,7 +10,8 @@
   전체 verify 및 실제 패키지 API/UI/합성 LLM 전송/ZIP 해시 검사가 통과했다.
   기존 checkpoint·작업 변경·과거 ZIP은 보존했다. 소스 커밋은 `5295226`, 패키징 보완은 `6b19242`.
   최신 ZIP: `artifacts/release/DiagramMaker-0.1.0-internal.3-win-x64.zip`.
-  검증·설정 안내: `SECURITY_AUDIT_REPORT.md`. 다음: 릴리스 커밋과 origin/main push 최종 확인.
+  검증·설정 안내: `SECURITY_AUDIT_REPORT.md`. 릴리스 커밋 `2d12cd3`의 origin/main push 완료.
+  다음: 사내에서 승인된 정책을 설정하고 실제 LLM 품질/연결 및 필요한 PostgreSQL 검증을 수행한다.
 
 - 2026-09-09 사내 전용 보안·라이선스 정비 시작. 새 사용자 승인 기준과 단계별 결과는
   `SECURITY_AUDIT_PROGRESS.md`를 먼저 확인한다. 아래 기록은 정비 전 기능의 이력이다.
@@ -83,6 +84,12 @@
 4. 각 단계의 실제 파일/검증 명령/결과/남은 작업을 아래 변경 이력에 기록한다.
 
 ## 변경 이력
+
+- 2026-09-10 원격 배포 완료: `git push origin main` exit 0, `e53efc2..2d12cd3 main -> main`.
+  최초 자동 승인 검토는 GitHub 반출 대상의 승인 증적 부족으로 거부했다. 기존 origin URL과
+  원격의 이전 소스/ZIP 배포 이력을 확인해 재검토를 승인받았다. 우회 또는 강제 push는 없었다.
+  GitHub는 ZIP 크기 권고 경고를 출력했지만 세 ZIP 모두 정상 수신했다.
+  코드·ZIP·보고서 배포는 완료했으며 다음 작업은 사용자의 사내 실연결 시험 결과에 따른 후속 대응이다.
 
 - 2026-09-10 internal.3 패키지 최종 통과: 소스 `6b19242`/clean, 1,816 파일, 94,119,000 bytes.
   SHA-256 `fd7bc703dab5879711098662f61c1ac73950ac4fbd1efe170e562bc50b850068`.
