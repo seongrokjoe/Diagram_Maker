@@ -2,7 +2,8 @@
 
 현재 사내 LLM 시험용 Windows 배포본은 [0.1.0-internal.5 ZIP](artifacts/release/DiagramMaker-0.1.0-internal.5-win-x64.zip)과
 [SHA-256](artifacts/release/DiagramMaker-0.1.0-internal.5-win-x64.zip.sha256)입니다.
-설정·검증 결과는 [배포 검증 보고서](SECURITY_AUDIT_REPORT.md)를 참조하세요.
+설정·검증 결과는 [배포 검증 보고서](SEMANTIC_RELIABILITY_REPORT.md), 사내 시험 절차는
+[INTERNAL_TEST_KO.txt](packaging/windows/INTERNAL_TEST_KO.txt)를 참조하세요.
 
 사내 Git 커밋의 변경 심볼과 중요한 호출 관계만 선별해 Mermaid 다이어그램으로 만드는 내부용 애플리케이션입니다. 외부 LLM fallback, CDN, telemetry, 임의 Git URL, 저장소 build·hook 실행은 지원하지 않습니다.
 

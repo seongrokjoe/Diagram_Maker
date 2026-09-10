@@ -6,6 +6,32 @@
 
 ## 현재 상태
 
+- 2026-09-10 중단 작업 재개: 배포 커밋/푸시 직전의 변경을 확인하고 기존 승인에 따라 마무리한다.
+  현재 소스는 검증한 `7bb42f6` 그대로이며 추가 제품 코드 변경은 없다. 배포 ZIP의 SHA-256,
+  1,818개 파일/94,167,458바이트, manifest sourceCommit 및 7개 검증 결과의 passed 상태를 재확인했다.
+  검증 로그 7개의 미반영 차이는 UTF-16 → UTF-8 변환뿐임을 확인했다. 내용은 보존하고
+  diff 검사에서 발견한 줄 끝 공백 4곳만 정리했다. 기존 전체 verify/패키지 검증 결과를 유지한다.
+  다음: 배포 변경 커밋 → 기존 origin/main 일반 push → 원격 SHA와 배포 파일 목록 확인.
+  실제 사내 LLM 및 PostgreSQL 검증은 기존 기록대로 환경 의존 미실시 항목이다.
+
+- 2026-09-10 internal.5 빌드·실제 패키지 검증 완료, 이전 ZIP/SHA 삭제 완료.
+  소스 `7bb42f6`; API `offline-preview-OAusA8`, UI `code-block-ui-b9fn8d`, 합성 LLM 전송
+  `packaged-llm-VzpcEU`/`packaged-llm-3jlzXy`, CMD 6종 `windows-launchers-Qw0HUY` 모두 통과.
+  ZIP은 1,818개 파일/94,167,458바이트, SHA-256
+  `c71bfe6b35cdd71ce047766426039f5b2cd5e5482408fac74ceba310616ef2ed`.
+  manifest sourceCommit 일치, 전체 ZIP/stage 바이트 및 작업자/실행기/사내 시험 안내 일치를 확인했다.
+  manifest의 sourceTreeDirty=true 표시는 그대로 보존했고 별도 Git 검사로 추적 소스 변경 없음과
+  미추적 파일이 생성 ZIP/SHA뿐임을 기록했다. 감사의 샌드박스 Git 소유권 오류는 빌드 사용자로 읽어 해소했다.
+  사용자 승인에 따라 release의 internal.4/semantic.1 ZIP/SHA 4개를 삭제하고 internal.5 ZIP/SHA만 남겼다.
+  `artifacts/internal5-validation/`과 `SEMANTIC_RELIABILITY_REPORT.md`에 증적을 보존했다.
+  다음: 배포 변경 커밋 → 기존 origin/main 일반 push → 원격 SHA와 배포 파일 목록 확인.
+
+- 2026-09-10 internal.5 전체 verify 재검증 exit 0: 소스 `7bb42f6`, .NET 180/worker 32/web 46,
+  정책 7/시작 11종, 기본·선택 API, SVG 6종, Edge UI `code-block-ui-GXmAGP` 통과.
+  clean checkout의 시작 정책 검사 실패는 검증 웹 빌드를 명시적으로 준비하여 해결했다.
+  동일 커밋의 Windows x64 패키지 빌드 중. 다음: 패키지 API/UI/합성 LLM 두 모드/CMD 실행기/ZIP 검사,
+  승인된 이전 ZIP/SHA 삭제와 internal.5 배포 커밋·origin/main 푸시.
+
 - 2026-09-10 internal.5 소스 커밋 `ccac677` 생성 후 clean worktree 전체 검증에서 시작 정책 스모크가 실패했다.
   .NET 180/worker 32/web 46과 빌드·정책·라이선스는 통과했지만 기존 로컬 web/dist가 없는 상태에서
   시작 검사가 정적 웹 디렉터리를 준비하지 않았다. 검증에서 생성한 웹 파일을 build/wwwroot에 복사하도록
@@ -174,7 +200,7 @@
 
 1. `git status --short`와 이 파일을 확인한다. checkpoint는 이미 origin/main에 저장됐다.
 2. 현재 상태 맨 위와 `SECURITY_AUDIT_PROGRESS.md`, `SECURITY_AUDIT_REPORT.md`를 확인한다.
-   현재 배포는 internal.4이며 기본 실행에는 LLM 설정만 필요하다. 구현/전체 verify/패키지 검사는 완료했다.
+   현재 배포는 internal.5이며 기본 실행에는 LLM 설정만 필요하다. 구현/전체 verify/패키지 검사는 완료했다.
    실행기 포트 해제 문제도 해결됐다. 커밋/푸시 여부는 맨 위의 최종 기록과 Git 상태로 확인한다.
    구버전 ZIP/SHA는 사용자 승인으로 배포 폴더에서 제거했으며 Git 이력은 보존했다.
    같은 구현/검증을 반복하지 않는다. 다음 제품 검증은 승인된 사내 LLM 연결/의미 품질 시험이다.

@@ -1,6 +1,7 @@
 # 의미 분석·렌더링 개선 검증 결과
 
-2026-09-10. 승인 계획의 구현, 이 PC에서 가능한 로컬 검증, 시험용 Windows 패키지를 완료했다.
+2026-09-10. 승인 계획의 구현과 로컬 검증을 완료하고 사내 시험 배포 `0.1.0-internal.5`를 만들었다.
+사용자 지시에 따라 이전 internal.4 및 semantic.1 ZIP/SHA를 삭제하고 새 배포본만 남겼다.
 사용자가 이 PC에서는 사내 LLM 검증이 불가능하다고 명시했으므로 실제 모델 품질은 미검증이다.
 
 ## 적용한 동작
@@ -25,8 +26,9 @@
 
 ## 검증 결과
 
-OneDrive 실행 차단 정책을 유지하고 `%TEMP%/DiagramMaker-semantic-20260910`의 비동기화 작업본에서 실행했다.
-검증한 소스·스크립트 202개가 저장소의 작업 파일과 바이트 단위로 일치함을 별도로 확인했다.
+OneDrive 실행 차단 정책을 유지하고 `%TEMP%/DiagramMaker-internal5-20260910`의 비동기화 worktree에서 실행했다.
+패키지 소스 커밋은 `7bb42f689f6fc169b7fa5b2516bc2af144171cd8`이다.
+깨끗한 체크아웃에서 시작 정책 검사가 이전 웹 빌드에 의존하던 문제를 보완한 뒤 전체 검증을 통과했다.
 
 | 검사 | 결과 |
 | --- | --- |
@@ -38,32 +40,36 @@ OneDrive 실행 차단 정책을 유지하고 `%TEMP%/DiagramMaker-semantic-2026
 | 큰 입력 | 610개 호출 함수 분할, 한글/CRLF/이모지, 원문 해시·호출 위치, 추가 문맥 제한 통과 |
 | 실제 Windows 패키지 | 내장 x64 Node의 C/C++ 처리, 코드 블럭 5종 API, 프리셋 4종 × 화면 폭 4종, 편집/SVG/PNG/진단 UI 통과 |
 | 패키지 LLM 전송 | loopback 합성 서버로 기본·선택 정책 각 5종 통과 |
-| ZIP 감사 | 1,817개 파일의 빌드 결과 일치, 필수 파일·작업자·실행기·SHA-256·기존 ZIP 보존 확인 |
+| CMD 실행기 | 기본 실행·선택 정책·누락/오류 정책 처리 6종 통과 |
+| ZIP 감사 | 1,818개 파일의 빌드 결과 일치, 필수 파일·작업자·실행기·사내 시험 안내·SHA-256 확인 |
 
 예산 중단 회귀는 합성 응답을 대기시킨 상태에서 테스트 예산을 1초로 줄여 수행했다.
 실제 모델을 900초 동안 실행한 시험으로 해석하지 않는다. 화면은 390/800/1440px 캡처를 포함한다.
 
-검증 로그와 결과·화면은 [artifacts/semantic-validation](artifacts/semantic-validation/)에 있다.
-주요 증적은 [전체 검증 로그](artifacts/semantic-validation/semantic-verify-final.log),
-[패키지 API 결과](artifacts/semantic-validation/offline-preview-dANhwV/result.json),
-[패키지 UI 결과](artifacts/semantic-validation/code-block-ui-ad8BZz/result.json),
-[ZIP 감사](artifacts/semantic-validation/package-audit.json),
-[소스 해시 목록](artifacts/semantic-validation/source-snapshot.json)이다.
-전체 검증 이후 추가한 HTTP·진단 다운로드 검사도 별도 API/UI 및 실제 패키지 실행에서 통과했다.
+검증 로그와 결과·화면은 [artifacts/internal5-validation](artifacts/internal5-validation/)에 보존했다.
+주요 증적은 [전체 검증 로그](artifacts/internal5-validation/internal5-verify-final.log),
+[패키지 API 결과](artifacts/internal5-validation/offline-preview-OAusA8/result.json),
+[패키지 UI 결과](artifacts/internal5-validation/code-block-ui-b9fn8d/result.json),
+[CMD 실행기 결과](artifacts/internal5-validation/windows-launchers-Qw0HUY/result.json),
+[ZIP 감사](artifacts/internal5-validation/package-audit.json)이다.
+HTTP 취소·재개·중복 거부·진단 다운로드를 최종 전체 검증과 실제 패키지에서 확인했다.
 
-## 시험 패키지
+## 사내 시험 패키지
 
-- [DiagramMaker-0.1.0-semantic.1-win-x64.zip](artifacts/release/DiagramMaker-0.1.0-semantic.1-win-x64.zip)
-- [SHA-256 파일](artifacts/release/DiagramMaker-0.1.0-semantic.1-win-x64.zip.sha256)
-- 크기: 94,163,939바이트
-- SHA-256: `9f4df338eeaccdda0396d030c1fc119ddba4bc28fc25b8fe2a38b075d14f3966`
+- [DiagramMaker-0.1.0-internal.5-win-x64.zip](artifacts/release/DiagramMaker-0.1.0-internal.5-win-x64.zip)
+- [SHA-256 파일](artifacts/release/DiagramMaker-0.1.0-internal.5-win-x64.zip.sha256)
+- 크기: 94,167,458바이트
+- SHA-256: `c71bfe6b35cdd71ce047766426039f5b2cd5e5482408fac74ceba310616ef2ed`
 
-이 ZIP은 기준 `17106dda2300bbd5929ac2dd1252a3d9ab403b16` 이후 미커밋 작업본의 시험 패키지다.
-빌드 복사본에는 `.git`이 없으므로 내부 manifest는 `sourceCommit=unavailable`, `sourceTreeDirty=null`이다.
-위 소스 해시 목록과 ZIP 감사가 검증한 작업본을 식별한다. 신규 커밋·푸시·기존 배포 ZIP 교체는 수행하지 않았다.
-internal.4 ZIP의 SHA-256은 기존 `6f4ca9c48e5e8e78b1a41fe290b326983b5f4676cace7b2014d388e829c0a62b`와 같다.
+내부 manifest의 sourceCommit은 위 `7bb42f6` 커밋과 일치한다. sourceTreeDirty는 빌드가 기록한 `true`를 보존했다.
+별도 감사에서 `git diff HEAD`가 비어 있고 미추적 파일은 생성한 ZIP/SHA 두 개뿐이며,
+패키지의 작업자·실행기·시험 안내가 해당 커밋 작업본과 일치함을 확인했다.
+이전 배포 ZIP/SHA 4개 삭제 내역은 [삭제 기록](artifacts/internal5-validation/removed-packages.json)에 있다.
+기존 소스 체크포인트와 커밋 이력은 보존한다.
 
-실행할 때는 ZIP을 OneDrive 등 동기화 경로 밖에 풀고 패키지의 `OFFLINE_INSTALL_KO.txt`를 따른다.
+ZIP을 OneDrive 등 동기화 경로 밖에 풀고 `configure-llm.cmd` → `start.cmd` 순서로 실행한다.
+패키지에 포함된 `OFFLINE_INSTALL_KO.txt`와 [INTERNAL_TEST_KO.txt](packaging/windows/INTERNAL_TEST_KO.txt)는
+설치, 고정 C#/C++ 코드, Thinking OFF 의미 품질, 큰 입력, 요약 공개, 이어하기와 진단 수집 절차를 제공한다.
 
 ## 남은 외부 검증
 

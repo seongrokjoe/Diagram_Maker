@@ -1,0 +1,22 @@
+﻿[
+    {
+        "name":  "DiagramMaker-0.1.0-internal.4-win-x64.zip",
+        "bytes":  94119889,
+        "sha256":  "6f4ca9c48e5e8e78b1a41fe290b326983b5f4676cace7b2014d388e829c0a62b"
+    },
+    {
+        "name":  "DiagramMaker-0.1.0-internal.4-win-x64.zip.sha256",
+        "bytes":  109,
+        "sha256":  "fc79d41b6cffc5aed32a1bed30adfee4b8208e19ee9cf84f12af793b26b7d4ca"
+    },
+    {
+        "name":  "DiagramMaker-0.1.0-semantic.1-win-x64.zip",
+        "bytes":  94163939,
+        "sha256":  "9f4df338eeaccdda0396d030c1fc119ddba4bc28fc25b8fe2a38b075d14f3966"
+    },
+    {
+        "name":  "DiagramMaker-0.1.0-semantic.1-win-x64.zip.sha256",
+        "bytes":  109,
+        "sha256":  "9b11fdb51da1d808ebd69f424fbb19dd4c5f909d313721bbcd6a6c8ed87a2a30"
+    }
+]

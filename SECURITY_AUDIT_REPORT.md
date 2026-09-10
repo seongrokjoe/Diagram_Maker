@@ -1,10 +1,14 @@
 # 사내 LLM 시험용 Windows 배포 검증
 
+최신 `0.1.0-internal.5` 배포와 의미 분석 개선 검증은 [현재 배포 보고서](SEMANTIC_RELIABILITY_REPORT.md)를 참조한다.
+아래는 internal.4 당시 보안 검증 이력이며, 이전 ZIP은 사용자의 새 버전 교체 지시에 따라 배포 폴더에서 제거했다.
+
+## internal.4 검증 이력
+
 검증일: 2026-09-10. 배포 버전: `0.1.0-internal.4`.
 패키지 소스 커밋: `a7b6ee36668e68a113a68be6263727f9f64e2fb8`.
 
-[ZIP](artifacts/release/DiagramMaker-0.1.0-internal.4-win-x64.zip) ·
-[SHA-256 파일](artifacts/release/DiagramMaker-0.1.0-internal.4-win-x64.zip.sha256).
+당시 파일: `DiagramMaker-0.1.0-internal.4-win-x64.zip` 및 SHA-256 파일.
 ZIP 크기는 94,119,889바이트이며 파일 1,817개를 포함한다.
 SHA-256: `6f4ca9c48e5e8e78b1a41fe290b326983b5f4676cace7b2014d388e829c0a62b`.
 

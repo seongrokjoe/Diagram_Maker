@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "id": "978464fc-6069-48e3-b7bd-07025d5fbde4",
+  "state": "Partial",
+  "stopReason": null,
+  "execution": {
+    "stage": "code-page",
+    "unitId": "bd0c1ed8e2b4295b",
+    "completedUnits": 0,
+    "reusedUnits": 0,
+    "requests": 0,
+    "elapsedSeconds": 0,
+    "budgetSeconds": 900
+  },
+  "diagnostics": [],
+  "checkpointCount": 0
+}
