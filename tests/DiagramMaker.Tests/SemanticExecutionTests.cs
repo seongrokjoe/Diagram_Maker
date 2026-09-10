@@ -13,7 +13,7 @@ public sealed class SemanticExecutionTests
 {
     private static readonly CancellationToken Ct = CancellationToken.None;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
-    private static LlmOptions OptionsForTest() => new() { Enabled = true, Endpoint = "http://localhost:19001/v1/chat/completions",
+    internal static LlmOptions OptionsForTest() => new() { Enabled = true, Endpoint = "http://localhost:19001/v1/chat/completions",
         AllowedOrigin = "http://localhost:19001", UseServerTokenization = false, MaxTransientRetries = 0 };
 
     [Fact]
@@ -31,6 +31,9 @@ public sealed class SemanticExecutionTests
                 "class Tasks { void One(){int first=1;} void Two(){int second=2;} }")],
                 [new("g", "그룹", ["code"], [new("flow", "flowchart", "balanced")])]), "owner", Ct);
             var run = await service.StartAsync(workspace.Id, new(1), "owner", Ct); runId = run.Id;
+            // Retain the old pipeline regression for persisted internal.5 runs.
+            run = run with { GenerationVersion = null, Revision = run.Revision + 1 };
+            Assert.True(await store.SaveCodeBlockRunAsync(run, run.Revision - 1, Ct));
             var handler = new PipelineHandler(async ct =>
             {
                 var current = await store.GetCodeBlockRunAsync(runId, ct);
@@ -170,10 +173,95 @@ public sealed class SemanticExecutionTests
         Assert.DoesNotContain("private-source", JsonSerializer.Serialize(diagnostic));
     }
 
-    private static CodeBlockRunProcessor Processor(IAppStore store, LlmOptions options, ILlmCompletionTransport transport) => new(store,
+    internal static CodeBlockRunProcessor Processor(IAppStore store, LlmOptions options, ILlmCompletionTransport transport) => new(store,
         new(new(), Options.Create(new GitWorkerOptions()), Options.Create(new CodeBlockOptions()), null!),
         new(Options.Create(new CodeBlockOptions())), new(new()),
         new InternalLlmClient(Options.Create(options), new(), new(), transport, new(transport)), new(new()), new(), Options.Create(options));
+
+    [Fact]
+    public async Task ResumeShowsDurableCompletionBeforeReplayAndCountsEachReusedUnitOnce()
+    {
+        IReadOnlyList<SemanticCheckpoint> saved;
+        SemanticProgress progress;
+        var requests = 0;
+        Task<DiagramPlanReview?> Generate()
+        {
+            requests++;
+            return Task.FromResult<DiagramPlanReview?>(new(true, []));
+        }
+        using (var first = new SemanticExecution(OptionsForTest(), null, Ct))
+        {
+            await SemanticExecution.RunAsync("review", "stable", Generate, value => value.Accepted);
+            saved = first.Checkpoints; progress = first.Progress;
+            Assert.Equal(1, progress.CompletedUnits);
+        }
+        using var resumed = new SemanticExecution(OptionsForTest(), saved, Ct, savedProgress: progress);
+        Assert.Equal(1, resumed.Progress.CompletedUnits);
+        Assert.Equal(0, resumed.Progress.AttemptCompletedUnits);
+        Assert.Equal(2, resumed.Progress.AttemptNumber);
+        await SemanticExecution.RunAsync("review", "stable", Generate, value => value.Accepted);
+        await SemanticExecution.RunAsync("review", "stable", Generate, value => value.Accepted);
+        Assert.Equal(1, requests);
+        Assert.Equal(1, resumed.Progress.ReusedUnits);
+        Assert.Equal(1, resumed.Progress.CompletedUnits);
+    }
+
+    [Fact]
+    public async Task DurableRejectedReviewIsReusedWhileRepairRemainsPending()
+    {
+        IReadOnlyList<SemanticCheckpoint> saved;
+        using (var first = new SemanticExecution(OptionsForTest(), null, Ct))
+        {
+            await SemanticExecution.RunAsync<DiagramPlanReview>("review", "first-plan",
+                () => Task.FromResult<DiagramPlanReview?>(new(false, ["Unsupported change"])), value => value.Issues.Count > 0);
+            saved = first.Checkpoints;
+        }
+        using var resumed = new SemanticExecution(OptionsForTest(), saved, Ct);
+        var review = await SemanticExecution.RunAsync<DiagramPlanReview>("review", "first-plan",
+            () => throw new InvalidOperationException("Completed review must not be requested again"), value => value.Issues.Count > 0);
+        Assert.False(review!.Accepted);
+        Assert.Equal(1, resumed.Progress.ReusedUnits);
+    }
+
+    [Fact]
+    public async Task PermanentContractFailureDoesNotRepeatAcrossTwoResumes()
+    {
+        IReadOnlyList<SemanticCheckpoint>? saved = null;
+        var requests = 0;
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            using var execution = new SemanticExecution(OptionsForTest(), saved, Ct);
+            var error = await Assert.ThrowsAsync<LlmClientException>(() => SemanticExecution.RunAsync<DiagramPlanReview>("review", "invalid",
+                () => { requests++; throw new LlmClientException("LLM_SCHEMA_INVALID", "invalid", failureKind: "MalformedJson"); }, value => value.Accepted));
+            Assert.Equal("MalformedJson", error.FailureKind);
+            Assert.Equal(1, execution.Progress.FailedUnits);
+            saved = execution.Checkpoints;
+        }
+        Assert.Equal(1, requests);
+    }
+
+    [Fact]
+    public async Task LogicalRequestAndActualTransportRetryAreCountedSeparately()
+    {
+        var options = OptionsForTest(); options.MaxTransientRetries = 1;
+        using var execution = new SemanticExecution(options, null, Ct);
+        using var transport = new VllmClient(options, handler: new RetryHandler());
+        await transport.CompleteAsync(new("system", "synthetic input", 100, false), Ct);
+        Assert.Equal(1, execution.Progress.Requests);
+        Assert.Equal(2, execution.Progress.TransportRequests);
+        Assert.Equal(1, Assert.Single(execution.Diagnostics).Retries);
+        Assert.Equal(0, execution.Progress.RejectedBeforeSend);
+    }
+
+    private sealed class RetryHandler : HttpMessageHandler
+    {
+        private int calls;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+            Task.FromResult(++calls == 1 ? new HttpResponseMessage(HttpStatusCode.BadGateway) :
+                new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(
+                    """{"choices":[{"message":{"content":"{}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}""",
+                    Encoding.UTF8, "application/json") });
+    }
 
     [Fact]
     public async Task LargeFunctionPagesRetainAllEdgesAndMeaningUsesWholeStatementsWithOriginalScopes()
@@ -200,13 +288,15 @@ public sealed class SemanticExecutionTests
         Assert.Equal(402, call.Location.StartLine);
     }
 
-    private sealed class PipelineHandler(Func<CancellationToken, Task>? before = null) : HttpMessageHandler
+    internal sealed class PipelineHandler(Func<CancellationToken, Task>? before = null) : HttpMessageHandler
     {
         private readonly CodeBlockPipelineTests.CodeTransport model = new();
         public List<string> Completed { get; } = [];
+        public int? StopAfter { get; init; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage message, CancellationToken ct)
         {
             if (before is not null) await before(ct);
+            if (StopAfter is { } limit && Completed.Count >= limit) await Task.Delay(Timeout.Infinite, ct);
             var body = await message.Content!.ReadAsStringAsync(ct);
             using var document = JsonDocument.Parse(body);
             var root = document.RootElement; var messages = root.GetProperty("messages");

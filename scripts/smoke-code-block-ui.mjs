@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { assertLocalPath } from '../tools/git-worker/local-security.mjs';
+import { checkSemanticProgress } from './semantic-progress-ui-checks.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 assertLocalPath(root);
 const { chromium } = createRequire(path.join(root, 'artifacts/ui-check/package.json'))('playwright');
@@ -298,7 +299,7 @@ try {
   const diagnosticFile = path.join(fixture, 'downloaded-diagnostics.json');
   await (await diagnosticDownload).saveAs(diagnosticFile);
   const diagnostic = JSON.parse(await readFile(diagnosticFile, 'utf8'));
-  assert.equal(diagnostic.id, fiveId); assert.equal(diagnostic.version, 1);
+  assert.equal(diagnostic.id, fiveId); assert.equal(diagnostic.version, 2);
   assert.ok(!('checkpoints' in diagnostic) && !JSON.stringify(diagnostic).includes('class Machine'));
   for (const view of five.results[0].views) {
     assert.ok(view.pages.length, `${view.selection.diagramType} has source-backed pages`);
@@ -313,6 +314,7 @@ try {
     assert.equal(await editor.locator('svg a, svg image, svg foreignObject, svg [onclick]').count(), 0, 'display URL has no link or embedded content');
     await editor.screenshot({ path: path.join(fixture, `url-${view.selection.diagramType}.png`) });
   }
+  await checkSemanticProgress({ page, fixture, run: five });
   assert.deepEqual(errors, []);
   await writeFile(path.join(fixture, 'result.json'), JSON.stringify({ status: 'passed', packageRoot, runId: body.id, checked: ['draft tabs', 'block order', 'language inheritance', 'group views', 'render', 'zoom', 'reload', 'viewport captures', 'evidence', 'manual edit provenance', 'SVG/PNG downloads', 'question reload and answer', 'explicit group merge and split', 'tree keyboard navigation', 'collapsed branches and result location restoration', 'older generation and edit restoration', 'navigation without generation', 'URL/click labels in five formats without link behavior'] }, null, 2));
   console.log(`Code block UI smoke passed. Screenshots: ${path.relative(root, fixture)}`);

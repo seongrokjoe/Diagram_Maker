@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, request } from "./api";
 import { DiagramEditor } from "./DiagramEditor";
+import { SemanticProgressView } from "./SemanticProgressView";
 import { CodeBlockComposer } from "./CodeBlockComposer";
 import { codeInputError, defaultCodeBlockLimits, type CodeBlockLimits } from "./codeBlockLimits";
 import { CodeBlockResultTree } from "./CodeBlockResultTree";
@@ -21,6 +22,8 @@ export function CodeBlockWorkspace() {
   const [workspaces, setWorkspaces] = useState<CodeBlockWorkspaceSummary[]>([]);
   const [runs, setRuns] = useState<CodeBlockRun[]>([]);
   const [run, setRun] = useState<CodeBlockRun | null>(null);
+  const [openedPartial, setOpenedPartial] = useState("");
+  const resultsVisible = !run || terminal(run.state) && (!run.stopReason || openedPartial === run.id);
   const [presets, setPresets] = useState<DiagramPreset[]>([]);
   const [llmConfigured, setLlmConfigured] = useState<boolean | null>(null);
   const [limits, setLimits] = useState<CodeBlockLimits>(defaultCodeBlockLimits);
@@ -65,20 +68,20 @@ export function CodeBlockWorkspace() {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [run?.id, run?.state, refreshRuns]);
   useEffect(() => {
-    if (active || !run?.results.length) return;
+    if (!resultsVisible || active || !run?.results.length) return;
     for (const g of run.results) for (const v of g.views) {
       const p = v.pages.find(p => isSemanticPage(v, p));
       if (p) { setActive({ group: g.groupId, view: v.viewId, page: p.id }); return; }
     }
     const g = run.results[0]; if (g.views[0]) setActive({ group: g.groupId, view: g.views[0].viewId, page: "" });
-  }, [run, active]);
+  }, [run, active, resultsVisible]);
   useEffect(() => {
-    setArtifact(null); setEvidence(null); if (!run || !active?.page) return;
+    setArtifact(null); setEvidence(null); if (!resultsVisible || !run || !active?.page) return;
     const controller = new AbortController();
     void request<DiagramArtifact>(pagePath(run.id, active), { signal: controller.signal }).then(setArtifact)
       .catch(e => { if (!controller.signal.aborted) setError(errorOf(e)); });
     return () => controller.abort();
-  }, [run?.id, active?.group, active?.view, active?.page]);
+  }, [run?.id, active?.group, active?.view, active?.page, resultsVisible]);
   useEffect(() => {
     if (!ready || busy) return;
     const url = new URL(window.location.href);
@@ -197,7 +200,7 @@ export function CodeBlockWorkspace() {
     {run && <section className="panel code-block-run-status" aria-label="생성 상태"><strong>{run.stageMessage}</strong>
       {!terminal(run.state) && <><progress max={100} value={run.progress} /><span> {run.progress}%</span><button disabled={busy} onClick={() => void action(async () => setRun(await request<CodeBlockRun>(`/api/v1/code-block-runs/${run.id}/cancel`, { method: "POST" })))}>생성 취소</button></>}
       {run.errorMessage && <p className="error">{run.errorMessage}</p>}
-      {run.execution && <p className="help">완료 {run.execution.completedUnits}단위 · 재사용 {run.execution.reusedUnits}단위 · 요청 {run.execution.requests}회 · {run.execution.elapsedSeconds} / {run.execution.budgetSeconds}초</p>}
+      {run.execution && <SemanticProgressView value={run.execution} running={Boolean(running)} />}
       {run.canResume && <button disabled={busy || dirty || Boolean(running) || run.inputRevision !== workspace?.revision} onClick={() => void action(async () => {
         const resumed = await request<CodeBlockRun>(`/api/v1/code-block-runs/${run.id}/resume`, { method: "POST", body: json({ expectedRevision: run.revision }) });
         selectRun(resumed); await refreshRuns(resumed.workspaceId);
@@ -218,6 +221,9 @@ export function CodeBlockWorkspace() {
         <button disabled={busy || dirty} onClick={() => void submitAnswers(true)}>나머지 건너뛰기</button></div>}
     </section>}
     <section id="code-panel-results" role="tabpanel" aria-labelledby="code-tab-results" hidden={screen !== "results"} className="code-block-results">
+      {!resultsVisible && <div className="panel" role="status"><p>{running ? "모든 상세 페이지를 완성한 뒤 결과를 표시합니다. 완료된 작업은 계속 저장됩니다." : "생성이 중단되었습니다. 저장된 부분 결과를 확인하거나 이어서 생성할 수 있습니다."}</p>
+        {!running && run?.results.some(g => g.views.some(v => v.pages.length > 0)) && <button onClick={() => setOpenedPartial(run.id)}>부분 결과 열기</button>}</div>}
+      {resultsVisible && <>
       <aside className="panel code-block-result-sidebar">
         <label>생성 이력<select aria-label="생성 이력" disabled={busy} value={run?.id ?? ""} onChange={e => selectRun(runs.find(r => r.id === e.target.value) ?? null)}><option value="" disabled>생성 이력 선택</option>
           {runs.map(r => <option key={r.id} value={r.id}>{new Date(r.createdAt).toLocaleString()} · 입력 {r.inputRevision} · {r.state}</option>)}</select></label>
@@ -239,8 +245,9 @@ export function CodeBlockWorkspace() {
           onOpenDetail={page => { if (selectedView?.pages.some(p => p.id === page)) setActive({ ...active, page }); }}
           onPreview={(input, signal) => request<DiagramEditPreview>(pagePath(run.id, active) + "/edit-preview", { method: "POST", body: json(input), signal })}
           onSave={input => request<DiagramRevisionRecord>(pagePath(run.id, active) + "/edits", { method: "POST", body: json(input) })} />}
-        {!selectedView && <div className="panel empty-state">{running ? "코드를 분석하고 있습니다." : "왼쪽 트리에서 결과를 선택하세요."}</div>}
+        {!selectedView && <div className="panel empty-state">왼쪽 트리에서 결과를 선택하세요.</div>}
       </div>
+      </>}
     </section>
     {evidence && <section className="panel code-block-evidence" role="region" aria-label="코드 근거"><h3>{evidence.blockTitle} · {evidence.startLine}–{evidence.endLine}행</h3>
       <button onClick={() => setEvidence(null)}>근거 닫기</button><pre>{evidence.content}</pre><small>코드 해시 {evidence.contentHash}</small></section>}

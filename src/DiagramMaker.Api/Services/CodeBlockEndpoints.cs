@@ -90,7 +90,7 @@ public static class CodeBlockEndpoints
             CodeBlockWorkspaceService service, CancellationToken ct) =>
         {
             var run = await service.GetRunAsync(id, Owner(context), ct);
-            return Results.Ok(new { version = 1, run.Id, run.State, run.StopReason, run.Execution,
+            return Results.Ok(new { version = 2, run.Id, run.State, run.StopReason, run.Execution, run.GenerationVersion,
                 diagnostics = run.Diagnostics ?? [], checkpointCount = run.Checkpoints?.Count ?? 0 });
         });
         api.MapGet("/code-block-runs/{id:guid}/groups/{groupId}/views/{viewId}/pages/{pageId}", async (Guid id,

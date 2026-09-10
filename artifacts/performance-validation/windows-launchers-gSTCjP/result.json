@@ -1,0 +1,12 @@
+{
+  "status": "passed",
+  "checks": [
+    "start ignores malformed leftover default policy",
+    "optional launcher loads default policy",
+    "start honors explicit policy",
+    "optional launcher rejects malformed policy",
+    "start rejects missing explicit policy",
+    "optional launcher rejects missing explicit policy"
+  ],
+  "syntheticOnly": true
+}

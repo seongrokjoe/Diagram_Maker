@@ -36,6 +36,8 @@ try {
     Assert-LastExitCode 'synthetic loopback API regression'
     node scripts/smoke-diagram-api.mjs --basic
     Assert-LastExitCode 'basic mode synthetic loopback API regression'
+    node scripts/smoke-shared-semantics.mjs
+    Assert-LastExitCode 'shared semantic C++ and Git request-count regression'
     if (Test-Path -LiteralPath artifacts/ui-check/node_modules/playwright/package.json) {
         node scripts/smoke-svg-safety.mjs
         Assert-LastExitCode 'SVG paint preservation and security regression'

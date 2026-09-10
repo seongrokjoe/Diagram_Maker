@@ -1,4 +1,5 @@
 import type { DiagramAvailability, DiagramViewSelection } from "./types";
+import type { SemanticProgress } from "./SemanticProgressView";
 export type CodeBlockInput = { id: string; language: "cpp" | "csharp"; title: string; code: string; description?: string };
 export type CodeBlockGroup = { id: string; title: string; blockIds: string[]; views?: DiagramViewSelection[]; enableThinking?: boolean; enableUserRelations?: boolean };
 export type CodeBlockRelation = { id: string; fromBlockId: string; toBlockId: string; kind: "calls" | "uses" | "dataflow"; origin: "user"; description: string };
@@ -12,5 +13,5 @@ export type CodeBlockView = { viewId: string; selection: DiagramViewSelection; s
 export type CodeBlockRun = { id: string; workspaceId: string; inputRevision: number; revision: number; state: string; progress: number; stageMessage: string;
   createdAt: string; groups: CodeBlockGroup[]; questions: CodeBlockQuestion[]; results: Array<{ groupId: string; title: string; blockIds: string[]; views: CodeBlockView[]; availability: DiagramAvailability[] }>;
   warnings: string[]; errorMessage?: string; canResume?: boolean; stopReason?: string;
-  execution?: { stage: string; completedUnits: number; reusedUnits: number; requests: number; elapsedSeconds: number; budgetSeconds: number } };
+  execution?: SemanticProgress };
 export type CodeBlockEvidence = { blockId: string; blockTitle: string; startLine: number; endLine: number; content: string; contentHash: string };

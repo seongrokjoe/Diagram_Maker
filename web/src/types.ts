@@ -399,7 +399,7 @@ export type AnalysisResponse = {
   revision?: number;
   canResume?: boolean;
   stopReason?: string;
-  execution?: { stage: string; completedUnits: number; reusedUnits: number; requests: number; elapsedSeconds: number; budgetSeconds: number };
+  execution?: import("./SemanticProgressView").SemanticProgress;
   baseSha?: string;
   targetSha?: string;
   progress: number;

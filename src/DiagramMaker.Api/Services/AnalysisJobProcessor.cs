@@ -28,7 +28,7 @@ public sealed class AnalysisJobProcessor(
             if (latest is null || latest.LeaseId != leasedJob.LeaseId) throw new OperationCanceledException();
             currentJob = await UpdateAsync(latest with { Checkpoints = execution!.Checkpoints,
                 Diagnostics = execution.Diagnostics, Execution = execution.Progress }, parentToken);
-        }, currentJob.Diagnostics) { LeaseId = leasedJob.LeaseId };
+        }, currentJob.Diagnostics, currentJob.Execution) { LeaseId = leasedJob.LeaseId };
         using var executionScope = execution;
         cancellationToken = execution.Token;
         try
@@ -37,6 +37,7 @@ public sealed class AnalysisJobProcessor(
                              ?? throw new InvalidOperationException("Repository is no longer registered.");
             var (comparison, graph, plan) = await ResolveAnalysisInputAsync(currentJob, repository, cancellationToken);
             var sourceResult = await ResolveSourceResultAsync(currentJob, cancellationToken);
+            var useShared = currentJob.GenerationVersion == SharedSemanticProjection.Version && llm.SupportsSharedSemantics && llm.IsEnabled;
             currentJob = await UpdateAsync(currentJob with
             {
                 State = AnalysisState.Graphing,
@@ -47,13 +48,13 @@ public sealed class AnalysisJobProcessor(
             }, cancellationToken);
 
             var deterministic = BuildDeterministicNarrative(graph, comparison.Files);
-            currentJob = await UpdateAsync(currentJob with { Result = new AnalysisResult(
+            currentJob = await UpdateAsync(currentJob with { Result = currentJob.Result ?? new AnalysisResult(
                 comparison.Files.Select(file => file with { BeforeContent = null, AfterContent = null }).ToArray(),
                 graph, deterministic, [], [], []) }, cancellationToken);
             var narrative = deterministic;
             var warnings = deterministic.Warnings.ToList();
             var llmSucceeded = sourceResult is not null;
-            if (sourceResult is null && currentJob.Request.IncludeLlmSummary && llm.IsEnabled)
+            if (sourceResult is null && currentJob.Request.IncludeLlmSummary && llm.IsEnabled && !useShared)
             {
                 currentJob = await UpdateAsync(currentJob with
                 {
@@ -79,7 +80,7 @@ public sealed class AnalysisJobProcessor(
                     warnings.Add("내부 LLM 요약에 실패하여 정적 분석 요약을 표시합니다.");
                 }
             }
-            else if (sourceResult is null && currentJob.Request.IncludeLlmSummary)
+            else if (sourceResult is null && currentJob.Request.IncludeLlmSummary && !llm.IsEnabled)
             {
                 warnings.Add("내부 LLM이 비활성화되어 정적 분석 요약을 표시합니다.");
             }
@@ -91,10 +92,19 @@ public sealed class AnalysisJobProcessor(
                 StageMessage = "Compiling safe Mermaid diagrams"
             }, cancellationToken);
             RenderResult renderResult;
-            if (plan is not null && currentJob.Request.Groups is { Count: > 0 })
+            var groups = currentJob.Request.Groups;
+            if (useShared && groups is not { Count: > 0 })
             {
-                renderResult = await RenderGroupsAsync(repository.Name, graph, comparison, currentJob.Request.Groups, warnings,
-                    currentJob.Id, sourceResult, currentJob.Request.RequestedViewIds, currentJob.Request.EnableThinking, cancellationToken);
+                var types = currentJob.Request.DiagramTypes is { Count: > 0 } selected ? selected : new[] { "flowchart", "sequence", "class", "code-relation" };
+                groups = [new("all-changes", repository.Name, graph.Changes.Select(c => c.Id).ToArray(), types[0],
+                    presets.Resolve(types[0], "balanced").Id, Views: types.Select(type => new DiagramViewSelection(type, type,
+                        presets.Resolve(type, "balanced").Id, Overrides: new DiagramStyleOverrides(
+                            CallerDepth: currentJob.Request.CallerDepth, CalleeDepth: currentJob.Request.CalleeDepth))).ToArray())];
+            }
+            if (groups is { Count: > 0 } && (plan is not null || useShared))
+            {
+                renderResult = await RenderGroupsAsync(repository.Name, graph, comparison, groups, warnings,
+                    currentJob.Id, sourceResult, currentJob.Request.RequestedViewIds, currentJob.Request.EnableThinking, useShared, cancellationToken);
             }
             else
             {
@@ -107,6 +117,11 @@ public sealed class AnalysisJobProcessor(
                     "선택한 형식에서 유효한 다이어그램을 생성하지 못했습니다. 표시 범위와 깊이를 줄여 다시 시도하세요.");
             }
 
+            if (useShared)
+            {
+                llmSucceeded = (renderResult.Groups ?? []).SelectMany(g => g.Views ?? []).All(v => v.GenerationMetadata?.LlmStatus == "Semantic");
+                narrative = narrative with { Summary = string.Join("\n", (renderResult.Groups ?? []).Select(g => g.Narrative.Summary)) };
+            }
             narrative = narrative with
             {
                 Warnings = narrative.Warnings.Concat(warnings).Distinct(StringComparer.Ordinal).ToArray()
@@ -272,6 +287,7 @@ public sealed class AnalysisJobProcessor(
         AnalysisResult? sourceResult,
         IReadOnlyList<string>? requestedViewIds,
         bool enableThinking,
+        bool useShared,
         CancellationToken cancellationToken)
     {
         var artifacts = new List<DiagramArtifact>();
@@ -287,7 +303,7 @@ public sealed class AnalysisJobProcessor(
             groupWarnings.AddRange(bundle.Warnings);
             var sourceGroup = sourceResult?.DiagramGroups?.FirstOrDefault(item => item.GroupId == group.Id);
             ChangeUnderstanding? understanding = sourceGroup?.BundleHash == bundle.Hash ? sourceGroup.Understanding : null;
-            if (llm.IsEnabled && understanding is null)
+            if (llm.IsEnabled && understanding is null && !useShared)
             {
                 await ReportGenerationStageAsync(analysisId, $"{group.Title}: 변경 코드의 의미를 분석하고 있습니다", cancellationToken);
                 try { understanding = await llm.UnderstandChangesAsync(bundle, enableThinking, cancellationToken); }
@@ -305,14 +321,45 @@ public sealed class AnalysisJobProcessor(
                         .ThenByDescending(static item => item.State.Equals("Completed", StringComparison.OrdinalIgnoreCase))
                         .First(),
                     StringComparer.Ordinal);
+            SharedDiagramGroup? shared = null;
+            bool NeedsGeneration(DiagramViewSelection selection) => !sourceViews.TryGetValue(selection.Id, out var source) ||
+                source.Diagram is null || source.Selection != selection || source.GenerationMetadata?.BundleHash != bundle.Hash ||
+                source.GenerationMetadata?.PromptVersion != (useShared ? SharedSemanticProjection.Version : InternalLlmClient.SemanticPromptVersion) ||
+                requested is null || requested.Contains(selection.Id);
+            if (useShared)
+            {
+                var sharedInputs = new List<SharedDiagramInput>();
+                foreach (var selection in group.EffectiveViews())
+                {
+                    if (!NeedsGeneration(selection)) continue;
+                    try
+                    {
+                        var preset = presets.Resolve(selection.DiagramType, selection.PresetId);
+                        var projected = projection.Build(repositoryName, graph, comparison, [selection.DiagramType],
+                            preset.CallerDepth, preset.CalleeDepth, comparison.ContextFilesTruncated,
+                            group.ChangeIds.ToHashSet(StringComparer.Ordinal), preset, selection.Overrides,
+                            selection.FocusOnChanges, preserveDetails: true);
+                        if (projected.Artifacts.FirstOrDefault() is { } artifact)
+                            foreach (var page in DiagramDocumentBuilder.Build(artifact, bundle).Pages)
+                                sharedInputs.Add(new(selection.Id + "/" + page.Id, page.Diagram.Ir, selection));
+                    }
+                    catch (DiagramValidationException) { /* The individual view reports the projection failure below. */ }
+                }
+                if (sharedInputs.Count > 0)
+                {
+                    try
+                    {
+                        shared = await llm.PlanGitGroupAsync(bundle, sharedInputs, enableThinking, cancellationToken);
+                        understanding = shared?.Understanding;
+                    }
+                    catch (LlmClientException error) { groupWarnings.Add(LlmFailure.Describe(error)); }
+                }
+            }
             foreach (var view in group.EffectiveViews())
             {
                 expectedCount++;
                 sourceViews.TryGetValue(view.Id, out var sourceView);
-                var shouldRender = sourceView is null || sourceView.Selection != view ||
-                                   sourceView.GenerationMetadata?.BundleHash != bundle.Hash ||
-                                   sourceView.GenerationMetadata?.PromptVersion != InternalLlmClient.SemanticPromptVersion ||
-                                   requested is null || requested.Contains(view.Id);
+                var shouldRender = NeedsGeneration(view);
                 if (!shouldRender && sourceView!.Diagram is not null)
                 {
                     var reused = sourceView with { Reused = true };
@@ -358,7 +405,8 @@ public sealed class AnalysisJobProcessor(
                                 try
                                 {
                                     var previous = sourceView?.Document?.Pages.FirstOrDefault(item => item.Id == page.Id)?.Diagram.Ir;
-                                    var generated = await SemanticExecution.RunAsync("git-page", JsonSerializer.Serialize(new { pageIr, bundle.Hash, understanding, view, effectiveOptions, previous, enableThinking }),
+                                    var generated = useShared ? shared?.Pages.GetValueOrDefault(view.Id + "/" + page.Id) :
+                                        await SemanticExecution.RunAsync("git-page", JsonSerializer.Serialize(new { pageIr, bundle.Hash, understanding, view, effectiveOptions, previous, enableThinking }),
                                         () => llm.PlanDiagramAsync(pageIr, bundle, understanding, view with { Overrides = effectiveOptions }, previous, enableThinking, cancellationToken),
                                         value => value.Status == "Semantic");
                                     if (generated is not null)
@@ -395,8 +443,9 @@ public sealed class AnalysisJobProcessor(
                                 BuildGroupNarrative(group, graph, groupWarnings), groupWarnings.ToArray(), viewResults.Append(pendingView).ToArray(), understanding, bundle.Hash);
                             var pendingJob = await store.GetAnalysisAsync(analysisId, cancellationToken);
                             if (pendingJob?.Result is not null)
-                                await UpdateAsync(pendingJob with { Result = pendingJob.Result with { Diagrams = artifacts.Append(pages[0].Diagram).ToArray(),
-                                    DiagramGroups = groupResults.Append(pendingGroup).ToArray() } }, cancellationToken);
+                                await UpdateAsync(pendingJob with { Result = pendingJob.Result with {
+                                    Diagrams = artifacts.Append(pages[0].Diagram).Concat(pendingJob.Result.Diagrams).DistinctBy(d => d.Id).ToArray(),
+                                    DiagramGroups = MergeResults(pendingJob.Result.DiagramGroups ?? [], groupResults.Append(pendingGroup).ToArray()) } }, cancellationToken);
                         }
                         if (!llm.IsEnabled) viewWarnings.Add("LLM이 비활성화되어 정적 분석 결과를 표시합니다.");
                         document = DiagramDocumentBuilder.UpdateCoverage(document with { Pages = pages }, bundle);
@@ -408,7 +457,7 @@ public sealed class AnalysisJobProcessor(
                         var metadata = BuildGenerationMetadata(group, view, graph, llmStatus, viewWarnings) with
                         {
                             BundleHash = bundle.Hash, AnalyzerVersion = SourceGraphAnalyzer.IndexVersion,
-                            PromptVersion = InternalLlmClient.SemanticPromptVersion, EffectiveOptions = effectiveOptions,
+                            PromptVersion = useShared ? SharedSemanticProjection.Version : InternalLlmClient.SemanticPromptVersion, EffectiveOptions = effectiveOptions,
                             InstructionResults = instructionResults.Distinct().ToArray(), Attempts = attempts
                         };
                         viewResults.Add(new AnalysisDiagramViewResult(view.Id, view, compiledArtifact, viewWarnings,
@@ -503,6 +552,13 @@ public sealed class AnalysisJobProcessor(
         return [new AnalysisDiagramViewResult(selection.Id, selection, group.Diagram, group.Warnings,
             group.Diagram is null ? "Failed" : "Completed")];
     }
+
+    internal static IReadOnlyList<AnalysisDiagramGroupResult> MergeResults(IReadOnlyList<AnalysisDiagramGroupResult> saved, IReadOnlyList<AnalysisDiagramGroupResult> incoming) =>
+        incoming.Select(group => group with { Views = (group.Views ?? []).Select(view => view.State == "Generating" && view.Document is { } document
+            ? view with { Document = document with { Pages = document.Pages.Concat(saved.FirstOrDefault(g => g.GroupId == group.GroupId)?.Views?
+                .FirstOrDefault(v => v.ViewId == view.ViewId)?.Document?.Pages ?? []).DistinctBy(p => p.Id).ToArray() } } : view)
+            .Concat(saved.FirstOrDefault(g => g.GroupId == group.GroupId)?.Views?.Where(v => (group.Views ?? []).All(n => n.ViewId != v.ViewId)) ?? []).ToArray() })
+        .Concat(saved.Where(g => incoming.All(n => n.GroupId != g.GroupId))).ToArray();
 
     private async Task<AnalysisJob> UpdateAsync(AnalysisJob job, CancellationToken cancellationToken)
     {

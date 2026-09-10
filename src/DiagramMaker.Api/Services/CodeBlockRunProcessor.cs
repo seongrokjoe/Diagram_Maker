@@ -17,7 +17,10 @@ public sealed class CodeBlockRunProcessor(IAppStore store, CodeBlockAnalyzer ana
         SemanticExecution? execution = null;
         async Task<bool> Save(CodeBlockRun updated)
         {
-            updated = updated with { Revision = run.Revision + 1, UpdatedAt = DateTimeOffset.UtcNow };
+            updated = updated with { Revision = run.Revision + 1, UpdatedAt = DateTimeOffset.UtcNow,
+                Execution = execution?.Progress ?? updated.Execution };
+            if (!updated.IsTerminal && updated.Results is not null)
+                updated = updated with { Results = MergeResults(run.Results ?? [], updated.Results) };
             if (!await store.SaveCodeBlockRunAsync(updated, run.Revision, cancellationToken))
             { leaseLost.Cancel(); return false; }
             run = updated; return true;
@@ -26,7 +29,7 @@ public sealed class CodeBlockRunProcessor(IAppStore store, CodeBlockAnalyzer ana
         {
             if (!await Save(run with { Checkpoints = execution!.Checkpoints, Diagnostics = execution.Diagnostics, Execution = execution.Progress }))
                 throw new OperationCanceledException(leaseLost.Token);
-        }, run.Diagnostics);
+        }, run.Diagnostics, run.Execution);
         using var executionScope = execution;
         var workToken = execution.Token;
         try
@@ -62,9 +65,26 @@ public sealed class CodeBlockRunProcessor(IAppStore store, CodeBlockAnalyzer ana
                     }
                 }
                 CodeBlockUnderstanding? understanding = null;
+                SharedDiagramGroup? shared = null;
+                var useShared = run.GenerationVersion == SharedSemanticProjection.Version && llm.SupportsSharedSemantics && llm.IsEnabled;
                 var warnings = new List<string>();
                 string? understandingFailure = null;
-                try { understanding = await llm.UnderstandCodeBlocksAsync(groupInput, appliedGraph, group, availability, workToken); }
+                try
+                {
+                    if (useShared)
+                    {
+                        var requestedSelections = group.Views is { Count: > 0 } configured ? configured :
+                            availability.Where(a => a.Available).Select(a => new DiagramViewSelection(StableIds.Create(group.Id, a.Type), a.Type,
+                                presets.Resolve(a.Type, "balanced").Id)).ToArray();
+                        var toGenerate = requestedSelections.Where(v => availability.Any(a => a.Type == v.DiagramType && a.Available) &&
+                            (run.RegenerateViewIds is not { Count: > 0 } only || only.Contains(v.Id)) &&
+                            (run.RegenerateViewIds?.Contains(v.Id) == true || !previous.SelectMany(r => r.Results ?? []).Where(g => g.GroupId == group.Id)
+                                .SelectMany(g => g.Views).Any(old => old.ViewId == v.Id && old.State == "Completed" && old.CacheKey == CacheKey(run, group, v, prepared.Relations)))).ToArray();
+                        if (toGenerate.Length > 0) shared = await llm.PlanCodeBlockGroupAsync(groupInput, appliedGraph, group, toGenerate, workToken);
+                        if (shared is not null) understanding = new(shared.Summary, shared.RecommendedType, []);
+                    }
+                    else understanding = await llm.UnderstandCodeBlocksAsync(groupInput, appliedGraph, group, availability, workToken);
+                }
                 catch (Exception e) when (e is LlmClientException or DiagramGenerationException)
                 { understandingFailure = "understanding"; warnings.Add(LlmFailure.Describe(e)); }
                 var type = understanding?.RecommendedType ?? CodeBlockProjectionService.Recommend(availability, graph, group);
@@ -95,7 +115,8 @@ public sealed class CodeBlockRunProcessor(IAppStore store, CodeBlockAnalyzer ana
                             SemanticGeneration? generated = null;
                             try
                             {
-                                generated = await SemanticExecution.RunAsync("code-page", JsonSerializer.Serialize(new { candidate, groupInput, selection }),
+                                generated = useShared ? shared?.Pages.GetValueOrDefault(selection.Id + "/" + candidate.Id) :
+                                    await SemanticExecution.RunAsync("code-page", JsonSerializer.Serialize(new { candidate, groupInput, selection }),
                                         () => llm.PlanCodeBlockDiagramAsync(candidate.Diagram, groupInput, appliedGraph, understanding, selection, workToken),
                                         value => value.Status == "Semantic");
                             }
@@ -158,12 +179,20 @@ public sealed class CodeBlockRunProcessor(IAppStore store, CodeBlockAnalyzer ana
     }
     private string CacheKey(CodeBlockRun run, CodeBlockGroupSelection group, DiagramViewSelection selection, IReadOnlyList<CodeBlockRelation> relations) =>
         CodeBlockWorkspaceService.Hash(JsonSerializer.Serialize(new { run.OwnerUserId,
+            run.GenerationVersion,
             blocks = run.Snapshot.Blocks.Where(b => group.BlockIds.Contains(b.Id)), group.Id, group.Title, group.BlockIds, selection,
             relations = relations.Where(r => group.BlockIds.Contains(r.FromBlockId) || group.BlockIds.Contains(r.ToBlockId)), run.Answers,
             groupOptionsVersion = 1, enableThinking = group.EnableThinking ?? run.Snapshot.EnableThinking,
             enableUserRelations = group.EnableUserRelations ?? true, CodeBlockAnalyzer.AnalyzerVersion, InternalLlmClient.CodeBlockPromptVersion,
             llmOptions.Value.Model, llmOptions.Value.Endpoint, llmOptions.Value.Enabled, llmOptions.Value.NaturalDiagramTemperature,
             llmOptions.Value.NaturalDiagramSeed, llmOptions.Value.DiagramOutputTokens, llmOptions.Value.ThinkingOutputTokens }));
+
+    internal static IReadOnlyList<CodeBlockGroupResult> MergeResults(IReadOnlyList<CodeBlockGroupResult> saved, IReadOnlyList<CodeBlockGroupResult> incoming) =>
+        incoming.Select(group => group with { Views = group.Views.Select(view => view.State == "Generating"
+            ? view with { Pages = view.Pages.Concat(saved.FirstOrDefault(g => g.GroupId == group.GroupId)?.Views
+                .FirstOrDefault(v => v.ViewId == view.ViewId)?.Pages ?? []).DistinctBy(p => p.Id).ToArray() } : view)
+            .Concat(saved.FirstOrDefault(g => g.GroupId == group.GroupId)?.Views.Where(v => group.Views.All(n => n.ViewId != v.ViewId)) ?? []).ToArray() })
+        .Concat(saved.Where(g => incoming.All(n => n.GroupId != g.GroupId))).ToArray();
 }
 
 public sealed class CodeBlockWorker(IServiceScopeFactory scopes, IAppStore store, IOptions<CodeBlockOptions> options,

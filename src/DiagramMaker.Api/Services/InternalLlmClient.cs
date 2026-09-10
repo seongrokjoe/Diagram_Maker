@@ -8,6 +8,12 @@ namespace DiagramMaker.Services;
 public interface IInternalLlmClient
 {
     bool IsEnabled { get; }
+    bool SupportsSharedSemantics => false;
+    Task<SharedDiagramGroup?> PlanCodeBlockGroupAsync(CodeBlockWorkspaceInput input, CodeBlockGraph graph,
+        CodeBlockGroupSelection group, IReadOnlyList<DiagramViewSelection> selections, CancellationToken cancellationToken) =>
+        Task.FromResult<SharedDiagramGroup?>(null);
+    Task<SharedDiagramGroup?> PlanGitGroupAsync(EvidenceBundle bundle, IReadOnlyList<SharedDiagramInput> diagrams,
+        bool enableThinking, CancellationToken cancellationToken) => Task.FromResult<SharedDiagramGroup?>(null);
     Task<CodeBlockUnderstanding?> UnderstandCodeBlocksAsync(CodeBlockWorkspaceInput input, CodeBlockGraph graph,
         CodeBlockGroupSelection group, IReadOnlyList<DiagramAvailability> availability, CancellationToken cancellationToken) =>
         Task.FromResult<CodeBlockUnderstanding?>(null);

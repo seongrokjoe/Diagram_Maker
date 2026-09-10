@@ -148,7 +148,8 @@ public sealed record AnalysisJob(
     DateTimeOffset UpdatedAt,
     DateTimeOffset? LeaseUntil,
     int Revision = 1, Guid? LeaseId = null, IReadOnlyList<SemanticCheckpoint>? Checkpoints = null,
-    IReadOnlyList<LlmDiagnostic>? Diagnostics = null, SemanticProgress? Execution = null, string? StopReason = null);
+    IReadOnlyList<LlmDiagnostic>? Diagnostics = null, SemanticProgress? Execution = null, string? StopReason = null,
+    string? GenerationVersion = null);
 
 public sealed record ChangedFile(
     string Path,

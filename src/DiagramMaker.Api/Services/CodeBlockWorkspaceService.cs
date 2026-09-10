@@ -65,7 +65,8 @@ public sealed partial class CodeBlockWorkspaceService(IAppStore store, IOptions<
             throw new ArgumentException("재생성할 형식 ID가 올바르지 않습니다.");
         var now = DateTimeOffset.UtcNow;
         var run = new CodeBlockRun(Guid.NewGuid(), id, owner, workspace.Revision, 1, input,
-            CodeBlockRunState.Queued, 0, "코드 분석 대기", now, now, RegenerateViewIds: request.RegenerateViewIds);
+            CodeBlockRunState.Queued, 0, "코드 분석 대기", now, now, RegenerateViewIds: request.RegenerateViewIds,
+            GenerationVersion: "shared-semantic-v1");
         if (request.RegenerateViewIds is { Count: > 0 })
         {
             var previous = (await store.ListCodeBlockRunsAsync(id, 100, cancellationToken)).FirstOrDefault(r => r.IsTerminal && r.InputRevision == workspace.Revision && r.Results is { Count: > 0 });
@@ -122,7 +123,7 @@ public sealed partial class CodeBlockWorkspaceService(IAppStore store, IOptions<
         var resumed = source with { Id = Guid.NewGuid(), Revision = 1, State = CodeBlockRunState.Queued,
             StageMessage = "완료 단위를 재사용하여 이어서 생성합니다.", CreatedAt = now, UpdatedAt = now,
             LeaseId = null, LeaseUntil = null, ErrorCode = null, ErrorMessage = null, StopReason = null,
-            SourceRunId = source.Id, Execution = null };
+            SourceRunId = source.Id };
         if (!await store.CreateCodeBlockRunAsync(resumed, cancellationToken))
             throw new CodeBlockConflictException("이미 진행 중인 실행이 있거나 입력이 변경되었습니다.");
         return resumed;

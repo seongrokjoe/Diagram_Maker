@@ -536,7 +536,8 @@ api.MapPost("/analysis-plans/{id:guid}/generate", async (
         plan.Selections,
         request.SourceAnalysisId,
         request.RequestedViewIds);
-    var job = new AnalysisJob(Guid.NewGuid(), analyzeRequest, AnalysisState.Queued, plan.BaseSha, plan.TargetSha, 0, "Queued", null, null, null, now, now, null);
+    var job = new AnalysisJob(Guid.NewGuid(), analyzeRequest, AnalysisState.Queued, plan.BaseSha, plan.TargetSha, 0, "Queued", null, null, null, now, now, null,
+        GenerationVersion: "shared-semantic-v1");
     await store.SaveAnalysisAsync(job, cancellationToken);
     await store.SaveAuditAsync(new AuditEvent(Guid.NewGuid(), context.GetInternalIdentity().UserId, "analysis-plan.generate", plan.Request.RepositoryId, "allowed", now), cancellationToken);
     return Results.Accepted($"/api/v1/analyses/{job.Id}", ToAnalysisResponse(job));
@@ -566,7 +567,8 @@ api.MapPost("/analyses", async (
     }
 
     var now = DateTimeOffset.UtcNow;
-    var job = new AnalysisJob(Guid.NewGuid(), request, AnalysisState.Queued, null, null, 0, "Queued", null, null, null, now, now, null);
+    var job = new AnalysisJob(Guid.NewGuid(), request, AnalysisState.Queued, null, null, 0, "Queued", null, null, null, now, now, null,
+        GenerationVersion: "shared-semantic-v1");
     await store.SaveAnalysisAsync(job, cancellationToken);
     await store.SaveAuditAsync(new AuditEvent(Guid.NewGuid(), identity.UserId, "analysis.create", repository.Id, "allowed", now), cancellationToken);
     return Results.Accepted($"/api/v1/analyses/{job.Id}", ToAnalysisResponse(job));
@@ -593,7 +595,7 @@ api.MapGet("/analyses/{id:guid}/groups/{groupId}/views/{viewId}/pages/{pageId}",
 api.MapGet("/analyses/{id:guid}/diagnostics", async (Guid id, HttpContext context, IAppStore store, CancellationToken ct) =>
 {
     var job = await AuthorizedJob(id, context, store, ct);
-    return job is null ? Results.NotFound() : Results.Ok(new { version = 1, job.Id, job.State, job.StopReason, job.Execution,
+    return job is null ? Results.NotFound() : Results.Ok(new { version = 2, job.Id, job.State, job.StopReason, job.Execution, job.GenerationVersion,
         diagnostics = job.Diagnostics ?? [], checkpointCount = job.Checkpoints?.Count ?? 0 });
 });
 api.MapPost("/analyses/{id:guid}/cancel", async (Guid id, ResumeSemanticRequest request, HttpContext context, IAppStore store, CancellationToken ct) =>
@@ -611,7 +613,7 @@ api.MapPost("/analyses/{id:guid}/resume", async (Guid id, ResumeSemanticRequest 
     if (job is null) return Results.NotFound();
     if (!CanResumeAnalysis(job) || job.Revision != request.ExpectedRevision) return Results.Conflict(new { error = "이어갈 실행 상태가 변경되었습니다." });
     var resumed = job with { State = AnalysisState.Queued, Revision = job.Revision + 1, StopReason = null, ErrorCode = null, ErrorMessage = null,
-        StageMessage = "완료 단위를 재사용하여 이어서 생성합니다.", Execution = null, LeaseUntil = null, UpdatedAt = DateTimeOffset.UtcNow };
+        StageMessage = "완료 단위를 재사용하여 이어서 생성합니다.", LeaseUntil = null, UpdatedAt = DateTimeOffset.UtcNow };
     return await store.UpdateAnalysisAsync(resumed, job.Revision, ct) ? Results.Accepted($"/api/v1/analyses/{id}", ToAnalysisResponse(resumed)) : Results.Conflict();
 });
 

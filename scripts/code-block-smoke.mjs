@@ -13,7 +13,7 @@ export async function smokeCodeBlocks(request, poll) {
   assert.equal(run.results[0].views.length, 5);
   assert.ok(!JSON.stringify(run).includes(source), "summaries omit source");
   const diagnostic = await request(`/code-block-runs/${run.id}/diagnostics`);
-  assert.equal(diagnostic.version, 1);
+  assert.equal(diagnostic.version, 2);
   assert.equal(diagnostic.id, run.id);
   assert.ok(!JSON.stringify(diagnostic).includes(source) && !('checkpoints' in diagnostic), 'diagnostics omit code and checkpoints');
   for (const view of run.results[0].views) {

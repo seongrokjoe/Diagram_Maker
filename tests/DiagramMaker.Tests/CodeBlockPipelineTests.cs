@@ -189,15 +189,15 @@ public sealed class CodeBlockPipelineTests
             return result;
         }
         var first = await Generate();
-        // Each group has one function: block understanding, recommendation, plan, semantic review.
-        Assert.Equal(8, transport.Requests.Count);
-        Assert.All(transport.Requests.Take(4), r => Assert.True(r.EnableThinking));
-        Assert.All(transport.Requests.Skip(4), r => Assert.False(r.EnableThinking));
+        // Each group generates and reviews shared meaning once.
+        Assert.Equal(4, transport.Requests.Count);
+        Assert.All(transport.Requests.Take(2), r => Assert.True(r.EnableThinking));
+        Assert.All(transport.Requests.Skip(2), r => Assert.False(r.EnableThinking));
         transport.Requests.Clear();
         var regenerated = await Generate(["va"]);
         Assert.True(regenerated.Groups!.Single(g => g.Id == "ga").EnableThinking);
         Assert.False(regenerated.Groups!.Single(g => g.Id == "gb").EnableThinking);
-        Assert.Equal(4, transport.Requests.Count);
+        Assert.Equal(2, transport.Requests.Count);
         Assert.All(transport.Requests, r => Assert.True(r.EnableThinking));
         Assert.Equal(first.Results![1].Views[0].Pages[0].Diagram.Id, regenerated.Results![1].Views[0].Pages[0].Diagram.Id);
         workspace = await service.SaveAsync(workspace.Id, new(workspace.Revision, input with {
@@ -228,7 +228,9 @@ public sealed class CodeBlockPipelineTests
             Requests.Add(request);
             using var json = JsonDocument.Parse(request.UserPrompt);
             var properties = request.StructuredSchema!.Value.GetProperty("properties");
-            var response = properties.TryGetProperty("recommendedType", out _)
+            var response = properties.TryGetProperty("items", out _)
+                ? JsonSerializer.Serialize(SharedPlan(json.RootElement, WrongFact), Json)
+                : properties.TryGetProperty("recommendedType", out _)
                 ? json.RootElement.TryGetProperty("symbol", out var symbol)
                     ? JsonSerializer.Serialize(new CodeBlockUnderstanding("값을 준비하고 조건에 따라 반환", "", [new("behavior", "값을 준비하고 조건에 따라 반환", [symbol.GetProperty("id").GetString()!], [], [])]), Json)
                     : JsonSerializer.Serialize(new CodeBlockUnderstanding("입력 코드 동작", "flowchart", []), Json)
@@ -236,6 +238,15 @@ public sealed class CodeBlockPipelineTests
                 ? JsonSerializer.Serialize(new DiagramPlanReview(!RejectReview, RejectReview ? ["unsupported behavior"] : []), Json)
                 : JsonSerializer.Serialize(Plan(json.RootElement.GetProperty("context").GetProperty("candidate").Deserialize<DiagramIr>(Json)!, WrongFact), Json);
             return Task.FromResult(new VllmCompletionResult(response, "stop", 1, true, false, 0, 1000, 10, 10, 20));
+        }
+        internal static SharedSemanticResponse SharedPlan(JsonElement root, bool wrong)
+        {
+            if (root.TryGetProperty("context", out var context)) root = context;
+            return new("입력 코드의 동작과 확인된 관계", root.GetProperty("available")[0].GetString()!,
+                root.GetProperty("items").EnumerateArray().Select(item => new SharedSemanticAnnotation(
+                    wrong ? "invented" : item.GetProperty("id").GetString()!,
+                    item.GetProperty("kind").GetString() is "condition" or "loop" or "control" ? "값이 양수인가요?" : "조건에 따라 값을 처리합니다",
+                    "원본 코드의 값과 조건을 확인하고 처리합니다")).ToArray());
         }
         public static CodeBlockSemanticPlan Plan(DiagramIr candidate, bool wrongFact) => new("코드 동작 설명",
             candidate.Nodes.Select((n, i) => new CodeBlockSemanticElement("element" + i, n.Kind is "entry" or "exit" ? n.Label : "조건에 따라 값을 처리합니다", [n.Id], n.SourceFactIds!,

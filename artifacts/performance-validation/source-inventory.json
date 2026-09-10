@@ -1,0 +1,850 @@
+﻿[
+    {
+        "path":  "scripts/semantic-progress-ui-checks.mjs",
+        "sha256":  "be6f5ddd1ebb861530f806862d520a85e7f9580480cf4aaa18293e3db2351b02"
+    },
+    {
+        "path":  "scripts/smoke-shared-semantics.mjs",
+        "sha256":  "7d19ebfb63d27208a4eb2c931b9817ceec259c81d4d57f91ef9fd491c4e8d7ad"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Domain/SharedSemanticContracts.cs",
+        "sha256":  "e242a758362dda3437f7145f862a7b2505534ec93efe5bf80bb1386a95ef21b4"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/InternalLlmClient.SharedSemantics.cs",
+        "sha256":  "8455af3e3589d3aabac79b8cf32626a95e7b43e2eac28e292a073b1ccc379ec3"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/SharedSemanticProjection.cs",
+        "sha256":  "f37423a699c39ebb1e622d8b74e0a4bb33c934040316449d9ee0dd5363922f9a"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/SharedSemanticTests.cs",
+        "sha256":  "61ff49d0627b5f17847cf5b10a17ae5a7b9542519aea2f6d810637fc749f6f98"
+    },
+    {
+        "path":  "web/src/SemanticProgressView.tsx",
+        "sha256":  "02ad964c1303fce3440437832ba96d90fe4ed6e2e6d061f76901644b4629693f"
+    },
+    {
+        "path":  "DiagramMaker.sln",
+        "sha256":  "a7ff1c4a692e819de5b36c3a0ede857f59de5e51c7d33abd4529cfa9ac452472"
+    },
+    {
+        "path":  "Directory.Build.props",
+        "sha256":  "75859488863b7f69d2e2ec702b13ec49f0d317bd6ed6566c18b9c4cff5b650c2"
+    },
+    {
+        "path":  "LICENSE_POLICY.md",
+        "sha256":  "ace8a9814a2a0894f61cbeda67835aab1a5a166052579965a108ad6759300e67"
+    },
+    {
+        "path":  "NuGet.Config",
+        "sha256":  "3d697627d96e6c2ab5ef8afaab6b044ac32749ef6f9c75c56d1630c07383f816"
+    },
+    {
+        "path":  "THIRD_PARTY_NOTICES.md",
+        "sha256":  "ebc7015d47dca6875119e3a201f1f4b51bbafb7e622766eedbfc6abfc10faa50"
+    },
+    {
+        "path":  "global.json",
+        "sha256":  "1e57d4253a7b4e6217baf0b7ba2087c2fd5567e469656cea1bdcce47d696536c"
+    },
+    {
+        "path":  "packaging/licenses/NPGSQL_LICENSE.txt",
+        "sha256":  "2e1d9cc6ed4eb7fe6fa82091846c06b4f58571a2c3b54777db6baeca10dd2d74"
+    },
+    {
+        "path":  "packaging/licenses/khroma-2.1.0-MIT.txt",
+        "sha256":  "66b333b0f66759a0b710459e03f7029abe17f4358114a128d2c972e642961b49"
+    },
+    {
+        "path":  "packaging/licenses/standard/Apache-2.0.txt",
+        "sha256":  "10409ffea18247de5b0707b020a3f83d730138b422bd6d954686271d1f8d39c9"
+    },
+    {
+        "path":  "packaging/licenses/standard/MIT.txt",
+        "sha256":  "60ef8e01d79d3d5cfc8c2b57deb09f21b3a0fa274f6d68e9e9d01deec6a90016"
+    },
+    {
+        "path":  "packaging/licenses/xunit-abstractions-2.0.3-review.md",
+        "sha256":  "58c74d960f2ea15c557cd8ea4e6a90afdf12315ef73c8215a7d3fa95642b7515"
+    },
+    {
+        "path":  "packaging/windows/INTERNAL_TEST_KO.txt",
+        "sha256":  "dce899c7a85ff0d6b6763961eb13f8553ece62a6f5cdbfafce71a7625aaf408a"
+    },
+    {
+        "path":  "packaging/windows/OFFLINE_INSTALL_KO.txt",
+        "sha256":  "edc37dcb75f09f75a680ada7c817b35c08402e144e9b9e5cbdcb9defaf62243f"
+    },
+    {
+        "path":  "packaging/windows/config/llm-policy.example.json",
+        "sha256":  "ff25b69a10a104d4530bd93af10444e33756b964bd1b36c1fceb882f7c589ea1"
+    },
+    {
+        "path":  "packaging/windows/config/network-policy.example.json",
+        "sha256":  "3eb29ab1edff5dd0790ca8b43f0c60985153c86f81e17f7ba3d61e2c26d793e9"
+    },
+    {
+        "path":  "packaging/windows/configure-llm.cmd",
+        "sha256":  "ec59d09792d14850993b5ad413a73228e3e0bb365235a1013903fec1dde0fd1f"
+    },
+    {
+        "path":  "packaging/windows/configure-network.cmd",
+        "sha256":  "777a26e18962803bbea985419b99925ae9297f5efbbed88762f6e367acc4ec83"
+    },
+    {
+        "path":  "packaging/windows/health-check.cmd",
+        "sha256":  "2dd8d5c67da16edc2800387b56ebfd182fc9e955587cc256817f15ec98822123"
+    },
+    {
+        "path":  "packaging/windows/start-with-network-policy.cmd",
+        "sha256":  "2fcc043aeaf9cb3a0aa1bfd803b8fd9d3d12dd7f87293d8eb9ab603367a37d4a"
+    },
+    {
+        "path":  "packaging/windows/start.cmd",
+        "sha256":  "67e52d655e86af5a7a8ce04c144e9840ad53bcdc58a46c783000a79ea83ff9e2"
+    },
+    {
+        "path":  "packaging/windows/test-llm.cmd",
+        "sha256":  "a1b675d838a3f34670452e14863bc94322a64d7359a4a2fc3207ca86393edbd0"
+    },
+    {
+        "path":  "scripts/analysis-result-ui-checks.mjs",
+        "sha256":  "dde20a3b947d75c20a0634800bd70c0d9781eb801a59b996ea2dcf1850a314fc"
+    },
+    {
+        "path":  "scripts/build-container.ps1",
+        "sha256":  "381df87c52e3e9abb1f5c54ed7c9b22c139594e7071daa2e7891227959c36472"
+    },
+    {
+        "path":  "scripts/build-offline-win-x64.ps1",
+        "sha256":  "91b9af8cd55f3e13e63508e830f110815ad3cca526d29d304a6947a4180cc6c8"
+    },
+    {
+        "path":  "scripts/check-internal-only.mjs",
+        "sha256":  "caf9945c5aa94dd9beb90306871823cdb77bc3195758c02634fa85e211ed41ef"
+    },
+    {
+        "path":  "scripts/check-internal-only.test.mjs",
+        "sha256":  "6816488cd2a129355665731dc9a43d16e4f8039de5882bf3e99cf39a749533ca"
+    },
+    {
+        "path":  "scripts/check-npm-licenses.mjs",
+        "sha256":  "47a127e006272821b4b032bc08c24e6848b6eea4a71380ee90223309dc119817"
+    },
+    {
+        "path":  "scripts/code-block-smoke.mjs",
+        "sha256":  "cb81959d72fbe5df430730d05f4384e5c748d6efa8419b3285433e1e888abc0d"
+    },
+    {
+        "path":  "scripts/collect-npm-licenses.mjs",
+        "sha256":  "fabe6e9088cc2e193675830c32a185eb3f6ebba2f1e1482d4c426f6e98a338cc"
+    },
+    {
+        "path":  "scripts/collect-nuget-licenses.ps1",
+        "sha256":  "02057859598ec5c9ac3c6e1e06f016a6b92069abc30d9d25b785243032c52613"
+    },
+    {
+        "path":  "scripts/create-sbom.mjs",
+        "sha256":  "b90a148221090bcdc2521638546e00abadd41680b41c7c68455eda15df75917d"
+    },
+    {
+        "path":  "scripts/license-bundle.mjs",
+        "sha256":  "e3e96b971d884b4ff20c3f383447616fad935883f7db447b80387fa2d051232e"
+    },
+    {
+        "path":  "scripts/license-policy.mjs",
+        "sha256":  "ec5d4302fbe1db7eba9c00bb9a80f2797ce435b17c8f82b256898aff9b4cf024"
+    },
+    {
+        "path":  "scripts/license-policy.test.mjs",
+        "sha256":  "f1d3e1c19a4ce914e6fca468447c68141a90f62332ec618fccd414b5f4fbc438"
+    },
+    {
+        "path":  "scripts/offline-common.ps1",
+        "sha256":  "df7954ca94de7e62346335f00740b8706e0ec7da1cac4fe0936717ec819f72b4"
+    },
+    {
+        "path":  "scripts/offline-policy.test.mjs",
+        "sha256":  "1ec7804cfb096214caa1b798a6acc13923c0d2c8287f2af777f40ec10e0de8e3"
+    },
+    {
+        "path":  "scripts/smoke-code-block-ui.mjs",
+        "sha256":  "5a73ad768ee096b11d7e71a1c8ce1df248db8cb647f9b6642d02eb9a87ab582c"
+    },
+    {
+        "path":  "scripts/smoke-diagram-api.mjs",
+        "sha256":  "f7daffe54003fa570e9f5c9420faa8009767ef272e447e59039c0726149062a5"
+    },
+    {
+        "path":  "scripts/smoke-internal-policy.mjs",
+        "sha256":  "9bb7c9a07ece02ab689ca39b44a1682b09667f1558c34df8c56d281b68e49cbf"
+    },
+    {
+        "path":  "scripts/smoke-offline-preview.mjs",
+        "sha256":  "477389100b66ea9acdd619e169d8905d55de6bcb9441cf6f3e9cb8f6515aaaa1"
+    },
+    {
+        "path":  "scripts/smoke-packaged-llm.mjs",
+        "sha256":  "dd52608bf26de892063bcbd5eb5a72f7a3317ab1791dea4197c7f516c5021786"
+    },
+    {
+        "path":  "scripts/smoke-svg-safety.mjs",
+        "sha256":  "b0c730a483291441a812422d0332db531e2da4711b60ad75118ff6859d8ead90"
+    },
+    {
+        "path":  "scripts/smoke-windows-launchers.mjs",
+        "sha256":  "533b0be02a3c5f46e20e98b4af1b9d8bdffe457dd5bb8eb46388684aee24ec24"
+    },
+    {
+        "path":  "scripts/start-local.ps1",
+        "sha256":  "7e088f172e4407a6c2d4767794889df8b34f5736e076f2414162742723b5584a"
+    },
+    {
+        "path":  "scripts/stop-local.ps1",
+        "sha256":  "009e058f3b69e856f9c8584a0492da6c5d001ea227edeb60acc404421810de76"
+    },
+    {
+        "path":  "scripts/verify.cmd",
+        "sha256":  "d5e6c661d1079c91309d939a78a764796548ae9bde99d6b8cfbfeb49bd7a91f2"
+    },
+    {
+        "path":  "scripts/verify.ps1",
+        "sha256":  "914eda6640517191524b820072ff781c5c15e99c07c7ca15111ca656eaa3b8df"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Background/AnalysisPlanWorker.cs",
+        "sha256":  "75e1f5e30893ebb9b7659c4c98ae6b47ccbecedf174e67e7d0a2006f08a68cb9"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Background/AnalysisWorker.cs",
+        "sha256":  "b5a02ed766c90a7083371c4b87e25bea844cb9f7d632819d2742ae4e61e6c256"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Configuration/AppOptions.cs",
+        "sha256":  "db123bb3cd7fab4c9ef5648ea388f076a1357732c3be8ad07907f7240ebe470a"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Configuration/CodeBlockOptions.cs",
+        "sha256":  "83db804b7f55fe7056e62376dd196e52299ae0c839b89c93bfd1e55d7a89b3a8"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/DiagramMaker.Api.csproj",
+        "sha256":  "12fc2777220c282eff5b52d67695a4f06e7b60bfd5cf96d14c970c57d8130262"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Domain/CodeBlockContracts.cs",
+        "sha256":  "c64962f577de8d7b7289583bab2231fc4991d6e7b1fb85d873e3c56b880ced1c"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Domain/Contracts.cs",
+        "sha256":  "77b4598ab1b8afe31c8bc4cd5f7da734db5957ae32f131fe6b74c32e848951b2"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Domain/SemanticExecutionContracts.cs",
+        "sha256":  "9a10913f8099082dcfc3a57e0faa53850ed8eebfa957e4c9da780ca119262cda"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Program.cs",
+        "sha256":  "d068c6e9e75800192f3263e522dfb9546805578905067cdedf2529c85ebbb0e6"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Properties/AssemblyInfo.cs",
+        "sha256":  "036cc4bdcbd00de2d7b63a22719e4866901c752c4c078872d7a1d551e3e7d880"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Properties/launchSettings.json",
+        "sha256":  "91f1a473dc90d1d2cdd01108649bcc9d6ce7eb99d6cd0a6baecce26c1657364f"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Security/ApprovedNetworkPolicy.cs",
+        "sha256":  "eacd9249fe8a06a90436ec83c0bab887a9cbc06223b80761d018985cec6105eb"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Security/InternalIdentity.cs",
+        "sha256":  "8af4beb8e84e539c16bf2d6a8057b339c302d945e7d34c7966033a94eb8dd228"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Security/LocalPathSafety.cs",
+        "sha256":  "2944a421643ba89d5bd9534fb33394895787d8bdaf6c7afe51e7f22e1951497b"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Security/WorkerEnvironment.cs",
+        "sha256":  "78c261ef9d83ca0fe257e0790de1e6d7b8b168639b3c78f8fc9c6fcab9dc8405"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/AnalysisJobProcessor.cs",
+        "sha256":  "bd989a2fd30ccdfe97e484d5dcc5cc26486f1f46baace4068e65e055e9227895"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/AnalysisPlanProcessor.cs",
+        "sha256":  "a522471b940205edc0698bd9ca0062a6b5a6dd5414e93b6c6dc9c48f23dcb05c"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/CodeBlockAnalyzer.cs",
+        "sha256":  "08f4c6860072f4e487e0f9082b0b3dba144d8d92dcfbaa46de194d323c9fde6c"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/CodeBlockEndpoints.cs",
+        "sha256":  "e484ca0454b6ae7d72142d6a57f4e758b450e1e7f4c8cca50bc7b2d5351352f1"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/CodeBlockGroupingService.cs",
+        "sha256":  "9bf85ac45a316cbb48f7d995863a84d6c1eeb3c3acd02b39c10c3fedfd82f0e9"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/CodeBlockPlanValidation.cs",
+        "sha256":  "82d00fbaddb44efdf73be127837603cbf0550ce374571e04a7f0716a075b1be1"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/CodeBlockProjectionService.cs",
+        "sha256":  "a091568d2d6f0ecff3ecb14ce7bc8f549b0ca3aa5f8439a1cf6b811a1366979f"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/CodeBlockRunProcessor.cs",
+        "sha256":  "7008a438a8f3f82e745e75490a59047616a908715fdb1b044a94b64e5d7bc62f"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/CodeBlockSourceMap.cs",
+        "sha256":  "d9cdfe65456956f630eb1d9d2a8696e8c8c4ea5e68fd6395a3606d96337d1484"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/CodeBlockWorkspaceService.cs",
+        "sha256":  "1ae98beee1f51d32e7d7ddf4d73a803e1cfdfa2fad3680e149685bc218caf036"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/DiagramCodeLabels.cs",
+        "sha256":  "c44434e1c873321bc6cb071ab2e912d51cc5726121e3cb3906045915d7f2a5d5"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/DiagramDocumentBuilder.cs",
+        "sha256":  "02e992dcd0074b8f60a2e29fca50b5c43a8aaefacbf87b572e3a1d524720bd27"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/DiagramEvidenceBuilder.cs",
+        "sha256":  "86ae038cbee5e0188f2d002045c4288c01a15f016fcbb971ac28c04667e43e72"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/DiagramExplanationBuilder.cs",
+        "sha256":  "9826cbf0853276fba9be1e5a185719cf13ef54c799d0c78ca187f938a0b54221"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/DiagramPresetCatalog.cs",
+        "sha256":  "0393bd63b8f569cdb57e310dedcd1a28fd414c58bcc041377b7984b362be0b3e"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/DiagramProjectionService.cs",
+        "sha256":  "a9c33ae4406021d52f6b5cd44edaf15e1aa23a0f99c717a4cbc1b617795a0c7f"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/DiagramRevisionService.cs",
+        "sha256":  "9dba34109c8064dd989a34ddd84e6537fc66bd72c77df0862b9c568bb11e5802"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/DiagramValidation.cs",
+        "sha256":  "65f323b7f492ce2ac09b48bea032ac2ab011bfefe167a49cba40d1dbec4bf02f"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/DiagramViewSelectionService.cs",
+        "sha256":  "df23d4e421a462a7bfc2f0837e3a64d0c78c1068a0ced612c1985db8418624b6"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/GitWorkerClient.cs",
+        "sha256":  "3a36ac46b8def2320aa68b9a7c3ae3ffadc72d2864dbc2f5bb7fadaf69a96b2d"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/ILlmCompletionTransport.cs",
+        "sha256":  "18bce16f38be9ada158a9a90402a2403553f0d8ec7a9d977fcf9def863b6073a"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/InternalLlmClient.CodeBlockProjection.cs",
+        "sha256":  "e2b9c933502228f12f8c63040c884ec86c1454fdad6a7c931a389ddff347477a"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/InternalLlmClient.CodeBlocks.cs",
+        "sha256":  "09c517311319bd636a33f776e2bfd43a8215d873779e3d5070cc6796310a9ef9"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/InternalLlmClient.CodeContext.cs",
+        "sha256":  "1926c77a1370a450fc96b1febbf19f439ee902a290c05ff08f8a76155614ba09"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/InternalLlmClient.PlanParts.cs",
+        "sha256":  "b35991d8bccf6b0a6e3dd14e4b4cacb6171d5c51ff15f0ef88f5e8ea2c62d56a"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/InternalLlmClient.Planning.cs",
+        "sha256":  "1c422896a1b4d1ef41d80d5664588f84fb1ef15c0621101a9738a02f28a233dc"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/InternalLlmClient.cs",
+        "sha256":  "eb1489c973fa43915f68c59058e2137857a194322b21dac1ef5fa6b9e2c65193"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/LocalRepositoryPath.cs",
+        "sha256":  "e0d98fcd44d76b7f04471d0671e51e4c58ce6032e2ef990abb06b0085f7111c7"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/MermaidCompiler.cs",
+        "sha256":  "bf73d5bdbc7827821a108c22966aa6a26dcb55f623747eb330b8df9ef0a4e8df"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/MermaidDslRevisionService.cs",
+        "sha256":  "7c7bf0290afd62bf44bac108c4e2b11e43324a6fadeb924410c3def02060a8f2"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/NaturalDiagramIntentNormalizer.cs",
+        "sha256":  "43fb5aef8905b62258a0ee8b0fe4bd89f56fba1050bf722036924e92305cca29"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/NaturalDiagramService.cs",
+        "sha256":  "8abc7f23728e572b1ac05ace776202377a8f5f0182ec06ada49646ed2189aa20"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/NaturalDiagramSessionCache.cs",
+        "sha256":  "ab26f8669146f2053f2f536486278e036e547885a771186e430de68cec631b5b"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/PromptIds.cs",
+        "sha256":  "d9043074e1d5a3332cc6f5c59c66a02ebd3b51f41b6069c55bf300e31c2acbe0"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/SecretMasker.cs",
+        "sha256":  "3699fa0dca2c658783977b91d42d21d9ee6a137fb250efd5d73c960abee3e384"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/SemanticExecution.cs",
+        "sha256":  "df05fb916e52a73785b1e3fa7b92cca93368e27285b227798a8a1a6a32e50fc6"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/SequenceStructure.cs",
+        "sha256":  "f8e8c0d8f0410f6c55a15c38a60a3fd6401c5bceaf61dbada01dac7c6d927401"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/SourceGraphAnalyzer.CodeBlocks.cs",
+        "sha256":  "8e25d49ba4d0fe1f8acfbf0bdc4e37174dcabdf3264fc2a2a7b653a71b50660d"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/SourceGraphAnalyzer.Context.cs",
+        "sha256":  "67b1a5e6d2e54639d79ac4ca92104681a6cfdc489a7a5320d90c179cbf0d8c13"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/SourceGraphAnalyzer.cs",
+        "sha256":  "c698cea44b48fe6aa7f7e67b6cb5edfb894d5dcb0140227a8639baee4f7a5629"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/StableIds.cs",
+        "sha256":  "29c599d2333ae8300e5e84eab0477853a0908fabe6e24e12fe94af17de57efed"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/StructuredLlmCompletion.cs",
+        "sha256":  "e7d5f5aa953824fb28320fa8fdca21d3d7041bf64fb7d42456d42f106065db55"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Services/VllmClient.cs",
+        "sha256":  "d59bfdaef719bb9140a8be24e6ae46c7ad77c2b852ad4052abcabf51cb2f82de"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Storage/IAppStore.cs",
+        "sha256":  "b5fbc30dbf728e22dc786456d95744c3acef8e6bf755f4628123d3d6471522d1"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Storage/ICodeBlockStore.cs",
+        "sha256":  "42e9e19cf689199781ecc9a4b19ee7d935375507b694e58def16eb016cd2fb4b"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Storage/InMemoryAppStore.CodeBlocks.cs",
+        "sha256":  "f80a4664f9ff7a8af506cc1389f588ec23d7c79432dfd5407dee5341f74b477c"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Storage/InMemoryAppStore.Semantic.cs",
+        "sha256":  "82e39521742bafe89312f833abecd5c658f3ad5201d362be009699efc27460d4"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Storage/InMemoryAppStore.cs",
+        "sha256":  "55bedf9b07cf06e276843420f5ed6adbfd0b4f5942eddcd89870f63c82178c4a"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Storage/LocalFileAppStore.CodeBlocks.cs",
+        "sha256":  "8e6b31296696cebb4f96fd779354b0d509f2d7bee4500084718fea206ace1e24"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Storage/LocalFileAppStore.Semantic.cs",
+        "sha256":  "31fac4bd4d5da525938b70888379b25302479d6c031891d7181df02ba525d877"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Storage/LocalFileAppStore.cs",
+        "sha256":  "2c4bed4f13efeaf1dfb7a5f73720ce2e8b175ff68b91a9c666c9f2e6a8f4ea45"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Storage/PostgresAppStore.CodeBlocks.cs",
+        "sha256":  "c81a5ac81923d7cea2a61af109ca75cfc875c739df60fc00f9304ddc3711cc42"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Storage/PostgresAppStore.Semantic.cs",
+        "sha256":  "18a574e134c3ea6faa59e7dcfc9aa950383d11797f41090318fe8d11f3f4926d"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/Storage/PostgresAppStore.cs",
+        "sha256":  "d5bb7c4c9284cc938adf93a3c30d00bc51db20f563f8687020c7a796e6454c67"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/appsettings.json",
+        "sha256":  "e8a275fb795f54232530aab902be84f385995d4788af353e69e8152bada81182"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/packages.lock.json",
+        "sha256":  "af8d46daf081ad1834744ccb34e62cf78a89c7841af739f33359eea4135e3953"
+    },
+    {
+        "path":  "src/DiagramMaker.Api/wwwroot/index.html",
+        "sha256":  "8d4885d15d8855b67b3cd9170b14b9c86a8438b34f9d2f9b123236dc499f168a"
+    },
+    {
+        "path":  "tests/DiagramMaker.FakeVllm/DiagramMaker.FakeVllm.csproj",
+        "sha256":  "4e0f5d6441d961d505750e4a6f9896491ecce904ec373600317176eadd151473"
+    },
+    {
+        "path":  "tests/DiagramMaker.FakeVllm/Program.cs",
+        "sha256":  "9819bc09fae246d8ff43468fdbd1deb52d5a36ea2de6fd6a859a4fb9a7e8ea37"
+    },
+    {
+        "path":  "tests/DiagramMaker.FakeVllm/packages.lock.json",
+        "sha256":  "185d8116358b1a7bd90a8acf0a0238e814390d8f8b9cd18dbf7e38a810a280ae"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/AnalysisJobProcessorTests.cs",
+        "sha256":  "923ea5c65eb2cea8a33185a394f6621b71b51d673fd8c43b4d729b322c79966e"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/AnalysisPlanProcessorTests.cs",
+        "sha256":  "547691ac61de1dd3ae731eb742bc1be86ba1fdf261a09e1b5d1dc95e5b429094"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/ApprovedNetworkPolicyTests.cs",
+        "sha256":  "c5c7b50023bff8c3e29735c4d2f59ecef92e19a06c620a383f7559d73091ae16"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/CodeBlockAnalyzerTests.cs",
+        "sha256":  "77cd1586415284036bad01731800eec9a00bffcbea5c042660cff9a06c0cb7cb"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/CodeBlockGuardTests.cs",
+        "sha256":  "73c1038b37093a38491ebb7adc34add255f8775841712f77ee77540eec4c5ff0"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/CodeBlockPipelineTests.cs",
+        "sha256":  "ba8f12c53bf6d4f6e25e4cb99dd93712cf3fe2e46e8b2955f3910744d2a9a61d"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/CodeBlockSemanticTests.cs",
+        "sha256":  "f3b26eb992f38b656965f40f198c96bfdd1e7249fc189b3421d7049213f95ce1"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/CodeBlockStoreTests.cs",
+        "sha256":  "06fbce0af311494fec81bac7dd04bb224466fa34c35e8c767e7664944a231d8c"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/CodeMeaningTests.cs",
+        "sha256":  "3e9480aba1345de6d32b00e2ea43a66859de461e9f267eb954b5def3527bb4ed"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/DiagramMaker.Tests.csproj",
+        "sha256":  "77c15461c5f29cf063d871d61ea624ae548925bfa9da27fd307c05fe06f0f593"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/DiagramProjectionServiceTests.cs",
+        "sha256":  "0e3e19b079477613dd35dd84889009bcf9faff7bc0bb798d0d0d415e6a4fd6f6"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/DiagramRevisionServiceTests.cs",
+        "sha256":  "44d84af9c4f1c8c64310e982cb752b585e8eaa547d5cdc87e60725b08be60351"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/GlobalUsings.cs",
+        "sha256":  "50436eb3a60162e0cfad749eddfb06f8908f821a90ca44532df946a53e071359"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/LocalFileAppStoreTests.cs",
+        "sha256":  "8c93a314c81eb6e3ac6c607d93c7a798f79563c3ab8aee8a775e04c5fde5938e"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/MermaidCompilerTests.cs",
+        "sha256":  "fcac096d5590c78028ffe7004efdb92e66f95e41a33d7fa60abee64b93672df5"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/MermaidDslRevisionServiceTests.cs",
+        "sha256":  "bfc421ac4f294dea66a50b84bb2f8deac99f5c3ca4b3447a77150872f2249f08"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/NaturalDiagramServiceTests.cs",
+        "sha256":  "06c782f249ffbc6d0e2edf58e4878056cd8ed6483d0e28fc831ce7f6beef2c26"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/SecretMaskerTests.cs",
+        "sha256":  "07fefd7d0df5951799e77d5ac672e1b510b929da3add049d23784e39887da050"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/SemanticExecutionTests.cs",
+        "sha256":  "a05b2692fd753b2556e7c2bc13334efcb198ff411e09689c5c3c8ccdec637c32"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/SemanticGenerationContractTests.cs",
+        "sha256":  "966eb36d8a1ad528feaf8c4ea9195b858ff2c642af41f3a2f2b964c8c8fbace7"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/SemanticPlanningTests.cs",
+        "sha256":  "ae08d14cd080349b689925c69590881f21234be3259cb6c545da5340bab895f0"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/SourceGraphAnalyzerTests.cs",
+        "sha256":  "5a51de6a6d6d5435dcf928b276597630ab8e3aa9a5c42fcb211205e3c2b791fb"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/VllmClientTests.cs",
+        "sha256":  "c8b614304b944a592bbdfe8873d112734af37dc584d019d8995d72e5e88e6fcc"
+    },
+    {
+        "path":  "tests/DiagramMaker.Tests/packages.lock.json",
+        "sha256":  "7615112da9e96ae434df7c52ca5bb0ecee14fa9286cfefff90cf34ea39ed3843"
+    },
+    {
+        "path":  "tests/fixtures/llm-policy.loopback.json",
+        "sha256":  "148881df1cb6f47557f48955fd3a7b1d0c7b8d0d91a4c947bc7973436fe8117a"
+    },
+    {
+        "path":  "tools/codex-test/samples.json",
+        "sha256":  "9f6aafb3820e4c7183c22d83b51f106bcafaf476efd3b7e6123f8827a9ff432e"
+    },
+    {
+        "path":  "tools/git-worker/code-block-parser.mjs",
+        "sha256":  "d0fd1bca5fab73a80a8ccedd66f8cc8480cdbe9cb7d6a5e91ecc6bc82aef3f93"
+    },
+    {
+        "path":  "tools/git-worker/cpp-indexer.mjs",
+        "sha256":  "17a87ab0ee825d2ab7597baee5114b52d7a459072e79b253bc072c60c9cdc75f"
+    },
+    {
+        "path":  "tools/git-worker/index.mjs",
+        "sha256":  "25ae72d3345317c0906e21f878a24e121485b1e59bd74399f3f0b00044e2de30"
+    },
+    {
+        "path":  "tools/git-worker/local-security.mjs",
+        "sha256":  "759fe187f8f0c53239b0704476ee2806f256b6304c8752b3c81cfdec816522e6"
+    },
+    {
+        "path":  "tools/git-worker/package-lock.json",
+        "sha256":  "d8ab9e041ad132a46f705261d5d84c91bffc29208a61fbf1ac19949e3ee0cbdd"
+    },
+    {
+        "path":  "tools/git-worker/package.json",
+        "sha256":  "de0dd9b92fd7096ee52805d925923578d19de86310fd3af7de9e7dd16af854bf"
+    },
+    {
+        "path":  "tools/git-worker/test/classify.test.mjs",
+        "sha256":  "44b91071bade44f56e4a4c1c060f45daaa5a0956b73296b42252870d4539b6d3"
+    },
+    {
+        "path":  "tools/git-worker/test/code-block-parser.test.mjs",
+        "sha256":  "e3bc19484b294f3cd2a2a6216084ed7b9fc79eeba9a466291d9a5061ac69d10c"
+    },
+    {
+        "path":  "tools/git-worker/test/compare.integration.test.mjs",
+        "sha256":  "6a897661b9c5112c1097cc141d62d10674eea4aeea0adf77cd66d16eee7944d3"
+    },
+    {
+        "path":  "tools/git-worker/test/cpp-indexer.test.mjs",
+        "sha256":  "b0386221e38910202af4d0fd598666af692ad205212b9660cb28bd9109a80616"
+    },
+    {
+        "path":  "tools/git-worker/test/local-security.test.mjs",
+        "sha256":  "75f20d77a28501cdbd73fb7397d2157d18f4470daa3041271df672f1030252ef"
+    },
+    {
+        "path":  "tools/license-audit/LicenseAudit.csproj",
+        "sha256":  "779217d6d76e024930a5a8788b325c3d0a4e4b598a5bb340bbc6e7b2d9602a31"
+    },
+    {
+        "path":  "tools/license-audit/Program.cs",
+        "sha256":  "8cab8f74db65be569b486bd2d0227865bf8a527c7d80f7e220d11f0a9d1b1225"
+    },
+    {
+        "path":  "tools/license-audit/packages.lock.json",
+        "sha256":  "185d8116358b1a7bd90a8acf0a0238e814390d8f8b9cd18dbf7e38a810a280ae"
+    },
+    {
+        "path":  "web/build.mjs",
+        "sha256":  "b93adb157c192f58dfe9845228eb3358813ea0813c6dced2429144b054c9a4e4"
+    },
+    {
+        "path":  "web/index.html",
+        "sha256":  "5f07ba8ee11155fd23913ad90619abed83a41e809373ef982b5b804864919178"
+    },
+    {
+        "path":  "web/offline-policy.mjs",
+        "sha256":  "b8fd569b354e771764dc9370f53149952b20f6d1b160edc9dca22d57a703eb73"
+    },
+    {
+        "path":  "web/package-lock.json",
+        "sha256":  "209ddfca4094204cd89e655b71fdaa5b8f09089bf413dbeba643b3fcb6c6bc3e"
+    },
+    {
+        "path":  "web/package.json",
+        "sha256":  "933f33ec371679c9d73566603d5a069e5ee8839fbf200e790aebe3441abd9d26"
+    },
+    {
+        "path":  "web/src/AnalysisWorkspace.tsx",
+        "sha256":  "7eec8408d78e054ba88b2d400d978c4f6171ee9ff49aa52f545d3c7e6fdd023a"
+    },
+    {
+        "path":  "web/src/App.tsx",
+        "sha256":  "1ae69be3eec61b8f53b490ee60af1f88a3b28aacea930d892f1b9d235405a266"
+    },
+    {
+        "path":  "web/src/CodeBlockComposer.tsx",
+        "sha256":  "babfe07ebeee858162c81ea7f675d800cca4791cdae9bab94af9357a70d6ee70"
+    },
+    {
+        "path":  "web/src/CodeBlockGroupRelations.tsx",
+        "sha256":  "3fec44e8b5c6282a21de3d91e8ce7de8063a669e802efc0e0dc4dc4bfb7f8724"
+    },
+    {
+        "path":  "web/src/CodeBlockResultTree.tsx",
+        "sha256":  "329c11b635af8103457f2f5988a75cdf1379ec63d38c1935360d1e40cf077566"
+    },
+    {
+        "path":  "web/src/CodeBlockWorkspace.tsx",
+        "sha256":  "feb4c059ac44703985dbfd4ac6caf914d50558e65fd539c4422e6f8ceeb8a9ee"
+    },
+    {
+        "path":  "web/src/CommitPicker.tsx",
+        "sha256":  "c8f41c7405c7f6483d969eca987f141c2691ad83907118b8c2cce40d55091dca"
+    },
+    {
+        "path":  "web/src/DiagramEditor.tsx",
+        "sha256":  "5460bbb3ea308f8664d3e4e04568d448c12deb631d1ed5e9200e1ac842e56107"
+    },
+    {
+        "path":  "web/src/DiagramExplanationPanel.tsx",
+        "sha256":  "f96017fa01c98a9f115ec1a30536a61f6e831b97fe38c453d70811aa22727d3b"
+    },
+    {
+        "path":  "web/src/MermaidPreview.tsx",
+        "sha256":  "17ea8d7d56f05baff4b2c32543953bd0a570c4dfbb9150ec51bf5d757706a22d"
+    },
+    {
+        "path":  "web/src/PresetPicker.tsx",
+        "sha256":  "8325f167babd28b9dd90724bd7484803fdfb1a62df514971176ef7ae9f62e9e7"
+    },
+    {
+        "path":  "web/src/RepositoryRuleEditor.tsx",
+        "sha256":  "6b88702bcbed82d2880b16a68b2c86f7a5bd65f4e0ef1099bd8009ba9bad540c"
+    },
+    {
+        "path":  "web/src/ResultDetails.tsx",
+        "sha256":  "f0e976ffc69ff55bb4f0be776c195d7da621c551455ed9388edf52902cb0dc41"
+    },
+    {
+        "path":  "web/src/api.ts",
+        "sha256":  "fb46c40c5cb5a1dbcf9b5969dcfe83d52f8a8aa6157f6624060f903de3777fe8"
+    },
+    {
+        "path":  "web/src/codeBlockLimits.ts",
+        "sha256":  "558e577afdabfcb39b2c59d54602b86b2cc60322e676a15f154ffbe2e82b1777"
+    },
+    {
+        "path":  "web/src/codeBlockTypes.ts",
+        "sha256":  "bbc860dda6ab686e2f700faf8e0d7076986cee1ecd494774701721cf8d2cc8c5"
+    },
+    {
+        "path":  "web/src/codeBlockWorkspaceState.ts",
+        "sha256":  "b913acd05390621a31f4051dead69d8148a6346f1638c79717d4a821089e92ef"
+    },
+    {
+        "path":  "web/src/diagramInteraction.ts",
+        "sha256":  "e5c9f03bbcc7e7d3acb5631e898c18da0e3cfdcdf64a8957818eaa0ef3359c1c"
+    },
+    {
+        "path":  "web/src/main.tsx",
+        "sha256":  "ccbefe7be6c69706a1bb01c4c3f20492eb002435af6ba7e5a6d45f7c6aa3a140"
+    },
+    {
+        "path":  "web/src/mermaidDisplay.ts",
+        "sha256":  "ca5938fb04f089281b95b36fc1f755a6d2435ede4d378ad0d48ba953f8f2652e"
+    },
+    {
+        "path":  "web/src/mermaidSafety.ts",
+        "sha256":  "8a3055c7d240d1624a41733b28500670a00dd07d442c9384fcfee298d242f835"
+    },
+    {
+        "path":  "web/src/resultPresentation.ts",
+        "sha256":  "afa9e0b35551146e06d75dda72093e7a9541136f09975ef4a626be8f6880f59e"
+    },
+    {
+        "path":  "web/src/runtimeTypes.ts",
+        "sha256":  "98e2d7a5a6fac800499a668d280611f09733a18ae58749406643d3364037f319"
+    },
+    {
+        "path":  "web/src/styles.css",
+        "sha256":  "d1568b7d10813549f7439b8a7545359342de193da3dfdd77b4f189ff74416707"
+    },
+    {
+        "path":  "web/src/svgSafety.ts",
+        "sha256":  "0b18c80f937941a4e1f4096910ac6ab17629ea8c87e31591df5644601f654879"
+    },
+    {
+        "path":  "web/src/types.ts",
+        "sha256":  "38cf42dd1ad484bf6ca628b516861c346700a7ca0628081413b66882e21ae24a"
+    },
+    {
+        "path":  "web/src/useElapsedSeconds.ts",
+        "sha256":  "5b3e31deef19888c632bd27890cb979f82fdd48da534d79d06331143c1882ee8"
+    },
+    {
+        "path":  "web/test/codeBlockLimits.test.mjs",
+        "sha256":  "39beb9f4a8c299b612b03236825dfc7b25b3889f408ce29c67b2f5a040ac3636"
+    },
+    {
+        "path":  "web/test/codeBlockWorkspace.test.mjs",
+        "sha256":  "d526f513aca854dc4b100edf3cffe02d745af43fae47c0a00b82909cd3cae609"
+    },
+    {
+        "path":  "web/test/diagramInteraction.test.mjs",
+        "sha256":  "eef3d4faf36c5112712b6ed7ed6fff307107db177ce2b5ba44ea9e59f0ec5bfa"
+    },
+    {
+        "path":  "web/test/mermaidDisplay.test.mjs",
+        "sha256":  "95d59d38fbe07c8f99c86fdcd2efc4aa2881e105b18d077445531b2da20a3f87"
+    },
+    {
+        "path":  "web/test/mermaidSafety.test.mjs",
+        "sha256":  "d3f95e6da102260d364ba241b8dfe8bcbc79cb21481ec4da837a641ffbd418f4"
+    },
+    {
+        "path":  "web/test/offline-policy.test.mjs",
+        "sha256":  "74f8106aed5bdb0f2169f7ce3c7b45d47c91a4719dca4bb5e806d52623a54c90"
+    },
+    {
+        "path":  "web/test/resultPresentation.test.mjs",
+        "sha256":  "fb3739565a2be4e7646c9ae31a5a2665c201487fc258f6150ca3d19357661fe4"
+    },
+    {
+        "path":  "web/tsconfig.app.json",
+        "sha256":  "a7266d1c85fa6947c70073256d9a73e4c459e97b0b4ef24b5c48dcab498ef4c5"
+    },
+    {
+        "path":  "web/tsconfig.json",
+        "sha256":  "63f8a635ab43c96a202135ba7f4c46a50338620adbfbdb0767d2ed3032cadfa3"
+    },
+    {
+        "path":  "web/tsconfig.node.json",
+        "sha256":  "ddea85435a169b5dbf72e0f9f0b486ad882468619169bd62fb71d161c72727ac"
+    },
+    {
+        "path":  "web/vite.config.mjs",
+        "sha256":  "ed3c4ceee22b56030700d6941b530a8e9129aaab514f459404ff345b3d625765"
+    }
+]

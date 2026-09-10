@@ -72,7 +72,8 @@ public sealed record CodeBlockRun(Guid Id, Guid WorkspaceId, string OwnerUserId,
     IReadOnlyList<string>? Warnings = null, string? ErrorCode = null, string? ErrorMessage = null,
     IReadOnlyList<string>? RegenerateViewIds = null, bool QuestionsResolved = false,
     IReadOnlyList<SemanticCheckpoint>? Checkpoints = null, IReadOnlyList<LlmDiagnostic>? Diagnostics = null,
-    SemanticProgress? Execution = null, string? StopReason = null, Guid? SourceRunId = null)
+    SemanticProgress? Execution = null, string? StopReason = null, Guid? SourceRunId = null,
+    string? GenerationVersion = null)
 {
     [JsonIgnore] public bool IsTerminal => State is CodeBlockRunState.Completed or CodeBlockRunState.Partial
         or CodeBlockRunState.Failed or CodeBlockRunState.Cancelled;

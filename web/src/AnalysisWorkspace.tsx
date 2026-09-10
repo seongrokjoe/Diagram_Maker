@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, request } from "./api";
+import { SemanticProgressView } from "./SemanticProgressView";
 import { CommitPicker } from "./CommitPicker";
 import { DiagramEditor } from "./DiagramEditor";
 import { MermaidPreview } from "./MermaidPreview";
@@ -48,6 +49,8 @@ export function AnalysisWorkspace({ repositories, reportError }: {
   const [mergeIds, setMergeIds] = useState<string[]>([]);
   const [presets, setPresets] = useState<DiagramPreset[]>([]);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
+  const [openedPartial, setOpenedPartial] = useState("");
+  const resultsVisible = analysis && terminalStates.has(analysis.state) && (!analysis.stopReason || openedPartial === analysis.id);
   const [analysisHistory, setAnalysisHistory] = useState<AnalysisHistorySummary[]>([]);
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
   const [sourceAnalysis, setSourceAnalysis] = useState<AnalysisResponse | null>(null);
@@ -486,9 +489,11 @@ export function AnalysisWorkspace({ repositories, reportError }: {
         {!analysis && <EmptyState text={restoring ? "선택한 초안을 불러오는 중…" : "확인할 생성 이력이 없습니다."} />}
         {analysis && <>
         {!analysis.result && <><Progress value={analysis.progress} label={analysisRunning ? `${analysis.stageMessage} · ${analysisSeconds}초 경과` : analysis.stageMessage} />{analysisRunning && <button type="button" className="primary running-action" disabled>{elapsedLabel("다이어그램 생성 중", true, analysisSeconds)}</button>}{analysis.errorMessage && <div className="analysis-error"><strong>{analysis.errorCode}</strong><p>{analysis.errorMessage}</p><code>{analysis.id}</code></div>}</>}
-        {analysis.result && <AnalysisResultView analysis={analysis} activeGroup={activeResultGroup} setActiveGroup={setActiveResultGroup} activeView={activeResultView} setActiveView={setActiveResultView} reportError={reportError} presets={presets}
+        {!resultsVisible && <p role="status">{analysisRunning ? "모든 상세 페이지를 완성한 뒤 결과를 표시합니다. 완료된 작업은 계속 저장됩니다." : "생성이 중단되었습니다. 저장된 부분 결과를 확인하거나 이어서 생성할 수 있습니다."}</p>}
+        {!analysisRunning && !resultsVisible && analysis.result?.diagramGroups?.some(g => g.views?.some(v => v.document?.pages.length)) && <button onClick={() => setOpenedPartial(analysis.id)}>부분 결과 열기</button>}
+        {resultsVisible && analysis.result && <AnalysisResultView analysis={analysis} activeGroup={activeResultGroup} setActiveGroup={setActiveResultGroup} activeView={activeResultView} setActiveView={setActiveResultView} reportError={reportError} presets={presets}
           regeneratingViewId={busyAction.startsWith("view-regenerate-") ? busyAction.slice("view-regenerate-".length) : ""} onRegenerateView={regenerateView} />}
-        {analysis.execution && <p className="help">{analysis.stageMessage} · 완료 {analysis.execution.completedUnits}단위 · 재사용 {analysis.execution.reusedUnits}단위 · {analysis.execution.elapsedSeconds} / {analysis.execution.budgetSeconds}초</p>}
+        {analysis.execution && <SemanticProgressView value={analysis.execution} running={analysisRunning} />}
         {(analysis.canResume || analysisRunning) && <button type="button" onClick={() => void request<AnalysisResponse>(`/api/v1/analyses/${analysis.id}/${analysisRunning ? "cancel" : "resume"}`, {
           method: "POST", body: JSON.stringify({ expectedRevision: analysis.revision })
         }).then(setAnalysis).catch(error => reportError(error instanceof Error ? error.message : "실행 상태 변경 실패"))}>{analysisRunning ? "생성 취소" : "완료 단위부터 이어서 생성"}</button>}
