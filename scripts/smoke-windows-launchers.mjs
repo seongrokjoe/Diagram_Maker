@@ -35,13 +35,30 @@ const cases = [
   { name: 'optional launcher rejects missing explicit policy', script: 'start-with-network-policy.cmd', policyPath: path.join(fixture, 'missing.json'), match: /Optional network policy was not found/ },
 ];
 const checks = [];
+
+async function waitForLauncherPort() {
+  const deadline = Date.now() + 5000;
+  while (true) {
+    const probe = createServer();
+    try {
+      const listening = once(probe, 'listening');
+      probe.listen(5080, '127.0.0.1');
+      await listening;
+      await new Promise(resolve => probe.close(resolve));
+      return;
+    } catch (error) {
+      probe.close();
+      if (error.code !== 'EADDRINUSE' || Date.now() >= deadline) throw error;
+      // Windows may release the socket just after taskkill reports completion.
+      await delay(100);
+    }
+  }
+}
+
 try {
   for (const item of cases) {
     // Do not interfere with an existing local application using the launcher's port.
-    const probe = createServer();
-    probe.listen(5080, '127.0.0.1');
-    await once(probe, 'listening');
-    await new Promise(resolve => probe.close(resolve));
+    await waitForLauncherPort();
     await writeFile(defaultPolicy, item.defaultContent ?? approved);
     const child = spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/c', item.script], {
       cwd: app, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
@@ -70,13 +87,17 @@ try {
       }
       checks.push(item.name);
     } finally {
+      await writeFile(path.join(fixture, `${checks.length}-${item.script}.log`), output);
       // Kill only the process tree created by this case, including its API child.
       if (child.exitCode === null) {
         const stop = spawn('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
-        await once(stop, 'close');
+        const [exitCode] = await once(stop, 'close');
+        if (exitCode !== 0) {
+          child.stdout.destroy(); child.stderr.destroy(); child.unref();
+          throw new Error(`Could not stop test process tree ${child.pid}; taskkill exited ${exitCode}.`);
+        }
       }
       await closed;
-      await writeFile(path.join(fixture, `${checks.length}-${item.script}.log`), output);
     }
   }
   await writeFile(path.join(fixture, 'result.json'), JSON.stringify({ status: 'passed', checks, syntheticOnly: true }, null, 2));

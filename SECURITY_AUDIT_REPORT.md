@@ -1,18 +1,21 @@
 # 사내 LLM 시험용 Windows 배포 검증
 
-검증일: 2026-09-10. 배포 버전: `0.1.0-internal.3`.
-소스 커밋: `6b19242065bbbbd56bc45e83b382ad5f444473be`.
+검증일: 2026-09-10. 배포 버전: `0.1.0-internal.4`.
+패키지 소스 커밋: `a7b6ee36668e68a113a68be6263727f9f64e2fb8`.
 
-[ZIP](artifacts/release/DiagramMaker-0.1.0-internal.3-win-x64.zip) ·
-[SHA-256 파일](artifacts/release/DiagramMaker-0.1.0-internal.3-win-x64.zip.sha256).
-ZIP 크기는 94,119,000바이트이며 파일 1,816개를 포함한다.
-SHA-256: `fd7bc703dab5879711098662f61c1ac73950ac4fbd1efe170e562bc50b850068`.
+[ZIP](artifacts/release/DiagramMaker-0.1.0-internal.4-win-x64.zip) ·
+[SHA-256 파일](artifacts/release/DiagramMaker-0.1.0-internal.4-win-x64.zip.sha256).
+ZIP 크기는 94,119,889바이트이며 파일 1,817개를 포함한다.
+SHA-256: `6f4ca9c48e5e8e78b1a41fe290b326983b5f4676cace7b2014d388e829c0a62b`.
 
 코드 블럭 다이어그램과 그룹별 구성/결과 UI를 포함한 사내 전용 배포본이다.
-외부 추론 공급자와 샘플 실행 경로를 제거하고, 별도 네트워크 정책·비동기화 경로 검사,
-오프라인 의존성 복원과 라이선스 고지/SBOM 검사를 적용했다.
-기존 checkpoint와 cb.1/cb.2·offline.15/offline.16 ZIP은 이력으로 보존한다.
-과거 ZIP은 현재 사내 전용 배포 정책을 적용하기 전의 자료다.
+기본 실행에는 LLM 설정만 필요하며 추가 네트워크 허용목록은 관리자 선택 사항이다.
+이전 설치의 network-policy.json은 자동으로 읽지 않는다. 명시적으로 선택한 정책은
+파일 누락·오류·허용목록 위반 시 거부하며 기본 모드로 전환하지 않는다.
+외부 추론 공급자 제거, 비동기화 경로 검사, origin 일치, 프록시·리디렉션 차단,
+오프라인 의존성 복원과 라이선스 고지/SBOM 검사는 유지했다.
+사용자 승인에 따라 배포 폴더의 구버전 ZIP/SHA를 internal.4로 교체했다.
+기존 checkpoint와 커밋 이력은 보존한다.
 
 ## 로컬 검증
 
@@ -21,44 +24,50 @@ SHA-256: `fd7bc703dab5879711098662f61c1ac73950ac4fbd1efe170e562bc50b850068`.
 
 | 검사 | 결과 |
 | --- | --- |
-| .NET 회귀 | 163/163 통과 |
+| .NET 회귀 | 168/168 통과 |
 | Git/C++ 작업자 | 32/32 통과 |
-| 프런트엔드 | 44/44 통과 |
-| 라이선스/배포 정책 회귀 | 6/6 통과 |
-| 시작 정책 거부 | 5/5 통과 |
-| API | 코드 5종·Git 4종, 근거·답변·편집 충돌·삭제·소유자 검사 통과 |
+| 프런트엔드 | 45/45 통과 |
+| 라이선스/배포 정책 회귀 | 7/7 통과 |
+| 시작 정책 | 기본 실행·명시 정책·경로/origin 거부 11종 통과 |
+| API | 기본/선택 정책 각각 코드 5종·Git 4종, 근거·답변·편집 충돌·삭제·소유자 검사 통과 |
 | Edge UI | 그룹 옵션·결과 트리·키보드·과거 이력·URL 라벨·SVG/PNG 통과 |
 | 개발 고지 인벤토리 | npm 268, NuGet 24, SBOM 292 구성요소 |
-| Windows x64 빌드 | 작업자 32, web 44, TypeScript, 자체 포함 EXE, 고지 검사 통과 |
+| Windows x64 빌드 | 작업자 32, web 45, TypeScript, 자체 포함 EXE, 고지 검사 통과 |
 | 배포 고지 인벤토리 | npm 268, NuGet 11, Node 포함 SBOM 280 구성요소 |
 | 최종 패키지 API/렌더링 | 코드 5종·7페이지, C++ stdin, 기존 프리셋 4종 × 4개 폭 통과 |
 | 최종 패키지 UI | 그룹·복원·편집·키보드·5종 URL 라벨·SVG/PNG·3개 화면 폭 통과 |
-| 최종 패키지 LLM 전송 | 연결·DiagramIR·Thinking, 잘못된 JSON·리디렉션 거부 5종 통과 |
+| 최종 패키지 LLM 전송 | 기본/선택 정책 각각 연결·DiagramIR·Thinking, 잘못된 JSON·리디렉션 거부 5종 통과 |
+| 실제 CMD 실행기 | 기본 실행·선택 정책 적용·누락/오류 거부 6종 통과 |
 | ZIP 감사 | 전체 파일 바이트/체크섬/소스 일치, 실제 정책·런타임 데이터 없음 |
 
 패키지 manifest의 sourceTreeDirty는 false이며 소스 커밋은 위 SHA와 일치한다.
-임시 작업본의 검증 증적은 `artifacts/offline-preview-IgdXfH`, `artifacts/code-block-ui-bmv0yA`,
-`artifacts/packaged-llm-GjKh3r`, `artifacts/internal3-package-audit.json`에 남겼다.
+패키지 검사 증적은 `artifacts/internal4-validation/`에 복사했다. 원래 임시 작업본의 검사 ID는
+`offline-preview-lwwbr9`, `code-block-ui-pUFP61`, `packaged-llm-wc4eG1`(기본),
+`packaged-llm-q8DEFN`(선택 정책), `windows-launchers-PXf7KG`이며 ZIP 감사도 함께 보존했다.
 1440px 구성 화면과 390px 결과 화면도 직접 확인했다.
 
-전체 명령은 `scripts/verify.ps1`이다. 오프라인 npm ci 후 esbuild의 샌드박스 상위 경로
-접근 제한이 발생하여 동일 캐시로 `verify.ps1 -UseInstalledDependencies`를 확장 권한에서
-완료했다. 패키지는 `build-offline-win-x64.ps1 -Version '0.1.0-internal.3' -SkipTests`로
-빌드했다. 여기서 SkipTests는 이미 통과한 .NET 재실행만 생략하며 x64 worker/web 검사는 수행한다.
+전체 명령은 `powershell -ExecutionPolicy Bypass -File scripts/verify.ps1`이다.
+현재 소스와 일치하는 비동기화 작업본에서 기존 캐시로 오프라인 검증을 수행했다.
+최종 실행은 exit 0이며 로그는 `artifacts/internal4-validation/verify.log`에 보존했다.
+시작 정책은 `internal-policy-f4zeWT`, 기본/선택 정책 API는 `api-smoke-4cRlkv`와
+`api-smoke-V8wrzY`, UI는 `code-block-ui-6412sZ`에서 통과했다.
+패키지는 clean detached worktree에서
+`build-offline-win-x64.ps1 -Version '0.1.0-internal.4' -SkipTests`로 빌드했다.
+SkipTests는 이미 통과한 .NET 재실행만 생략하며 x64 worker/web 검사는 수행한다.
 
-이전 패키지 검사의 구형 버튼명과 빌드 계정 간 Git 메타데이터 조회 문제를 수정했다.
-Git 신뢰 설정은 검증된 작업 경로에 대한 개별 조회 명령에만 적용한다.
-
-소스와 ZIP/체크섬/이 보고서는 릴리스 커밋 `2d12cd3`으로 기존 `origin/main`에 푸시했다.
-GitHub의 파일 크기 권고 경고가 있었지만 일반 push는 exit 0으로 완료되었다.
+첫 clean checkout에서 Git autocrlf가 khroma 고지 바이트를 바꿔 해시 검사가 실패했다.
+`packaging/licenses/** -text`로 원본 고지 바이트를 보존해 해결했으며 검사 기준은 유지했다.
+CMD 검사에서 테스트 프로세스 종료 직후 Windows 포트 해제가 늦어지는 문제는
+최대 5초의 해제 대기로 해결했다. 이 수정은 패키지에 포함되지 않는 검사 스크립트에만 적용됐다.
 
 ## 사내 환경에서 시험하기
 
 1. ZIP과 SHA-256 파일을 함께 받아 해시를 비교하고 `C:\Tools\DiagramMaker` 같은 비동기화 폴더에 압축을 푼다.
-2. `configure-network.cmd`로 네트워크 정책을 준비한다. 배포/데이터/저장소/LLM 정책 폴더를 LocalRoots에,
-   승인된 LLM origin과 IP 범위를 LlmOrigins/LlmAddressRanges에 등록한다. 빈 예제는 실행을 거부한다.
-3. `configure-llm.cmd`에서 실제 Endpoint, AllowedOrigin, Model을 설정한다. 실제 설정 파일은 Git에 포함하지 않는다.
-4. `start.cmd` 실행 후 `health-check.cmd`, `test-llm.cmd` 순서로 검사한다.
+2. `configure-llm.cmd`에서 실제 Endpoint, AllowedOrigin, Model을 설정한다. 실제 설정 파일은 Git에 포함하지 않는다.
+3. `start.cmd` 실행 후 `health-check.cmd`, `test-llm.cmd` 순서로 검사한다. 별도 네트워크 JSON은 필요하지 않다.
+4. 관리자가 추가 허용목록을 적용할 경우에만 `configure-network.cmd`로 정책을 준비하고
+   `start-with-network-policy.cmd`로 실행한다. 배포/데이터/저장소/LLM 설정 경로와 승인된 LLM origin/IP를 등록한다.
+   `DIAGRAMMAKER_NETWORK_POLICY_PATH`에 절대 경로를 지정하면 `start.cmd`도 해당 정책을 적용한다.
 5. 코드 블럭 탭에서 합성 C/C++·C# 코드를 입력하고 의미 설명 완료 여부, 조건/반복/반환,
    블럭 간 호출, 단계별 원본 근거, 저장·새로고침·편집 이력을 확인한다.
 

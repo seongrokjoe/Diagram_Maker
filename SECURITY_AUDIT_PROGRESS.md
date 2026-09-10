@@ -14,6 +14,20 @@
 
 ## 검증 및 다음 작업
 
+- 2026-09-10 internal.4 최종 verify exit 0: .NET 168/worker 32/web 45/정책 7/시작 11,
+  기본·선택 정책 API(`api-smoke-4cRlkv`, `api-smoke-V8wrzY`), UI(`code-block-ui-6412sZ`) 통과.
+  실제 CMD 실행기 6종도 통과했다(`windows-launchers-PXf7KG`). Windows 포트 해제 지연을
+  검사 스크립트에서 최대 5초 기다리도록 보완했으며 배포 파일은 변경하지 않았다.
+  `artifacts/internal4-validation/`에 증적을 모으고 감사 보고서를 internal.4 기본/선택 실행에 맞췄다.
+  새 ZIP/SHA 복사 후 해시를 검증하고 승인된 구버전 배포 ZIP/SHA 10개를 제거했다.
+  최초 자동 승인 거부는 기존 승인 기록과 대상 모두 Git HEAD 내용에 일치함을 제시해 해소했다.
+  다음: 릴리스 커밋과 기존 origin/main push. 실제 사내 LLM/DB/호스트 검증은 별도 환경에서 수행한다.
+
+- 2026-09-10 재개: internal.4는 `a7b6ee3`, sourceTreeDirty=false로 이미 빌드됐다.
+  ZIP 1,817개/94,119,889바이트와 API/UI/기본·선택 정책 합성 LLM 검사가 통과했다.
+  실행기 검사만 첫 사례 후 EADDRINUSE로 실패했다. 현재 잔존 테스트 프로세스/5080 listener는 없다.
+  다음: 실행기 종료 및 포트 해제 검증 → 감사 보고서 갱신 → 승인된 구버전 ZIP/SHA 교체와 기존 origin push.
+
 - 2026-09-10 첫 clean worktree 빌드는 x64 worker 32/web 45/번들 통과 후 khroma 고지 비교에서
   실패했다. Git autocrlf가 검토 고지의 LF를 CRLF로 바꾼 것을 확인해 `packaging/licenses/** -text`
   속성을 추가한다. 라이선스 검사 기준은 완화하지 않는다. 다음: 보완 커밋/checkout 검증 후 재빌드.

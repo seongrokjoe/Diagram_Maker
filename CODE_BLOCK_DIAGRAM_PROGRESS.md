@@ -6,6 +6,22 @@
 
 ## 현재 상태
 
+- 2026-09-10 internal.4 최종 검증 완료. 전체 verify exit 0: .NET 168, worker 32, web 45,
+  정책 7, 시작 11종, 기본/선택 정책 API와 Edge UI(`code-block-ui-6412sZ`) 통과.
+  CMD 6종(`windows-launchers-PXf7KG`)은 프로세스 종료 후 포트 해제 대기로 통과했다.
+  패키지/API/UI/LLM 두 모드/ZIP 증적과 verify 로그를 `artifacts/internal4-validation/`에 보존했다.
+  배포 ZIP은 `a7b6ee3`, clean 소스, 1,817개/94,119,889바이트이며 SHA-256은
+  `6f4ca9c48e5e8e78b1a41fe290b326983b5f4676cace7b2014d388e829c0a62b`다.
+  승인된 구버전 ZIP/SHA 10개를 배포 폴더에서 제거하고 internal.4 ZIP/SHA로 교체했다.
+  자동 승인 검토의 최초 삭제 거부는 기록된 사용자 승인과 Git 보관/내용 일치 증거로 재검토 후 해소됐다.
+  다음: 최종 diff/배포 보고서 검토 → 릴리스 커밋 → 기존 origin/main 일반 push 및 일치 확인.
+
+- 2026-09-10 중단 세션 재개: `a7b6ee3`의 internal.4 패키지 빌드와 ZIP 감사,
+  API(`offline-preview-lwwbr9`), UI(`code-block-ui-pUFP61`), 기본/선택 정책 LLM 전송
+  (`packaged-llm-wc4eG1`, `packaged-llm-q8DEFN`) 통과 증적을 확인했다.
+  남은 실패는 CMD 실행기 검사의 첫 사례 종료 뒤 5080 포트 재사용 오류다.
+  기존 실행기 진단 수정은 보존한다. 다음: 실행기 재검증/종료 대기 보완 → 보고서/ZIP 교체 → origin push.
+
 - 2026-09-10 clean worktree 패키지 검사에서 Git autocrlf가 khroma 고지의 줄바꿈을 바꿔
   원본 패키지와 SHA가 달라진 문제를 확인했다. `.gitattributes`로 검토 고지 바이트를 보존한다.
   x64 worker 32/web 45 및 번들 빌드는 통과했다. 다음: 속성 보완 커밋 → clean checkout 고지 비교 → 재빌드.
@@ -97,12 +113,12 @@
 ## 재개 지점
 
 1. `git status --short`와 이 파일을 확인한다. checkpoint는 이미 origin/main에 저장됐다.
-2. 현재 상태와 변경 이력 맨 위를 확인한다. 그룹 UI 추가 개선과 로컬 검증/서버 적용은 완료했으므로
-   같은 작업을 반복하지 않는다. cb.2 ZIP은 이전 IMPLEMENT1 버전이며 이번 개선은 소스와 로컬 서버에 적용됐다.
-   현재 미해결 로컬 실패는 없다. 다음 구체 작업은 새 사용자 피드백이 오면 해당 개선,
-   또는 별도 배포 요청이 오면 새 버전 ZIP 빌드와 패키지 검증이다.
-   남은 외부 검증은 별도 범위다. 승인된 내부 LLM 정책 경로 또는 PostgreSQL 테스트 환경이
-   제공되면 해당 실연결 검증을 수행한다. 실제 내부 LLM 연결은 IMPLEMENT1 검증 범위에서 제외했다.
+2. 현재 상태 맨 위와 `SECURITY_AUDIT_PROGRESS.md`, `SECURITY_AUDIT_REPORT.md`를 확인한다.
+   현재 배포는 internal.4이며 기본 실행에는 LLM 설정만 필요하다. 구현/전체 verify/패키지 검사는 완료했다.
+   실행기 포트 해제 문제도 해결됐다. 커밋/푸시 여부는 맨 위의 최종 기록과 Git 상태로 확인한다.
+   구버전 ZIP/SHA는 사용자 승인으로 배포 폴더에서 제거했으며 Git 이력은 보존했다.
+   같은 구현/검증을 반복하지 않는다. 다음 제품 검증은 승인된 사내 LLM 연결/의미 품질 시험이다.
+   실제 내부 LLM 및 필요한 PostgreSQL 환경 검증은 별도 범위이며 환경이 제공되면 수행한다.
 3. 계획과 실제 구현 차이가 생기면 근거와 호환 영향을 기록한다.
 4. 각 단계의 실제 파일/검증 명령/결과/남은 작업을 아래 변경 이력에 기록한다.
 
