@@ -67,6 +67,9 @@ HTTP 취소·재개·중복 거부·진단 다운로드를 최종 전체 검증�
 이전 배포 ZIP/SHA 4개 삭제 내역은 [삭제 기록](artifacts/internal5-validation/removed-packages.json)에 있다.
 기존 소스 체크포인트와 커밋 이력은 보존한다.
 
+배포 커밋 `bdfe294ae29434f1785f6e4bae7ea04d4a430c5d`를 기존 `origin/main`에 일반 푸시했다.
+원격 SHA 일치와 해당 커밋의 배포 폴더에 internal.5 ZIP/SHA만 있음을 확인했다.
+
 ZIP을 OneDrive 등 동기화 경로 밖에 풀고 `configure-llm.cmd` → `start.cmd` 순서로 실행한다.
 패키지에 포함된 `OFFLINE_INSTALL_KO.txt`와 [INTERNAL_TEST_KO.txt](packaging/windows/INTERNAL_TEST_KO.txt)는
 설치, 고정 C#/C++ 코드, Thinking OFF 의미 품질, 큰 입력, 요약 공개, 이어하기와 진단 수집 절차를 제공한다.

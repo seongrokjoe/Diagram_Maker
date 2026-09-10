@@ -14,6 +14,11 @@
 
 ## 검증 및 다음 작업
 
+- 2026-09-10 internal.5 전달 완료: 배포 커밋 `bdfe294`의 기존 origin/main 일반 push exit 0과
+  원격 SHA 일치를 확인했다. 최신 배포 및 검증 증적은 `SEMANTIC_RELIABILITY_REPORT.md`에 있다.
+  사용자 승인대로 배포 폴더에는 internal.5 ZIP/SHA만 남겼고 기존 커밋 이력은 보존했다.
+  다음은 사내 환경의 실제 LLM 품질과 필요한 PostgreSQL 실연결 시험이다. 미해결 로컬 실패 없음.
+
 - 2026-09-10 internal.4 전달 완료: 릴리스 `7ae2a10`의 기존 origin/main 일반 push exit 0,
   `23c2409..7ae2a10` 갱신 확인. GitHub의 89.76 MB 파일 크기 권고 외 실패 없음.
   소스·ZIP/SHA·보고서와 구버전 배포 파일 정리를 원격에 반영했다. 기존 Git 이력은 보존했다.
