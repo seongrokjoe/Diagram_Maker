@@ -2,7 +2,7 @@
 // No corporate configuration or external endpoint is used.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertLocalPath } from "../tools/git-worker/local-security.mjs";
@@ -12,6 +12,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 assertLocalPath(root);
 await mkdir(path.join(root, "artifacts"), { recursive: true });
 const fixture = await mkdtemp(path.join(root, "artifacts/internal-policy-"));
+// Supply the web build produced by verify.ps1 on a clean checkout.
+await cp(path.join(root, "artifacts/verify-web-dist"),
+  path.join(root, "src/DiagramMaker.Api/bin/Release/net9.0/wwwroot"), { recursive: true });
 const policy = path.join(fixture, "network.json");
 const llm = path.join(fixture, "disabled-llm.json");
 const malformed = path.join(fixture, "malformed.json");
