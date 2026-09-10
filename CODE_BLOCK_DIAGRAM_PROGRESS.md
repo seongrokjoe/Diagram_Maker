@@ -6,6 +6,14 @@
 
 ## 현재 상태
 
+- 2026-09-10 **internal.4 배포 완료**. 릴리스 커밋 `7ae2a10`을 기존 `origin/main`에
+  일반 push했고 `23c2409..7ae2a10`, exit 0을 확인했다. ZIP 크기 권고 외 오류 없음.
+  최신 배포는 `artifacts/release/DiagramMaker-0.1.0-internal.4-win-x64.zip`과 SHA 파일이다.
+  기본 실행은 `configure-llm.cmd` → `start.cmd`, 추가 허용목록은 전용 실행기로 선택한다.
+  구현/전체 verify/패키지 API·UI·LLM 전송 두 모드/실행기/ZIP 검증 모두 완료. 미해결 로컬 실패 없음.
+  다음: 사내 비동기화 경로에서 실제 승인 LLM 연결·의미 품질 시험, 필요한 경우 PostgreSQL 검증.
+  실제 사내 LLM/DB 검증은 이번 합성 loopback 검사에 포함하지 않았다.
+
 - 2026-09-10 internal.4 최종 검증 완료. 전체 verify exit 0: .NET 168, worker 32, web 45,
   정책 7, 시작 11종, 기본/선택 정책 API와 Edge UI(`code-block-ui-6412sZ`) 통과.
   CMD 6종(`windows-launchers-PXf7KG`)은 프로세스 종료 후 포트 해제 대기로 통과했다.

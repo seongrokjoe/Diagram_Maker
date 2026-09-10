@@ -14,6 +14,11 @@
 
 ## 검증 및 다음 작업
 
+- 2026-09-10 internal.4 전달 완료: 릴리스 `7ae2a10`의 기존 origin/main 일반 push exit 0,
+  `23c2409..7ae2a10` 갱신 확인. GitHub의 89.76 MB 파일 크기 권고 외 실패 없음.
+  소스·ZIP/SHA·보고서와 구버전 배포 파일 정리를 원격에 반영했다. 기존 Git 이력은 보존했다.
+  다음은 사내 승인 LLM 연결/해석 품질과 필요한 DB/호스트 증적 확인이다. 미해결 로컬 실패 없음.
+
 - 2026-09-10 internal.4 최종 verify exit 0: .NET 168/worker 32/web 45/정책 7/시작 11,
   기본·선택 정책 API(`api-smoke-4cRlkv`, `api-smoke-V8wrzY`), UI(`code-block-ui-6412sZ`) 통과.
   실제 CMD 실행기 6종도 통과했다(`windows-launchers-PXf7KG`). Windows 포트 해제 지연을
