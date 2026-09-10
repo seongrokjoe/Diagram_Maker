@@ -45,12 +45,17 @@ public sealed class LlmOptions
     public int ConnectTimeoutSeconds { get; set; } = 120;
     public int NoResponseTimeoutSeconds { get; set; } = 120;
     public int RequestTimeoutSeconds { get; set; } = 300;
-    public int DiagramOutputTokens { get; set; } = 16_000;
-    public int ReviewOutputTokens { get; set; } = 8_000;
+    public int DiagramOutputTokens { get; set; } = 8_000;
+    public int ReviewOutputTokens { get; set; } = 2_000;
+    public int UnderstandingOutputTokens { get; set; } = 4_000;
+    public int MaxInputTokens { get; set; } = 200_000;
+    public int MaxContextTokens { get; set; } = 200_000;
+    public int SemanticJobBudgetSeconds { get; set; } = 900;
+    public bool UseServerTokenization { get; set; } = true;
     public double NaturalDiagramTemperature { get; set; } = 0;
     public int? NaturalDiagramSeed { get; set; }
     public int? ThinkingOutputTokens { get; set; }
     public int OutputHardLimit { get; set; } = 60_000;
-    public int MaxInputCharacters { get; set; } = 60_000;
+    public int MaxInputCharacters { get; set; } = 2_000_000;
     public int MaxTransientRetries { get; set; } = 1;
 }

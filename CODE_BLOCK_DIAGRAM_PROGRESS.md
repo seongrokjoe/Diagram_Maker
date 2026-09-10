@@ -6,6 +6,53 @@
 
 ## 현재 상태
 
+- 2026-09-10 사내 시험 배포 승인: 사용자가 시험 ZIP 생성, 이전 버전 ZIP 삭제, 커밋·푸시까지 명시적으로 지시했다.
+  이번 지시는 이전 ZIP 보존 조건보다 우선한다. 사내 LLM 실제 검증은 이 PC에서 계속 제외한다.
+  배포 버전을 `0.1.0-internal.5`로 정하고 설치/합성 코드/의미 품질·이어하기/진단 시험 안내를 포함한다.
+  다음: 소스 커밋 → 동일 커밋의 비동기화 clean 작업본에서 패키지 빌드·검증 → 구버전 ZIP/SHA 정리 → origin/main 푸시.
+
+- 2026-09-10 의미 분석 신뢰성 개선의 로컬 구현·검증·시험 패키지 완료.
+  `0.1.0-semantic.1` 빌드 exit 0. 실제 패키지 API/C/C++/5종/프리셋 검사 `offline-preview-dANhwV`,
+  Edge UI/편집/내보내기/진단 다운로드 `code-block-ui-ad8BZz`, loopback LLM 전송 기본·선택 정책
+  `packaged-llm-xLFYqo`/`packaged-llm-QSVnMb` 모두 통과했다. 추가 API 취소/재개·중복 거부도 통과.
+  ZIP 1,817개 파일/94,163,939바이트, SHA-256
+  `9f4df338eeaccdda0396d030c1fc119ddba4bc28fc25b8fe2a38b075d14f3966`.
+  시험 ZIP/SHA는 `artifacts/release/`, 증적은 `artifacts/semantic-validation/`에 보존했다.
+  소스 202개가 검증 작업본과 일치하고 ZIP 전체가 stage와 일치한다. 빌드 복사본의 `.git` 부재로
+  manifest sourceCommit은 unavailable이며, 소스 해시 목록으로 미커밋 시험 작업본임을 기록했다.
+  기준 `17106dd`와 internal.4 ZIP의 해시를 보존했다. 신규 커밋/푸시/기존 배포 교체는 하지 않았다.
+  상세 결과: `SEMANTIC_RELIABILITY_REPORT.md`. 미해결 로컬 실패 없음.
+  다음: 사내 환경에서 실제 LLM 품질·토큰·시간 검증, 필요한 경우 PostgreSQL 실연결·동시성 검증.
+  사용자 확정대로 사내 LLM 검증은 이 PC에서 수행하지 않으며 해당 항목을 미검증으로 유지한다.
+
+- 2026-09-10 의미 분석 개선 최종 전체 검증 exit 0: .NET 180/180, worker 32/32, web 46/46,
+  정책 회귀 7종, 시작 정책 11종, 기본/선택 정책 API, SVG 보안·색상 6종 및 Edge UI 통과.
+  로그: 비동기화 임시 작업본의 `artifacts/semantic-verify-final.log`, UI: `code-block-ui-gIbT6W`.
+  큰 함수의 분할/근거·한글/CRLF/이모지, 허용 심벌의 1회 추가 문맥, 출력 방식 협상/토큰 예산과
+  중단/재시작 후 완료 요청 재사용을 검증했다. 추가 문맥 회귀의 잘못된 테스트 분석기 선택을 수정했고,
+  SVG 허용 태그에 정상 sequence 정의인 symbol을 보존하여 모든 5종 렌더 검사를 통과했다.
+  다음: 추가 취소·재개 HTTP/진단 다운로드 회귀 → `0.1.0-semantic.1` 시험 ZIP과 실제 패키지 검사.
+  사내 실제 LLM 검증은 사용자 지시에 따라 이 PC에서 수행하지 않는다.
+
+- 2026-09-10 재개/안전성 회귀: .NET 173/173, web 46/46 및 프런트엔드 빌드 통과.
+  실제 VllmClient 전송 계층을 합성 HTTP 응답에 연결하여 요약 저장 → 예산 중단 → LocalFile 재시작 →
+  완료 요청 재호출 없이 나머지 생성, 소유자/중복 재개 거부를 검증했다. Git 작업에도 lease/CAS/갱신,
+  체크포인트·진단·부분 페이지 저장과 취소/재개를 연결했다. SVG 5종의 계산된 색/선·PNG 변환과
+  악성 CSS 제거 통과. CSS hex가 rgb로 정규화되는 테스트 비교 오류는 계산된 색상 비교로 수정했다.
+  다음: 큰 입력/전송 협상·분할 회귀 보완 → 최종 전체 verify(Edge 포함) → 새 시험용 ZIP/패키지 검사.
+
+- 2026-09-10 중단 작업 재개: `SEMANTIC_RELIABILITY_PLAN.md`와 기존 미커밋 구현을 확인하고 보존했다.
+  사용자가 이 PC에서는 사내 실제 LLM 검증이 불가능하다고 확정했다. 합성 검증/시험 ZIP과 실제 품질 검증을 구분한다.
+  코드 블럭 페이지별 저장, 900초 예산, 체크포인트 재사용/재개 API·UI, 원문 없는 진단 다운로드를 연결했다.
+  첫 검증의 명령 옵션/실행 정책·캐시 접근 문제를 수정하고 비동기화 임시 작업본에서 검증 중이다.
+  새 이해 토큰 기본값과 기존 낮은 출력 상한의 호환 오류를 보완한 .NET 168/168 통과.
+  다음: 재개/취소·큰 입력 회귀, Git 공통 진단/재개 연결, SVG 보안·페인트 검증, 전체 verify 및 시험 ZIP.
+
+- 2026-09-10 의미 분석 신뢰성 개선 구현 시작. 승인 계획은 `SEMANTIC_RELIABILITY_PLAN.md`.
+  기준 `17106dd` clean 상태와 internal.4 ZIP을 보존한다. 사내 LLM은 vLLM 입력 20만/출력 6만 토큰,
+  Thinking OFF. 입력 10만/100만 자, 요약 우선, 실행 15분/이어하기가 확정됐다.
+  다음: SVG 정제와 입력 제한 → 진단/LLM 상호작용 → 부분 저장/재개 → 전체 검증/시험 ZIP.
+
 - 2026-09-10 **internal.4 배포 완료**. 릴리스 커밋 `7ae2a10`을 기존 `origin/main`에
   일반 push했고 `23c2409..7ae2a10`, exit 0을 확인했다. ZIP 크기 권고 외 오류 없음.
   최신 배포는 `artifacts/release/DiagramMaker-0.1.0-internal.4-win-x64.zip`과 SHA 파일이다.

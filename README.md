@@ -1,7 +1,7 @@
 # AI Git Architecture Reviewer
 
-현재 사내 LLM 시험용 Windows 배포본은 [0.1.0-internal.4 ZIP](artifacts/release/DiagramMaker-0.1.0-internal.4-win-x64.zip)과
-[SHA-256](artifacts/release/DiagramMaker-0.1.0-internal.4-win-x64.zip.sha256)입니다.
+현재 사내 LLM 시험용 Windows 배포본은 [0.1.0-internal.5 ZIP](artifacts/release/DiagramMaker-0.1.0-internal.5-win-x64.zip)과
+[SHA-256](artifacts/release/DiagramMaker-0.1.0-internal.5-win-x64.zip.sha256)입니다.
 설정·검증 결과는 [배포 검증 보고서](SECURITY_AUDIT_REPORT.md)를 참조하세요.
 
 사내 Git 커밋의 변경 심볼과 중요한 호출 관계만 선별해 Mermaid 다이어그램으로 만드는 내부용 애플리케이션입니다. 외부 LLM fallback, CDN, telemetry, 임의 Git URL, 저장소 build·hook 실행은 지원하지 않습니다.
@@ -37,7 +37,13 @@
 
 내부 LLM이 활성화되면 코드 이해·종류 추천·의미 단계 계획·근거/제어 검증·의미 검토를 수행합니다. 비활성 또는 실패 시 정적 결과를 **의미 설명 미완료 / Partial**로 표시합니다. State는 같은 변수의 조건과 대입 근거가 필요하며 enum 이름만으로 생성하지 않습니다. 큰 입력은 함수별로 나누고 한 함수·제어 문맥이 모델 한도를 넘으면 원문을 자르지 않고 제한을 안내합니다.
 
-LLM 구성 여부와 실패 단계가 표시되며 미설정·요청 실패·검증 실패 결과는 완성 그림으로 열리지 않습니다. **정적 구조 열기**로 별도 확인할 수 있습니다. 이전 성공 그림은 재생성 실패에도 유지됩니다. 같은 분기의 연속 처리는 근거를 보존한 의미 단계로 묶고, 조건·반복·함수 경계를 넘는 묶음은 거부합니다. 코드 전용 `code-block-v2` / `code-block-semantic-v2`는 기존 결과 캐시와 구분합니다. 이번 개선은 합성 코드와 테스트 전용 가상 LLM으로 검증하며 실제 사내 모델 연결은 검증 범위에서 제외합니다.
+LLM 구성 여부와 실패 단계가 표시되며 미설정·요청 실패·검증 실패 결과는 완성 그림으로 열리지 않습니다. **정적 구조 열기**로 별도 확인할 수 있습니다. 이전 성공 그림은 재생성 실패에도 유지됩니다. 같은 분기의 연속 처리는 근거를 보존한 의미 단계로 묶고, 조건·반복·함수 경계를 넘는 묶음은 거부합니다. 코드 전용 `code-block-v2` / `code-block-semantic-v3`, Git `semantic-plan-v4`는 이전 의미 결과 캐시와 구분합니다. 실제 사내 모델 연결과 의미 품질은 별도 사내 검증 대상입니다.
+
+코드 입력 기본 한도는 블럭당 100,000자, 전체 1,000,000자, 최대 20개입니다. 화면은 서버의 한도를 표시하며 초과한 붙여넣기 원문도 보존합니다. 큰 함수는 원본 연결을 유지한 구간 페이지로 나누며 경계 노드에서 다음 구간을 열 수 있습니다. 필수 문맥은 함수 또는 완전한 구문과 제어 경계를 기준으로 분할합니다. 필요한 호출 문맥은 이미 입력된 코드의 확인된 관련 심벌에 한해 한 차례 요청하며 외부 파일을 읽지 않습니다. 더 나눌 수 없는 단일 구문은 한도 오류를 표시합니다.
+
+코드 블럭과 Git 생성은 검증된 요약 페이지부터 공개하고 완료 단위를 저장합니다. 기본 실행 예산은 900초이며 **생성 취소**와 **완료 단위부터 이어서 생성**을 제공합니다. 코드 블럭은 동일 입력의 새 실행으로 이어지고, Git은 고정 커밋의 동일 실행을 이어갑니다. 모델 설정·프롬프트·입력이 같을 때 완료한 단위를 재사용합니다. **작업 진단 다운로드**에는 단계, 전송 여부, 토큰 한도/사용량, 시간과 오류 코드만 들어가며 코드·프롬프트·모델 응답·서버 주소는 포함하지 않습니다.
+
+LLM 설정의 `MaxInputTokens`와 `MaxContextTokens` 기본값은 각각 200,000이고 `OutputHardLimit`은 60,000입니다. 입력과 출력 예약의 합계에 문맥 상한을 적용합니다. `UseServerTokenization`으로 서버의 토큰 계산을 시도하고 지원하지 않으면 보수적인 추정치를 표시합니다. `structured_outputs` 미지원이 명시된 경우에만 `response_format`을 시도하고, 둘 다 미지원이면 JSON 지시문을 사용하되 동일한 근거 검증을 수행합니다. Thinking 기본값은 계속 OFF입니다.
 
 URL과 `click`이 포함된 일반 라벨은 표시할 수 있습니다. 실행 가능한 링크·click 명령·설정 지시문은 차단하며 Mermaid strict와 SVG 정제를 유지합니다. 자동으로 링크가 된 표시 문자열은 링크 동작만 제거하고 글자는 보존합니다.
 
@@ -53,12 +59,12 @@ node scripts/smoke-code-block-ui.mjs
 Windows 패키지는 아래 명령으로 빌드하고 검사합니다. 빌드 스크립트는 같은 버전의 기존 ZIP을 덮어쓰지 않습니다. 검증 결과와 실제 내부 LLM/PostgreSQL 연결 검증 상태는 [진행 기록](CODE_BLOCK_DIAGRAM_PROGRESS.md)에 기록합니다.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1 -Version '0.1.0-internal.4'
-node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.4-win-x64
-node scripts/smoke-code-block-ui.mjs artifacts/stage/DiagramMaker-0.1.0-internal.4-win-x64
-node scripts/smoke-packaged-llm.mjs artifacts/stage/DiagramMaker-0.1.0-internal.4-win-x64
-node scripts/smoke-packaged-llm.mjs artifacts/stage/DiagramMaker-0.1.0-internal.4-win-x64 --basic
-node scripts/smoke-windows-launchers.mjs artifacts/stage/DiagramMaker-0.1.0-internal.4-win-x64
+powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1 -Version '0.1.0-internal.5'
+node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.5-win-x64
+node scripts/smoke-code-block-ui.mjs artifacts/stage/DiagramMaker-0.1.0-internal.5-win-x64
+node scripts/smoke-packaged-llm.mjs artifacts/stage/DiagramMaker-0.1.0-internal.5-win-x64
+node scripts/smoke-packaged-llm.mjs artifacts/stage/DiagramMaker-0.1.0-internal.5-win-x64 --basic
+node scripts/smoke-windows-launchers.mjs artifacts/stage/DiagramMaker-0.1.0-internal.5-win-x64
 ```
 
 ## 로컬 실행
@@ -152,12 +158,12 @@ Windows x64 오프라인 패키지 생성:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1
 ```
 
-패키징 기본 버전은 `0.1.0-internal.4`이며 출력은 `artifacts/release/DiagramMaker-0.1.0-internal.4-win-x64.zip`과 SHA-256 파일입니다. 기존 ZIP이 있으면 새 버전명을 지정해야 합니다. 실제 사내 LLM의 의미 품질은 사내 환경에서 별도로 확인해야 합니다.
+패키징 기본 버전은 `0.1.0-internal.5`이며 출력은 `artifacts/release/DiagramMaker-0.1.0-internal.5-win-x64.zip`과 SHA-256 파일입니다. 기존 ZIP이 있으면 새 버전명을 지정해야 합니다. 실제 사내 LLM의 의미 품질은 사내 환경에서 별도로 확인해야 합니다.
 
 승인된 Playwright를 미리 반입하고 패키징을 완료한 뒤 실제 배포 실행 파일의 오프라인 샘플을 검사할 수 있습니다.
 
 ```powershell
-node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.4-win-x64
+node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.5-win-x64
 ```
 
 격리된 메모리 저장소·동적 loopback 포트와 배포 start.cmd와 동일한 Development 환경에서 LLM과 개발용 생성 스텁을 끄고, 외부 페이지 요청과 생성 요청을 차단합니다. 배포 HTML/JS/CSS/Mermaid 파일의 SHA-256 일치와 4개 종류 × 4개 화면 폭의 모든 샘플을 확인합니다. 단계별 결과·파일 해시·스크린샷·서버 로그는 `artifacts/offline-preview-*/`에 저장합니다. 기존 운영 서버·저장 데이터·LLM 설정은 변경하지 않습니다.

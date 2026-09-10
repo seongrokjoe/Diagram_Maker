@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api } from "./api";
+import { api, request } from "./api";
 import { CommitPicker } from "./CommitPicker";
 import { DiagramEditor } from "./DiagramEditor";
 import { MermaidPreview } from "./MermaidPreview";
@@ -22,7 +22,7 @@ import type {
   Repository,
 } from "./types";
 
-const terminalStates = new Set(["Completed", "Partial", "Failed"]);
+const terminalStates = new Set(["Completed", "Partial", "Failed", "Cancelled"]);
 const diagramTypes: Array<{ value: DiagramType; label: string }> = [
   { value: "flowchart", label: "흐름 / 영향도" },
   { value: "sequence", label: "호출 시퀀스" },
@@ -488,6 +488,15 @@ export function AnalysisWorkspace({ repositories, reportError }: {
         {!analysis.result && <><Progress value={analysis.progress} label={analysisRunning ? `${analysis.stageMessage} · ${analysisSeconds}초 경과` : analysis.stageMessage} />{analysisRunning && <button type="button" className="primary running-action" disabled>{elapsedLabel("다이어그램 생성 중", true, analysisSeconds)}</button>}{analysis.errorMessage && <div className="analysis-error"><strong>{analysis.errorCode}</strong><p>{analysis.errorMessage}</p><code>{analysis.id}</code></div>}</>}
         {analysis.result && <AnalysisResultView analysis={analysis} activeGroup={activeResultGroup} setActiveGroup={setActiveResultGroup} activeView={activeResultView} setActiveView={setActiveResultView} reportError={reportError} presets={presets}
           regeneratingViewId={busyAction.startsWith("view-regenerate-") ? busyAction.slice("view-regenerate-".length) : ""} onRegenerateView={regenerateView} />}
+        {analysis.execution && <p className="help">{analysis.stageMessage} · 완료 {analysis.execution.completedUnits}단위 · 재사용 {analysis.execution.reusedUnits}단위 · {analysis.execution.elapsedSeconds} / {analysis.execution.budgetSeconds}초</p>}
+        {(analysis.canResume || analysisRunning) && <button type="button" onClick={() => void request<AnalysisResponse>(`/api/v1/analyses/${analysis.id}/${analysisRunning ? "cancel" : "resume"}`, {
+          method: "POST", body: JSON.stringify({ expectedRevision: analysis.revision })
+        }).then(setAnalysis).catch(error => reportError(error instanceof Error ? error.message : "실행 상태 변경 실패"))}>{analysisRunning ? "생성 취소" : "완료 단위부터 이어서 생성"}</button>}
+        <button type="button" onClick={() => void request(`/api/v1/analyses/${analysis.id}/diagnostics`).then(report => {
+          const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));
+          const link = document.createElement("a"); link.href = url; link.download = `analysis-${analysis.id}-diagnostics.json`; link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }).catch(error => reportError(error instanceof Error ? error.message : "진단 다운로드 실패"))}>작업 진단 다운로드</button>
         {terminalStates.has(analysis.state) && <button type="button" className="secondary" onClick={() => { if (analysis.result) setSourceAnalysis(analysis); if (plan) setGroups(plan.selections.map(normalizeGroup)); setCurrentStep(2); }}>선택 단계로 돌아가기</button>}
         </>}
       </section>}

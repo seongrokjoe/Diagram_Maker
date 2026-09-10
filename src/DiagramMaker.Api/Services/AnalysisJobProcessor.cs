@@ -1,5 +1,8 @@
 using DiagramMaker.Domain;
 using DiagramMaker.Storage;
+using DiagramMaker.Configuration;
+using Microsoft.Extensions.Options;
+using System.Text.Json;
 
 namespace DiagramMaker.Services;
 
@@ -11,11 +14,23 @@ public sealed class AnalysisJobProcessor(
     MermaidCompiler compiler,
     DiagramProjectionService projection,
     DiagramPresetCatalog presets,
-    ILogger<AnalysisJobProcessor> logger)
+    ILogger<AnalysisJobProcessor> logger,
+    IOptions<LlmOptions>? options = null)
 {
     public async Task ProcessAsync(AnalysisJob leasedJob, CancellationToken cancellationToken)
     {
         var currentJob = leasedJob;
+        var parentToken = cancellationToken;
+        SemanticExecution? execution = null;
+        execution = new SemanticExecution(options?.Value ?? new LlmOptions(), currentJob.Checkpoints, parentToken, async () =>
+        {
+            var latest = await store.GetAnalysisAsync(currentJob.Id, parentToken);
+            if (latest is null || latest.LeaseId != leasedJob.LeaseId) throw new OperationCanceledException();
+            currentJob = await UpdateAsync(latest with { Checkpoints = execution!.Checkpoints,
+                Diagnostics = execution.Diagnostics, Execution = execution.Progress }, parentToken);
+        }, currentJob.Diagnostics) { LeaseId = leasedJob.LeaseId };
+        using var executionScope = execution;
+        cancellationToken = execution.Token;
         try
         {
             var repository = await store.GetRepositoryAsync(currentJob.Request.RepositoryId, cancellationToken)
@@ -32,6 +47,9 @@ public sealed class AnalysisJobProcessor(
             }, cancellationToken);
 
             var deterministic = BuildDeterministicNarrative(graph, comparison.Files);
+            currentJob = await UpdateAsync(currentJob with { Result = new AnalysisResult(
+                comparison.Files.Select(file => file with { BeforeContent = null, AfterContent = null }).ToArray(),
+                graph, deterministic, [], [], []) }, cancellationToken);
             var narrative = deterministic;
             var warnings = deterministic.Warnings.ToList();
             var llmSucceeded = sourceResult is not null;
@@ -56,7 +74,7 @@ public sealed class AnalysisJobProcessor(
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {
-                    logger.LogWarning(exception,
+                    logger.LogWarning(
                         "Internal LLM review failed for analysis {AnalysisId}; deterministic results remain available.", currentJob.Id);
                     warnings.Add("내부 LLM 요약에 실패하여 정적 분석 요약을 표시합니다.");
                 }
@@ -118,14 +136,21 @@ public sealed class AnalysisJobProcessor(
                 LeaseUntil = null
             }, cancellationToken);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (execution.BudgetExpired)
+        {
+            var latest = await store.GetAnalysisAsync(currentJob.Id, parentToken);
+            if (latest is not null && latest.LeaseId == leasedJob.LeaseId && !InMemoryAppStore.IsAnalysisTerminal(latest.State))
+                await UpdateAsync(latest with { State = AnalysisState.Partial, StopReason = "budget", LeaseUntil = null,
+                    StageMessage = "실행 예산에 도달했습니다. 완료 단위를 재사용하여 이어서 생성할 수 있습니다." }, parentToken);
+        }
+        catch (OperationCanceledException)
         {
             throw;
         }
         catch (Exception exception)
         {
-            logger.LogError(exception, "Analysis {AnalysisId} failed at stage {State}.", currentJob.Id, currentJob.State);
-            await store.SaveAnalysisAsync(currentJob with
+            logger.LogError("Analysis {AnalysisId} failed at stage {State}.", currentJob.Id, currentJob.State);
+            await UpdateAsync(currentJob with
             {
                 State = AnalysisState.Failed,
                 Progress = 100,
@@ -183,7 +208,8 @@ public sealed class AnalysisJobProcessor(
             return (planComparison, plan.Graph, plan);
         }
 
-        var comparison = await git.CompareAsync(repository, job.Request, cancellationToken);
+        var comparison = await git.CompareAsync(repository, job.Request with { BaseRevision = job.BaseSha ?? job.Request.BaseRevision,
+            TargetRevision = job.TargetSha ?? job.Request.TargetRevision }, cancellationToken);
         await UpdateAsync(job with
         {
             State = AnalysisState.Indexing,
@@ -267,8 +293,8 @@ public sealed class AnalysisJobProcessor(
                 try { understanding = await llm.UnderstandChangesAsync(bundle, enableThinking, cancellationToken); }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {
-                    logger.LogWarning(exception, "Change understanding failed for group {GroupId}", group.Id);
-                    groupWarnings.Add("LLM 공통 변경 이해에 실패하여 코드 사실을 직접 사용합니다.");
+                    logger.LogWarning("Change understanding failed for group {GroupId}", group.Id);
+                    groupWarnings.Add(LlmFailure.Describe(exception));
                 }
             }
             var sourceViews = EffectiveResultViews(sourceGroup)
@@ -317,7 +343,7 @@ public sealed class AnalysisJobProcessor(
                         var pages = new List<DiagramPage>();
                         var instructionResults = new List<string>();
                         var attempts = 0;
-                        foreach (var page in document.Pages)
+                        foreach (var page in document.Pages.OrderBy(p => p.Id == document.OverviewPageId ? 0 : 1))
                         {
                             await ReportGenerationStageAsync(analysisId, $"{group.Title} · {page.Title}: 설계 및 의미 검증", cancellationToken);
                             var pageIr = page.Diagram.Ir;
@@ -332,8 +358,9 @@ public sealed class AnalysisJobProcessor(
                                 try
                                 {
                                     var previous = sourceView?.Document?.Pages.FirstOrDefault(item => item.Id == page.Id)?.Diagram.Ir;
-                                    var generated = await llm.PlanDiagramAsync(pageIr, bundle, understanding,
-                                        view with { Overrides = effectiveOptions }, previous, enableThinking, cancellationToken);
+                                    var generated = await SemanticExecution.RunAsync("git-page", JsonSerializer.Serialize(new { pageIr, bundle.Hash, understanding, view, effectiveOptions, previous, enableThinking }),
+                                        () => llm.PlanDiagramAsync(pageIr, bundle, understanding, view with { Overrides = effectiveOptions }, previous, enableThinking, cancellationToken),
+                                        value => value.Status == "Semantic");
                                     if (generated is not null)
                                     {
                                         if (generated.Status == "Semantic" && generated.Explanation is null)
@@ -352,9 +379,9 @@ public sealed class AnalysisJobProcessor(
                                 }
                                 catch (Exception exception) when (exception is not OperationCanceledException)
                                 {
-                                    logger.LogWarning(exception, "Diagram planning failed for view {ViewId}, page {PageId}", view.Id, page.Id);
+                                    logger.LogWarning("Diagram planning failed for view {ViewId}, page {PageId}", view.Id, page.Id);
                                     llmStatus = "Deterministic";
-                                    pageWarnings.Add("LLM 설계 중 오류가 발생하여 정적 결과를 표시합니다.");
+                                    pageWarnings.Add(LlmFailure.Describe(exception));
                                 }
                             }
                             else pageWarnings.Add("LLM이 비활성화되어 코드 구조만 표시합니다. LLM 연결 후 다시 그리기로 의미 설명을 생성할 수 있습니다.");
@@ -362,6 +389,14 @@ public sealed class AnalysisJobProcessor(
                             explanation = explanation with { Warnings = explanation.Warnings.Concat(pageWarnings).Distinct().ToArray() };
                             viewWarnings.AddRange(pageWarnings);
                             pages.Add(page with { Diagram = page.Diagram with { Ir = pageIr, MermaidDsl = compiler.Compile(pageIr), Explanation = explanation } });
+                            var pendingView = new AnalysisDiagramViewResult(view.Id, view, pages[0].Diagram, viewWarnings.ToArray(), "Generating",
+                                Document: document with { Pages = pages.ToArray() });
+                            var pendingGroup = new AnalysisDiagramGroupResult(group.Id, group.Title, group.ChangeIds, pages[0].Diagram,
+                                BuildGroupNarrative(group, graph, groupWarnings), groupWarnings.ToArray(), viewResults.Append(pendingView).ToArray(), understanding, bundle.Hash);
+                            var pendingJob = await store.GetAnalysisAsync(analysisId, cancellationToken);
+                            if (pendingJob?.Result is not null)
+                                await UpdateAsync(pendingJob with { Result = pendingJob.Result with { Diagrams = artifacts.Append(pages[0].Diagram).ToArray(),
+                                    DiagramGroups = groupResults.Append(pendingGroup).ToArray() } }, cancellationToken);
                         }
                         if (!llm.IsEnabled) viewWarnings.Add("LLM이 비활성화되어 정적 분석 결과를 표시합니다.");
                         document = DiagramDocumentBuilder.UpdateCoverage(document with { Pages = pages }, bundle);
@@ -391,7 +426,7 @@ public sealed class AnalysisJobProcessor(
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {
-                    logger.LogWarning(exception,
+                    logger.LogWarning(
                         "Diagram view {ViewId} ({DiagramType}/{PresetId}) in group {GroupId} was rejected for analysis {AnalysisId}.",
                         view.Id, view.DiagramType, view.PresetId, group.Id, analysisId);
                     var errorCode = exception is DiagramValidationException ? "DIAGRAM_INVALID" : "DIAGRAM_RENDER_FAILED";
@@ -418,7 +453,7 @@ public sealed class AnalysisJobProcessor(
     private async Task ReportGenerationStageAsync(Guid id, string stage, CancellationToken cancellationToken)
     {
         var current = await store.GetAnalysisAsync(id, cancellationToken);
-        if (current is not null) await store.SaveAnalysisAsync(current with { StageMessage = stage, UpdatedAt = DateTimeOffset.UtcNow }, cancellationToken);
+        if (current is not null) await UpdateAsync(current with { StageMessage = stage }, cancellationToken);
     }
 
     private static DiagramGenerationMetadata BuildGenerationMetadata(
@@ -471,8 +506,14 @@ public sealed class AnalysisJobProcessor(
 
     private async Task<AnalysisJob> UpdateAsync(AnalysisJob job, CancellationToken cancellationToken)
     {
-        var updated = job with { UpdatedAt = DateTimeOffset.UtcNow };
-        await store.SaveAnalysisAsync(updated, cancellationToken);
+        var latest = await store.GetAnalysisAsync(job.Id, cancellationToken);
+        var execution = SemanticExecution.Current;
+        if (latest is null || latest.LeaseId != job.LeaseId || latest.LeaseId != execution?.LeaseId || InMemoryAppStore.IsAnalysisTerminal(latest.State))
+            throw new OperationCanceledException();
+        var updated = job with { UpdatedAt = DateTimeOffset.UtcNow, Revision = latest.Revision + 1,
+            Checkpoints = execution?.Checkpoints ?? latest.Checkpoints, Diagnostics = execution?.Diagnostics ?? latest.Diagnostics,
+            Execution = execution?.Progress ?? latest.Execution };
+        if (!await store.UpdateAnalysisAsync(updated, latest.Revision, cancellationToken)) throw new OperationCanceledException();
         return updated;
     }
 

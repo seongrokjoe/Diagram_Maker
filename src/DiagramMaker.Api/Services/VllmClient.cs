@@ -4,6 +4,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using DiagramMaker.Configuration;
 using DiagramMaker.Security;
+using DiagramMaker.Domain;
+using System.Text;
 
 namespace DiagramMaker.Services;
 
@@ -17,7 +19,7 @@ public sealed class LlmClientException(
     int? requestedMaxOutputTokens = null,
     int? promptTokens = null,
     int? completionTokens = null,
-    int? totalTokens = null)
+    int? totalTokens = null, string? rejectedContent = null)
     : Exception(message, innerException)
 {
     public string Code { get; } = code;
@@ -28,6 +30,8 @@ public sealed class LlmClientException(
     public int? PromptTokens { get; } = promptTokens;
     public int? CompletionTokens { get; } = completionTokens;
     public int? TotalTokens { get; } = totalTokens;
+    // Transient repair context, never part of a log message or persisted diagnostic.
+    [System.Text.Json.Serialization.JsonIgnore] public string? RejectedContent { get; } = rejectedContent;
 }
 
 public sealed record VllmCompletionRequest(
@@ -49,7 +53,8 @@ public sealed record VllmCompletionResult(
     int RequestedMaxOutputTokens,
     int? PromptTokens,
     int? CompletionTokens,
-    int? TotalTokens);
+    int? TotalTokens,
+    string? OutputMode = null);
 
 public sealed class VllmClient : ILlmCompletionTransport, IDisposable
 {
@@ -59,6 +64,8 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
     private readonly ILogger<VllmClient>? _logger;
     private readonly HttpClient? _client;
     private readonly Uri? _endpoint;
+    private int tokenizationSupport;
+    private string outputMode = "structured_outputs";
 
     public VllmClient(LlmOptions options, ILogger<VllmClient>? logger = null, HttpMessageHandler? handler = null,
         ApprovedNetworkPolicy? networkPolicy = null)
@@ -87,6 +94,76 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
 
     public async Task<VllmCompletionResult> CompleteAsync(VllmCompletionRequest request, CancellationToken cancellationToken)
     {
+        var execution = SemanticExecution.Current;
+        var watch = Stopwatch.StartNew();
+        var diagnostic = new LlmDiagnostic(Guid.NewGuid().ToString("N"), execution?.Stage ?? "completion", execution?.UnitId ?? "",
+            "Preparing", DateTimeOffset.UtcNow, OutputLimit: request.MaxOutputTokens);
+        try
+        {
+            if (_client is null) throw new LlmClientException("LLM_DISABLED", "The internal LLM is disabled.");
+            var (tokens, exact) = await CountInputTokensAsync(request, cancellationToken);
+            diagnostic = diagnostic with { InputTokens = tokens, EstimatedInputTokens = !exact };
+            if (tokens > _options.MaxInputTokens || (long)tokens + request.MaxOutputTokens + 1024 > _options.MaxContextTokens)
+                throw new LlmClientException("LLM_INPUT_LIMIT", "Input and reserved output exceed the configured context budget.");
+            diagnostic = diagnostic with { State = "Running", Sent = true, OutputMode = outputMode };
+            if (execution is not null) await execution.RecordAsync(diagnostic);
+            var result = await CompleteCoreAsync(request, cancellationToken);
+            diagnostic = diagnostic with { State = result.FinishReason == "length" ? "Failed" : "Completed", PromptTokens = result.PromptTokens, CompletionTokens = result.CompletionTokens,
+                ErrorCode = result.FinishReason == "length" ? "LLM_RESPONSE_TRUNCATED" : null,
+                FinishReason = result.FinishReason is "stop" or "length" or "content_filter" ? result.FinishReason : "other",
+                OutputMode = result.OutputMode ?? (result.StructuredOutputApplied ? outputMode : "json_prompt"), Retries = result.RetryCount };
+            return result;
+        }
+        catch (Exception e)
+        {
+            diagnostic = diagnostic with { State = "Failed", ErrorCode = e is LlmClientException known ? known.Code : e is OperationCanceledException ? "CANCELLED" : "LLM_TRANSPORT" };
+            throw;
+        }
+        finally
+        {
+            if (execution is not null) await execution.RecordAsync(diagnostic with { ElapsedMilliseconds = watch.ElapsedMilliseconds });
+        }
+    }
+
+    private async Task<(int Tokens, bool Exact)> CountInputTokensAsync(VllmCompletionRequest request, CancellationToken cancellationToken)
+    {
+        var serialized = JsonSerializer.Serialize(new { request.SystemPrompt, request.UserPrompt, request.StructuredSchema }, PromptJson.Options);
+        if (SemanticExecution.Current is not null && _options.UseServerTokenization && tokenizationSupport >= 0 && _client is not null && _endpoint is not null)
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(10));
+            try
+            {
+                var path = _endpoint.AbsolutePath;
+                var suffix = "/v1/chat/completions";
+                var prefix = path.EndsWith(suffix, StringComparison.Ordinal) ? path[..^suffix.Length] : "";
+                var uri = new UriBuilder(_endpoint) { Path = prefix + "/tokenize", Query = "" }.Uri;
+                using var message = new HttpRequestMessage(HttpMethod.Post, uri) { Content = JsonContent.Create(new {
+                    model = _options.Model, messages = new[] { new { role = "system", content = request.SystemPrompt }, new { role = "user", content = request.UserPrompt } },
+                    add_generation_prompt = true, chat_template_kwargs = new { enable_thinking = request.EnableThinking }
+                }) };
+                using var response = await _client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+                if (response.IsSuccessStatusCode)
+                {
+                    using var json = JsonDocument.Parse(await ReadBoundedBodyAsync(await response.Content.ReadAsStreamAsync(timeout.Token), timeout.Token));
+                    if (json.RootElement.TryGetProperty("count", out var count) && count.TryGetInt32(out var tokens) && tokens >= 0)
+                    {
+                        tokenizationSupport = 1;
+                        // Schemas may be included by the serving template; reserve their bytes.
+                        return (tokens + Encoding.UTF8.GetByteCount(request.StructuredSchema?.GetRawText() ?? ""), !request.StructuredSchema.HasValue);
+                    }
+                }
+                tokenizationSupport = -1;
+            }
+            catch (Exception e) when (e is HttpRequestException or JsonException or OperationCanceledException or LlmClientException)
+            { cancellationToken.ThrowIfCancellationRequested(); tokenizationSupport = -1; }
+        }
+        // Deliberately conservative; never call this an exact token count.
+        return (Encoding.UTF8.GetByteCount(serialized), false);
+    }
+
+    private async Task<VllmCompletionResult> CompleteCoreAsync(VllmCompletionRequest request, CancellationToken cancellationToken)
+    {
         if (_client is null || _endpoint is null)
             throw new LlmClientException("LLM_DISABLED", "The internal LLM is disabled.");
         if (request.MaxOutputTokens is <= 0 || request.MaxOutputTokens > _options.OutputHardLimit)
@@ -101,14 +178,30 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
         var retryCount = 0;
         try
         {
-            var includeSchema = request.StructuredSchema.HasValue;
-            var initial = await SendWithRetryAsync(request, includeSchema, linkedSource.Token);
+            var mode = request.StructuredSchema.HasValue ? outputMode : "none";
+            var includeSchema = mode is "structured_outputs" or "response_format";
+            var initial = await SendWithRetryAsync(request, mode, linkedSource.Token);
             retryCount += initial.RetryCount;
             using var initialResponse = initial.Response;
 
-            if (includeSchema && IsStructuredUnsupported(initialResponse.StatusCode))
+            if (includeSchema && await IsStructuredUnsupportedAsync(initialResponse, linkedSource.Token))
             {
-                var fallback = await SendWithRetryAsync(request, includeSchema: false, linkedSource.Token);
+                if (mode == "structured_outputs")
+                {
+                    mode = "response_format";
+                    var alternative = await SendWithRetryAsync(request, mode, linkedSource.Token);
+                    using var alternativeResponse = alternative.Response;
+                    if (!await IsStructuredUnsupportedAsync(alternativeResponse, linkedSource.Token))
+                    {
+                        EnsureSuccess(alternativeResponse);
+                        var parsed = await ParseResponseAsync(alternativeResponse, linkedSource.Token);
+                        outputMode = mode;
+                        return new(parsed.Content, parsed.FinishReason, stopwatch.ElapsedMilliseconds, true, false,
+                            retryCount + alternative.RetryCount, request.MaxOutputTokens, parsed.PromptTokens, parsed.CompletionTokens, parsed.TotalTokens, mode);
+                    }
+                }
+                outputMode = "json_prompt";
+                var fallback = await SendWithRetryAsync(request, "json_prompt", linkedSource.Token);
                 retryCount += fallback.RetryCount;
                 using var fallbackResponse = fallback.Response;
                 EnsureSuccess(fallbackResponse);
@@ -117,7 +210,7 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
                 LogCompletion(correlationId, stopwatch.ElapsedMilliseconds, request.EnableThinking, retryCount, fallback: true);
                 return new VllmCompletionResult(fallbackContent.Content, fallbackContent.FinishReason,
                     stopwatch.ElapsedMilliseconds, false, true, retryCount, request.MaxOutputTokens,
-                    fallbackContent.PromptTokens, fallbackContent.CompletionTokens, fallbackContent.TotalTokens);
+                    fallbackContent.PromptTokens, fallbackContent.CompletionTokens, fallbackContent.TotalTokens, "json_prompt");
             }
 
             EnsureSuccess(initialResponse);
@@ -126,7 +219,7 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
             LogCompletion(correlationId, stopwatch.ElapsedMilliseconds, request.EnableThinking, retryCount, fallback: false);
             return new VllmCompletionResult(content.Content, content.FinishReason,
                 stopwatch.ElapsedMilliseconds, includeSchema, false, retryCount, request.MaxOutputTokens,
-                content.PromptTokens, content.CompletionTokens, content.TotalTokens);
+                content.PromptTokens, content.CompletionTokens, content.TotalTokens, mode);
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested && timeoutSource.IsCancellationRequested)
         {
@@ -135,14 +228,14 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
     }
 
     private async Task<(HttpResponseMessage Response, int RetryCount)> SendWithRetryAsync(
-        VllmCompletionRequest request, bool includeSchema, CancellationToken cancellationToken)
+        VllmCompletionRequest request, string mode, CancellationToken cancellationToken)
     {
         var retries = 0;
         while (true)
         {
             try
             {
-                using var message = CreateRequest(request, includeSchema);
+                using var message = CreateRequest(request, mode);
                 var response = await _client!.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 if (IsTransient(response.StatusCode) && retries < _options.MaxTransientRetries)
                 {
@@ -166,7 +259,7 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
         }
     }
 
-    private HttpRequestMessage CreateRequest(VllmCompletionRequest request, bool includeSchema)
+    private HttpRequestMessage CreateRequest(VllmCompletionRequest request, string mode)
     {
         object[] messages = string.IsNullOrWhiteSpace(request.SystemPrompt)
             ? [new { role = "user", content = request.UserPrompt }]
@@ -179,8 +272,13 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
             ["stream"] = false,
             ["chat_template_kwargs"] = new { enable_thinking = request.EnableThinking }
         };
-        if (includeSchema && request.StructuredSchema.HasValue)
-            payload["structured_outputs"] = new { json = request.StructuredSchema.Value };
+        if (request.StructuredSchema.HasValue && mode is "structured_outputs" or "response_format")
+        {
+            if (mode == "response_format") payload["response_format"] = new { type = "json_schema", json_schema = new { name = "diagram_result", schema = request.StructuredSchema.Value } };
+            else payload["structured_outputs"] = new { json = request.StructuredSchema.Value };
+        }
+        else if (request.StructuredSchema.HasValue)
+            payload["messages"] = new[] { new { role = "system", content = request.SystemPrompt + "\nReturn one JSON object matching this schema:\n" + request.StructuredSchema.Value.GetRawText() }, new { role = "user", content = request.UserPrompt } };
         if (request.Temperature.HasValue) payload["temperature"] = request.Temperature.Value;
         if (request.Seed.HasValue) payload["seed"] = request.Seed.Value;
 
@@ -263,15 +361,25 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
             throw new LlmClientException("LLM_REDIRECT_BLOCKED", "The internal LLM returned a redirect, which is not permitted.");
         if (!response.IsSuccessStatusCode)
             throw new LlmClientException($"LLM_HTTP_{(int)response.StatusCode}",
-                $"The internal LLM returned HTTP {(int)response.StatusCode} {response.ReasonPhrase}.");
+                $"The internal LLM returned HTTP {(int)response.StatusCode}.");
     }
 
     private static bool IsTransient(HttpStatusCode statusCode) => statusCode is
         HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests or HttpStatusCode.BadGateway or
         HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout;
 
-    private static bool IsStructuredUnsupported(HttpStatusCode statusCode) => statusCode is
-        HttpStatusCode.BadRequest or HttpStatusCode.NotFound or HttpStatusCode.UnprocessableEntity or HttpStatusCode.NotImplemented;
+    private async Task<bool> IsStructuredUnsupportedAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        if (response.IsSuccessStatusCode) return false;
+        if (response.StatusCode is not (HttpStatusCode.BadRequest or HttpStatusCode.UnprocessableEntity or HttpStatusCode.NotImplemented)) return false;
+        var bytes = await ReadBoundedBodyAsync(await response.Content.ReadAsStreamAsync(ct), ct);
+        var content = Encoding.UTF8.GetString(bytes);
+        // Do not emit a response body; it can contain source or internal addresses.
+        if (System.Text.RegularExpressions.Regex.IsMatch(content, "context.length|max_model_len|maximum context|too many tokens|input.*tokens.*exceed", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            throw new LlmClientException("LLM_CONTEXT_LIMIT", "The server rejected the context token budget.");
+        return System.Text.RegularExpressions.Regex.IsMatch(content, "structured_outputs|response_format|guided_json|json_schema", System.Text.RegularExpressions.RegexOptions.IgnoreCase) &&
+            System.Text.RegularExpressions.Regex.IsMatch(content, "unsupported|not supported|unrecognized|unknown|not permitted|extra inputs|not implemented", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
 
     private static TimeSpan GetRetryDelay(HttpResponseMessage response)
     {
@@ -302,7 +410,10 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
             options.DiagramOutputTokens > options.OutputHardLimit || options.ReviewOutputTokens is <= 0 ||
             options.ReviewOutputTokens > options.OutputHardLimit ||
             options.ThinkingOutputTokens is <= 0 || options.ThinkingOutputTokens > options.OutputHardLimit ||
-            options.MaxInputCharacters is <= 0 or > 200_000 ||
+            options.MaxInputCharacters is <= 0 or > 8_000_000 ||
+            options.MaxInputTokens is <= 0 or > 200_000 || options.MaxContextTokens is <= 0 or > 260_000 ||
+            options.SemanticJobBudgetSeconds is <= 0 or > 900 ||
+            options.UnderstandingOutputTokens is <= 0 or > 60_000 ||
             options.MaxTransientRetries is < 0 or > 3 || options.NaturalDiagramTemperature is < 0 or > 2)
             throw new InvalidOperationException("LLM limits are outside the permitted range.");
         return endpoint;

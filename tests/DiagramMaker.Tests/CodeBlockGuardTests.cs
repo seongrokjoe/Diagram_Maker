@@ -20,7 +20,7 @@ public sealed class CodeBlockGuardTests
     public async Task GuardPreservesAllAccessAndBodyLimitPaths(string path, string origin,
         bool development, bool readOnly, int status, bool passes, bool changesLimit)
     {
-        using var services = new ServiceCollection().AddSingleton<IWebHostEnvironment>(new TestEnvironment
+        using var services = new ServiceCollection().AddOptions().Configure<DiagramMaker.Configuration.CodeBlockOptions>(o => o.MaximumRequestBytes = 8 * 1024 * 1024).AddSingleton<IWebHostEnvironment>(new TestEnvironment
             { EnvironmentName = development ? "Development" : "Production" }).BuildServiceProvider();
         var context = new DefaultHttpContext { RequestServices = services };
         context.Request.Path = path; context.Request.Scheme = "http"; context.Request.Host = new HostString("localhost:5080");
@@ -31,7 +31,7 @@ public sealed class CodeBlockGuardTests
         var passed = false;
         await CodeBlockEndpoints.GuardAsync(context, _ => { passed = true; return Task.CompletedTask; });
         Assert.Equal(status, context.Response.StatusCode); Assert.Equal(passes, passed);
-        Assert.Equal(changesLimit ? 2_000_000 : 100, limit.MaxRequestBodySize);
+        Assert.Equal(changesLimit ? 8 * 1024 * 1024 : 100, limit.MaxRequestBodySize);
     }
 
     private sealed class BodyLimit : IHttpMaxRequestBodySizeFeature

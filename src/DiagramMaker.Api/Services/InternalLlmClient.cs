@@ -60,7 +60,7 @@ public sealed partial class InternalLlmClient(
     ILlmCompletionTransport transport,
     StructuredLlmCompletion structured) : IInternalLlmClient
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions JsonOptions = PromptJson.Options;
     private static readonly JsonElement DiagramSchema = ParseSchema("""
         {
           "type": "object",

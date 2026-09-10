@@ -37,6 +37,8 @@ try {
     node scripts/smoke-diagram-api.mjs --basic
     Assert-LastExitCode 'basic mode synthetic loopback API regression'
     if (Test-Path -LiteralPath artifacts/ui-check/node_modules/playwright/package.json) {
+        node scripts/smoke-svg-safety.mjs
+        Assert-LastExitCode 'SVG paint preservation and security regression'
         node scripts/smoke-code-block-ui.mjs
         Assert-LastExitCode 'synthetic code block UI regression'
     } else { Write-Host 'Edge UI regression: NOT RUN (pre-provisioned Playwright is unavailable).' }

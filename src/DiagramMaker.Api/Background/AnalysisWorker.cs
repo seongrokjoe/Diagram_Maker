@@ -23,7 +23,11 @@ public sealed class AnalysisWorker(
 
                 using var scope = scopeFactory.CreateScope();
                 var processor = scope.ServiceProvider.GetRequiredService<AnalysisJobProcessor>();
-                await processor.ProcessAsync(job, stoppingToken);
+                using var work = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                var heartbeat = RenewAsync(job.Id, job.LeaseId!.Value, work);
+                try { await processor.ProcessAsync(job, work.Token); }
+                catch (OperationCanceledException) when (work.IsCancellationRequested) { }
+                finally { await work.CancelAsync(); try { await heartbeat; } catch (OperationCanceledException) { } }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -35,5 +39,13 @@ public sealed class AnalysisWorker(
                 await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
             }
         }
+    }
+
+    private async Task RenewAsync(Guid id, Guid leaseId, CancellationTokenSource work)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(10));
+        while (await timer.WaitForNextTickAsync(work.Token))
+            if (!await store.RenewAnalysisLeaseAsync(id, leaseId, TimeSpan.FromMinutes(5), work.Token))
+            { await work.CancelAsync(); return; }
     }
 }

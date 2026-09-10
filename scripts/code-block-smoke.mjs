@@ -12,6 +12,10 @@ export async function smokeCodeBlocks(request, poll) {
   const run = await poll(`/code-block-runs/${queued.id}`, ["Partial", "Completed"]);
   assert.equal(run.results[0].views.length, 5);
   assert.ok(!JSON.stringify(run).includes(source), "summaries omit source");
+  const diagnostic = await request(`/code-block-runs/${run.id}/diagnostics`);
+  assert.equal(diagnostic.version, 1);
+  assert.equal(diagnostic.id, run.id);
+  assert.ok(!JSON.stringify(diagnostic).includes(source) && !('checkpoints' in diagnostic), 'diagnostics omit code and checkpoints');
   for (const view of run.results[0].views) {
     assert.ok(view.pages.length, JSON.stringify(view));
     assert.equal(view.llmStatus, "Incomplete", "disabled LLM must not claim semantic success");
@@ -48,12 +52,18 @@ export async function smokeCodeBlocks(request, poll) {
     { id: "a", language: "csharp", title: "호출 조각", code: "void Run(){ Save(); }" }, { id: "b", language: "csharp", title: "저장 조각", code: "void Save(){}" }],
     groups: [{ id: "caller", title: "호출", blockIds: ["a"] }, { id: "callee", title: "저장", blockIds: ["b"] }] }, 201);
   const questionQueued = await request(`/code-block-workspaces/${ambiguous.id}/runs`, "POST", { expectedRevision: 1 }, 202);
-  const waiting = await poll(`/code-block-runs/${questionQueued.id}`, ["NeedsClarification"]);
+  let waiting = await poll(`/code-block-runs/${questionQueued.id}`, ["NeedsClarification"]);
   assert.equal(waiting.questions.length, 1); assert.equal(waiting.groups.length, 2);
+  const cancelled = await request(`/code-block-runs/${waiting.id}/cancel`, "POST");
+  assert.equal(cancelled.state, 'Cancelled'); assert.equal(cancelled.canResume, true);
+  const resumed = await request(`/code-block-runs/${waiting.id}/resume`, 'POST', { expectedRevision: cancelled.revision }, 202);
+  await request(`/code-block-runs/${waiting.id}/resume`, 'POST', { expectedRevision: cancelled.revision }, 409);
+  waiting = await poll(`/code-block-runs/${resumed.id}`, ['NeedsClarification']);
   const answered = await request(`/code-block-runs/${waiting.id}/answers`, "POST", { expectedInputRevision: 1, expectedRunRevision: waiting.revision, answers: [], skipRemaining: true }, 202);
   await poll(`/code-block-runs/${answered.id}`, ["Partial", "Completed"]);
   await request(`/code-block-runs/${waiting.id}/answers`, "POST", { expectedInputRevision: 1, expectedRunRevision: waiting.revision, answers: [], skipRemaining: true }, 409);
   await request(`/code-block-workspaces/${workspace.id}?expectedRevision=2`, "DELETE");
   await request(`/code-block-runs/${run.id}`, "GET", undefined, 404);
+  await request(`/code-block-runs/${run.id}/diagnostics`, "GET", undefined, 404);
   console.log("Code block API smoke passed: five formats, C/C++, immutable evidence, clarification/resume, edit conflicts and deletion.");
 }

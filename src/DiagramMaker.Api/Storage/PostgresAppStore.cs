@@ -163,7 +163,7 @@ public sealed partial class PostgresAppStore : IAppStore
             SELECT id, payload::text
             FROM analysis_jobs
             WHERE state = 'Queued'
-               OR (lease_until < now() AND state NOT IN ('Completed', 'Partial', 'Failed'))
+               OR (lease_until < now() AND state NOT IN ('Completed', 'Partial', 'Failed', 'Cancelled'))
             ORDER BY created_at
             FOR UPDATE SKIP LOCKED
             LIMIT 1
@@ -187,6 +187,7 @@ public sealed partial class PostgresAppStore : IAppStore
             Progress = 5,
             StageMessage = "Resolving immutable revisions",
             LeaseUntil = now.Add(leaseDuration),
+            LeaseId = Guid.NewGuid(), Revision = job.Revision + 1,
             UpdatedAt = now
         };
 

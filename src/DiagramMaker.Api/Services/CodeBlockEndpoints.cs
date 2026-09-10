@@ -25,7 +25,8 @@ public static class CodeBlockEndpoints
                 return;
             }
             var limit = context.Features.Get<IHttpMaxRequestBodySizeFeature>();
-            if (limit is { IsReadOnly: false }) limit.MaxRequestBodySize = 2_000_000;
+            if (limit is { IsReadOnly: false }) limit.MaxRequestBodySize = context.RequestServices
+                .GetRequiredService<Microsoft.Extensions.Options.IOptions<DiagramMaker.Configuration.CodeBlockOptions>>().Value.MaximumRequestBytes;
         }
         await next(context);
     }
@@ -83,6 +84,15 @@ public static class CodeBlockEndpoints
             HttpContext context, CodeBlockWorkspaceService service, CancellationToken ct) => Accepted(await service.AnswerAsync(id, request, Owner(context), ct)));
         api.MapPost("/code-block-runs/{id:guid}/cancel", async (Guid id, HttpContext context, CodeBlockWorkspaceService service, CancellationToken ct) =>
             Results.Ok(CodeBlockWorkspaceService.Summary(await service.CancelAsync(id, Owner(context), ct))));
+        api.MapPost("/code-block-runs/{id:guid}/resume", async (Guid id, ResumeSemanticRequest request, HttpContext context,
+            CodeBlockWorkspaceService service, CancellationToken ct) => Accepted(await service.ResumeAsync(id, request, Owner(context), ct)));
+        api.MapGet("/code-block-runs/{id:guid}/diagnostics", async (Guid id, HttpContext context,
+            CodeBlockWorkspaceService service, CancellationToken ct) =>
+        {
+            var run = await service.GetRunAsync(id, Owner(context), ct);
+            return Results.Ok(new { version = 1, run.Id, run.State, run.StopReason, run.Execution,
+                diagnostics = run.Diagnostics ?? [], checkpointCount = run.Checkpoints?.Count ?? 0 });
+        });
         api.MapGet("/code-block-runs/{id:guid}/groups/{groupId}/views/{viewId}/pages/{pageId}", async (Guid id,
             string groupId, string viewId, string pageId, HttpContext context, CodeBlockWorkspaceService service, CancellationToken ct) =>
             Results.Ok(CodeBlockWorkspaceService.Page(await service.GetRunAsync(id, Owner(context), ct), groupId, viewId, pageId)));

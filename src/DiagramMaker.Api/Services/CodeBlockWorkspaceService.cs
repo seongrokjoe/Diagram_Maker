@@ -107,10 +107,29 @@ public sealed partial class CodeBlockWorkspaceService(IAppStore store, IOptions<
         var run = await GetRunAsync(id, owner, cancellationToken);
         if (run.IsTerminal) return run;
         var cancelled = run with { State = CodeBlockRunState.Cancelled, Revision = run.Revision + 1,
-            UpdatedAt = DateTimeOffset.UtcNow, StageMessage = "사용자가 생성을 취소했습니다." };
+            UpdatedAt = DateTimeOffset.UtcNow, StageMessage = "사용자가 생성을 취소했습니다.", StopReason = "user-cancelled" };
         if (!await store.SaveCodeBlockRunAsync(cancelled, run.Revision, cancellationToken)) throw new CodeBlockConflictException("실행 상태가 바뀌었습니다. 다시 확인하세요.");
         return cancelled;
     }
+
+    public async Task<CodeBlockRun> ResumeAsync(Guid id, ResumeSemanticRequest request, string owner, CancellationToken cancellationToken)
+    {
+        var source = await GetRunAsync(id, owner, cancellationToken);
+        var workspace = await GetWorkspaceAsync(source.WorkspaceId, owner, cancellationToken);
+        if (!CanResume(source) || source.Revision != request.ExpectedRevision || workspace.Revision != source.InputRevision)
+            throw new CodeBlockConflictException("실행 또는 입력이 변경되었습니다. 최신 입력에서 다시 생성하세요.");
+        var now = DateTimeOffset.UtcNow;
+        var resumed = source with { Id = Guid.NewGuid(), Revision = 1, State = CodeBlockRunState.Queued,
+            StageMessage = "완료 단위를 재사용하여 이어서 생성합니다.", CreatedAt = now, UpdatedAt = now,
+            LeaseId = null, LeaseUntil = null, ErrorCode = null, ErrorMessage = null, StopReason = null,
+            SourceRunId = source.Id, Execution = null };
+        if (!await store.CreateCodeBlockRunAsync(resumed, cancellationToken))
+            throw new CodeBlockConflictException("이미 진행 중인 실행이 있거나 입력이 변경되었습니다.");
+        return resumed;
+    }
+
+    private static bool CanResume(CodeBlockRun run) => run.IsTerminal && run.State != CodeBlockRunState.Completed &&
+        (run.Checkpoints is { Count: > 0 } || run.StopReason is "budget" or "user-cancelled");
 
     public CodeBlockWorkspaceInput ValidateInput(CodeBlockWorkspaceInput input, bool forGeneration = false)
     {
@@ -174,7 +193,8 @@ public sealed partial class CodeBlockWorkspaceService(IAppStore store, IOptions<
             g.Views.Select(v => new CodeBlockViewSummary(v.ViewId, v.Selection, v.State,
                 v.Pages.Select(p => new CodeBlockPageSummary(p.Id, p.Title, p.Diagram.Id, p.Level ?? (p.Id == "overview" ? "summary" : "detail"),
                     p.BlockIds ?? g.BlockIds, p.SymbolIds, p.ResultKind ?? (p.Diagram.Explanation?.Status == "Semantic" ? "semantic" : "static"))).ToArray(), v.Warnings, v.ErrorMessage,
-                v.Reused, v.LlmStatus, v.FailureStage)).ToArray(), g.Availability)).ToArray(), run.Warnings ?? [], run.ErrorCode, run.ErrorMessage);
+                v.Reused, v.LlmStatus, v.FailureStage)).ToArray(), g.Availability)).ToArray(), run.Warnings ?? [], run.ErrorCode, run.ErrorMessage,
+        run.Execution, run.StopReason, CanResume(run));
 
     public static DiagramArtifact Page(CodeBlockRun run, string groupId, string viewId, string pageId) =>
         run.Results?.FirstOrDefault(g => g.GroupId == groupId)?.Views.FirstOrDefault(v => v.ViewId == viewId)?

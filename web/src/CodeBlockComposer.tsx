@@ -4,9 +4,10 @@ import { CodeBlockGroupRelations } from "./CodeBlockGroupRelations";
 import type { CodeBlockDraft, CodeBlockGroup, CodeBlockInput } from "./codeBlockTypes";
 import type { DiagramPreset, DiagramType } from "./types";
 import { mergeGroups, moveBlock, nextTitle, reorderGroupBlock, typeLabels } from "./codeBlockWorkspaceState";
+import type { CodeBlockLimits } from "./codeBlockLimits";
 
-export function CodeBlockComposer({ draft, groups, presets, onChange }: {
-  draft: CodeBlockDraft; groups: CodeBlockGroup[]; presets: DiagramPreset[]; onChange: (draft: CodeBlockDraft) => void;
+export function CodeBlockComposer({ draft, groups, presets, limits, onChange }: {
+  draft: CodeBlockDraft; groups: CodeBlockGroup[]; presets: DiagramPreset[]; limits: CodeBlockLimits; onChange: (draft: CodeBlockDraft) => void;
 }) {
   const [groupId, setGroupId] = useState(groups[0]?.id);
   const [opened, setOpened] = useState<Record<string, string | null>>({});
@@ -34,8 +35,8 @@ export function CodeBlockComposer({ draft, groups, presets, onChange }: {
   }
   return <div className="code-block-composer">
     <aside className="panel code-block-lists">
-      <div className="code-block-add-actions"><button type="button" onClick={addBlock} disabled={draft.blocks.length >= 20}>+ 블럭 추가</button>
-        <button type="button" onClick={addGroup} disabled={groups.length >= 20}>+ 그룹 추가</button></div>
+      <div className="code-block-add-actions"><button type="button" onClick={addBlock} disabled={draft.blocks.length >= limits.maximumBlocks}>+ 블럭 추가</button>
+        <button type="button" onClick={addGroup} disabled={groups.length >= limits.maximumBlocks}>+ 그룹 추가</button></div>
       <h3>그룹 <small>{groups.length}개</small></h3>
       <div className="code-block-list" aria-label="그룹 목록">{groups.map(g => <button type="button" key={g.id} className="code-block-list-item"
         aria-pressed={selectedGroup.id === g.id} onClick={() => setGroupId(g.id)}>
@@ -71,8 +72,10 @@ export function CodeBlockComposer({ draft, groups, presets, onChange }: {
               <label>언어<select aria-label="언어" value={block.language} onChange={e => updateBlock(block.id, { language: e.target.value as CodeBlockInput["language"] })}><option value="cpp">C/C++</option><option value="csharp">C#</option></select></label>
               <label>소속 그룹<select aria-label="블럭 그룹 이동" value={selectedGroup.id} onChange={e => move(block.id, groups.find(g => g.id === e.target.value)!)}>
                 {groups.map(g => <option key={g.id} value={g.id}>{g.title}</option>)}</select></label></div>
-            <label>코드<textarea aria-label="코드" className="code-block-source" rows={14} spellCheck={false} maxLength={20000} value={block.code}
-              placeholder="파일, 클래스, 함수 또는 함수 내부 구문을 붙여 넣으세요." onChange={e => updateBlock(block.id, { code: e.target.value })} /></label>
+            <label>코드<textarea aria-label="코드" className="code-block-source" rows={14} spellCheck={false} value={block.code}
+              aria-invalid={block.code.length > limits.maximumBlockCharacters}
+              placeholder="클래스, 함수 또는 함수 내부 코드를 붙여 넣으세요." onChange={e => updateBlock(block.id, { code: e.target.value })} /></label>
+            <p className={block.code.length > limits.maximumBlockCharacters ? "error" : "help"}>{block.code.length.toLocaleString()} / {limits.maximumBlockCharacters.toLocaleString()}자{block.code.length > limits.maximumBlockCharacters ? " · 한도 초과: 입력은 보존했습니다." : ""}</p>
             <label>설명 (선택)<input maxLength={2000} value={block.description ?? ""} onChange={e => updateBlock(block.id, { description: e.target.value })} /></label>
           </div>
         </section>)}

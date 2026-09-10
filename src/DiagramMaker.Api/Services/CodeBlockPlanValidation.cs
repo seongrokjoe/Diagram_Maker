@@ -30,6 +30,7 @@ internal static class CodeBlockPlanValidation
                 return "MissingOutcome";
             if (element.NodeIds.Count == 1) continue;
             if (candidate.Type != "flowchart" || values.Select(n => n.Group).Distinct().Count() != 1 ||
+                values.Select(n => n.DetailPageId).Distinct().Count() != 1 ||
                 values.Any(n => n.Group is null || n.Context is null || n.Kind is not ("operation" or "call" or "return")) ||
                 values.Take(values.Length - 1).Any(n => n.Kind == "return")) return "UnsafeAbstraction";
             if (values.Select(n => Scope(n.Context!)).Distinct().Count() != 1) return "CrossesControlBoundary";

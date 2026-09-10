@@ -155,6 +155,7 @@ api.MapGet("/runtime-info", (IServiceProvider services) => Results.Ok(new
     mode = "normal",
     llmProvider = "internal-vllm",
     llmConfigured = services.GetRequiredService<ILlmCompletionTransport>().IsEnabled,
+    codeBlockLimits = services.GetRequiredService<IOptions<CodeBlockOptions>>().Value,
     capabilities = new { thinkingControl = true, exactTokenLimit = true }
 }));
 
@@ -589,6 +590,31 @@ api.MapGet("/analyses/{id:guid}/groups/{groupId}/views/{viewId}/pages/{pageId}",
     return artifact is null ? Results.NotFound() : Results.Ok(artifact);
 });
 
+api.MapGet("/analyses/{id:guid}/diagnostics", async (Guid id, HttpContext context, IAppStore store, CancellationToken ct) =>
+{
+    var job = await AuthorizedJob(id, context, store, ct);
+    return job is null ? Results.NotFound() : Results.Ok(new { version = 1, job.Id, job.State, job.StopReason, job.Execution,
+        diagnostics = job.Diagnostics ?? [], checkpointCount = job.Checkpoints?.Count ?? 0 });
+});
+api.MapPost("/analyses/{id:guid}/cancel", async (Guid id, ResumeSemanticRequest request, HttpContext context, IAppStore store, CancellationToken ct) =>
+{
+    var job = await AuthorizedJob(id, context, store, ct);
+    if (job is null) return Results.NotFound();
+    if (job.Revision != request.ExpectedRevision) return Results.Conflict(new { error = "실행 상태가 변경되었습니다." });
+    var stopped = job with { State = AnalysisState.Cancelled, StopReason = "user-cancelled", Revision = job.Revision + 1,
+        StageMessage = "사용자가 생성을 취소했습니다.", UpdatedAt = DateTimeOffset.UtcNow, LeaseUntil = null };
+    return await store.UpdateAnalysisAsync(stopped, job.Revision, ct) ? Results.Ok(ToAnalysisResponse(stopped)) : Results.Conflict();
+});
+api.MapPost("/analyses/{id:guid}/resume", async (Guid id, ResumeSemanticRequest request, HttpContext context, IAppStore store, CancellationToken ct) =>
+{
+    var job = await AuthorizedJob(id, context, store, ct);
+    if (job is null) return Results.NotFound();
+    if (!CanResumeAnalysis(job) || job.Revision != request.ExpectedRevision) return Results.Conflict(new { error = "이어갈 실행 상태가 변경되었습니다." });
+    var resumed = job with { State = AnalysisState.Queued, Revision = job.Revision + 1, StopReason = null, ErrorCode = null, ErrorMessage = null,
+        StageMessage = "완료 단위를 재사용하여 이어서 생성합니다.", Execution = null, LeaseUntil = null, UpdatedAt = DateTimeOffset.UtcNow };
+    return await store.UpdateAnalysisAsync(resumed, job.Revision, ct) ? Results.Accepted($"/api/v1/analyses/{id}", ToAnalysisResponse(resumed)) : Results.Conflict();
+});
+
 api.MapGet("/analyses/{id:guid}/graph", async (Guid id, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
 {
     var job = await AuthorizedJob(id, context, store, cancellationToken);
@@ -645,7 +671,7 @@ api.MapGet("/analyses/{id:guid}/events", async (Guid id, HttpContext context, IA
             previous = job.State;
         }
 
-        if (job.State is AnalysisState.Completed or AnalysisState.Partial or AnalysisState.Failed) return;
+        if (job.State is AnalysisState.Completed or AnalysisState.Partial or AnalysisState.Failed or AnalysisState.Cancelled) return;
         await Task.Delay(TimeSpan.FromMilliseconds(750), cancellationToken);
     }
 });
@@ -1073,6 +1099,10 @@ static object ToAnalysisResponse(AnalysisJob job, bool includeGraph = true) => n
     job.TargetSha,
     job.Progress,
     job.StageMessage,
+    job.Revision,
+    job.Execution,
+    job.StopReason,
+    CanResume = CanResumeAnalysis(job),
     Result = job.Result is null
         ? null
         : includeGraph
@@ -1090,6 +1120,9 @@ static object ToAnalysisResponse(AnalysisJob job, bool includeGraph = true) => n
     job.CreatedAt,
     job.UpdatedAt
 };
+
+static bool CanResumeAnalysis(AnalysisJob job) => job.State is AnalysisState.Partial or AnalysisState.Failed or AnalysisState.Cancelled &&
+    (job.Checkpoints is { Count: > 0 } || job.StopReason is "budget" or "user-cancelled");
 
 static AnalysisHistorySummary ToAnalysisHistorySummary(AnalysisJob job)
 {

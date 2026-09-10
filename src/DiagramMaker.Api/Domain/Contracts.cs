@@ -14,7 +14,8 @@ public enum AnalysisState
     Rendering,
     Completed,
     Partial,
-    Failed
+    Failed,
+    Cancelled
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -145,7 +146,9 @@ public sealed record AnalysisJob(
     string? ErrorMessage,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    DateTimeOffset? LeaseUntil);
+    DateTimeOffset? LeaseUntil,
+    int Revision = 1, Guid? LeaseId = null, IReadOnlyList<SemanticCheckpoint>? Checkpoints = null,
+    IReadOnlyList<LlmDiagnostic>? Diagnostics = null, SemanticProgress? Execution = null, string? StopReason = null);
 
 public sealed record ChangedFile(
     string Path,

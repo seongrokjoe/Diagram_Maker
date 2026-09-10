@@ -94,6 +94,29 @@ public sealed class CodeBlockProjectionService(DiagramPresetCatalog presets)
             pages[0] = pages[0] with { SymbolIds = pages[1].SymbolIds };
             pages.RemoveAt(1);
         }
+        if (selection.DiagramType == "flowchart")
+        {
+            foreach (var large in pages.Where(p => p.Diagram.Nodes.Count > 400 || p.Diagram.Edges.Count > 450).ToArray())
+            {
+                var chunks = large.Diagram.Nodes.Chunk(150).ToArray();
+                var destinations = chunks.SelectMany((chunk, index) => chunk.Select(node => (node.Id, page: index == 0 ? large.Id : large.Id + "-" + (index + 1))))
+                    .ToDictionary(pair => pair.Id, pair => pair.page);
+                var replacements = new List<CodeBlockCandidatePage>();
+                for (var index = 0; index < chunks.Length; index++)
+                {
+                    var own = chunks[index].Select(n => n.Id).ToHashSet();
+                    var links = large.Diagram.Edges.Where(e => own.Contains(e.SourceId) || own.Contains(e.TargetId)).ToArray();
+                    var endpoints = links.SelectMany(e => new[] { e.SourceId, e.TargetId }).Concat(own).ToHashSet();
+                    var pageId = index == 0 ? large.Id : large.Id + "-" + (index + 1);
+                    var nodes = large.Diagram.Nodes.Where(n => endpoints.Contains(n.Id)).Select(n => n with
+                    { DetailPageId = own.Contains(n.Id) ? null : destinations[n.Id] }).ToArray();
+                    replacements.Add(large with { Id = pageId, Title = $"{large.Title} · {index + 1}/{chunks.Length}",
+                        Diagram = large.Diagram with { Nodes = nodes, Edges = links,
+                            Notes = large.Diagram.Notes.Append("큰 함수의 연속 구간입니다. 경계의 원본 노드를 선택하면 연결된 코드 구간을 열 수 있습니다.").ToArray() } });
+                }
+                var at = pages.IndexOf(large); pages.RemoveAt(at); pages.InsertRange(at, replacements);
+            }
+        }
         var pageIds = pages.Select(p => p.Id).ToHashSet();
         for (var i = 0; i < pages.Count; i++) pages[i] = pages[i] with
         {

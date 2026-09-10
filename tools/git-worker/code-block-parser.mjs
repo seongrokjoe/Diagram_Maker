@@ -21,7 +21,7 @@ function unreachable(node, declaration) {
 
 // web-tree-sitter's JavaScript binding exposes UTF-16 indices. No user paths,
 // includes, build commands or repository operations are accepted by this worker.
-export async function analyzeCodeBlocks(blocks, limits = { maximumBlocks: 20, maximumBlockCharacters: 20000, maximumTotalCharacters: 100000 }) {
+export async function analyzeCodeBlocks(blocks, limits = { maximumBlocks: 20, maximumBlockCharacters: 100000, maximumTotalCharacters: 1000000 }) {
   if (!Array.isArray(blocks) || blocks.length > limits.maximumBlocks || blocks.some(b => typeof b.code !== "string" || b.code.length > limits.maximumBlockCharacters) ||
     blocks.reduce((sum, b) => sum + b.code.length, 0) > limits.maximumTotalCharacters)
     throw new Error("INPUT_LIMIT");

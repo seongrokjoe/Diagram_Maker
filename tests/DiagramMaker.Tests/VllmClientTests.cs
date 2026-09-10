@@ -31,10 +31,11 @@ public sealed class VllmClientTests
     }
 
     [Fact]
-    public async Task FallsBackOnceWhenStructuredOutputsAreUnsupported()
+    public async Task NegotiatesStructuredModesOnlyWhenServerExplicitlyRejectsThem()
     {
         var handler = new QueueHandler(
-            new HttpResponseMessage(HttpStatusCode.UnprocessableEntity),
+            new HttpResponseMessage(HttpStatusCode.UnprocessableEntity) { Content = new StringContent("structured_outputs unsupported") },
+            new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent("response_format unsupported") },
             Response("fallback"));
         using var schemaDocument = JsonDocument.Parse("""{"type":"object"}""");
         using var client = CreateClient(handler);
@@ -44,9 +45,11 @@ public sealed class VllmClientTests
 
         Assert.True(result.StructuredOutputFallbackUsed);
         Assert.False(result.StructuredOutputApplied);
-        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(3, handler.Requests.Count);
         Assert.Contains("structured_outputs", handler.Requests[0].Body, StringComparison.Ordinal);
         Assert.DoesNotContain("structured_outputs", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.Contains("response_format", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("response_format", handler.Requests[2].Body, StringComparison.Ordinal);
         Assert.All(handler.Requests, request => Assert.Contains("\"enable_thinking\":true", request.Body, StringComparison.Ordinal));
     }
 
@@ -66,6 +69,44 @@ public sealed class VllmClientTests
         Assert.Equal("OK", result.Content);
         Assert.Equal(1, result.RetryCount);
         Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Theory]
+    [InlineData("ordinary validation failed", "LLM_HTTP_422")]
+    [InlineData("maximum context length exceeded", "LLM_CONTEXT_LIMIT")]
+    public async Task DoesNotDowngradeStructuredOutputForUnrelatedServerErrors(string body, string code)
+    {
+        var handler = new QueueHandler(new HttpResponseMessage(HttpStatusCode.UnprocessableEntity) { Content = new StringContent(body) });
+        using var client = CreateClient(handler);
+        using var schema = JsonDocument.Parse("""{"type":"object"}""");
+        var error = await Assert.ThrowsAsync<LlmClientException>(() => client.CompleteAsync(new("system", "user", 100, false, schema.RootElement), CancellationToken.None));
+        Assert.Equal(code, error.Code); Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task ServerTokenCountAllowsInputThatConservativeEstimateWouldReject()
+    {
+        var options = Options(); options.UseServerTokenization = true; options.MaxInputTokens = 25;
+        var handler = new QueueHandler(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"count\":20}") }, Response("OK"));
+        using var client = new VllmClient(options, handler: handler);
+        using var execution = new SemanticExecution(options, null, CancellationToken.None);
+        var result = await client.CompleteAsync(new("system", new string('a', 500), 100, false), CancellationToken.None);
+        Assert.Equal("OK", result.Content); Assert.Equal(2, handler.Requests.Count);
+        var diagnostic = Assert.Single(execution.Diagnostics);
+        Assert.Equal(20, diagnostic.InputTokens); Assert.False(diagnostic.EstimatedInputTokens); Assert.True(diagnostic.Sent);
+    }
+
+    [Fact]
+    public async Task SupportedAlternativeOutputModeIsRememberedForNextRequest()
+    {
+        var handler = new QueueHandler(new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent("structured_outputs unsupported") },
+            Response("OK"), Response("OK"));
+        using var client = CreateClient(handler);
+        using var schema = JsonDocument.Parse("""{"type":"object"}""");
+        await client.CompleteAsync(new("system", "user", 100, false, schema.RootElement), CancellationToken.None);
+        await client.CompleteAsync(new("system", "user", 100, false, schema.RootElement), CancellationToken.None);
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.Contains("response_format", handler.Requests[2].Body); Assert.DoesNotContain("structured_outputs", handler.Requests[2].Body);
     }
 
     [Fact]
@@ -102,7 +143,7 @@ public sealed class VllmClientTests
     }
 
     [Fact]
-    public async Task RepairsInvalidStructuredResponseWithoutRepeatingRawContent()
+    public async Task RepairsInvalidStructuredResponseWithRejectedContentAsUntrustedData()
     {
         const string rejected = "SENSITIVE_REJECTED_RAW_RESPONSE";
         var handler = new QueueHandler(Response(rejected), Response("{\"result\":\"valid\"}"));
@@ -117,7 +158,7 @@ public sealed class VllmClientTests
         Assert.True(result.RepairUsed);
         Assert.Equal("valid", result.Value.Result);
         Assert.Equal(2, handler.Requests.Count);
-        Assert.DoesNotContain(rejected, handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.Contains(rejected, handler.Requests[1].Body, StringComparison.Ordinal);
         Assert.Contains("MalformedJson", handler.Requests[1].Body, StringComparison.Ordinal);
     }
 

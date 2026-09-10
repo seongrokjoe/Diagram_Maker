@@ -14,7 +14,12 @@
     "NaturalDiagramSeed": null,
     "ThinkingOutputTokens": 60000,
     "OutputHardLimit": 60000,
-    "MaxInputCharacters": 60000,
+    "MaxInputCharacters": 2000000,
+    "MaxInputTokens": 200000,
+    "MaxContextTokens": 200000,
+    "UnderstandingOutputTokens": 4000,
+    "SemanticJobBudgetSeconds": 900,
+    "UseServerTokenization": true,
     "MaxTransientRetries": 1
   }
 }

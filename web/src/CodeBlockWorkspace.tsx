@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, request } from "./api";
 import { DiagramEditor } from "./DiagramEditor";
 import { CodeBlockComposer } from "./CodeBlockComposer";
+import { codeInputError, defaultCodeBlockLimits, type CodeBlockLimits } from "./codeBlockLimits";
 import { CodeBlockResultTree } from "./CodeBlockResultTree";
 import { initialDraft, normalizeDraft, isSemanticPage, typeLabels, type CodeBlockLocationSelection } from "./codeBlockWorkspaceState";
 import type { DiagramArtifact, DiagramEditPreview, DiagramPreset, DiagramRevisionRecord } from "./types";
@@ -22,6 +23,8 @@ export function CodeBlockWorkspace() {
   const [run, setRun] = useState<CodeBlockRun | null>(null);
   const [presets, setPresets] = useState<DiagramPreset[]>([]);
   const [llmConfigured, setLlmConfigured] = useState<boolean | null>(null);
+  const [limits, setLimits] = useState<CodeBlockLimits>(defaultCodeBlockLimits);
+  const inputError = codeInputError(draft, limits);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -43,7 +46,9 @@ export function CodeBlockWorkspace() {
   useEffect(() => {
     void refreshWorkspaces().catch(e => setError(errorOf(e)));
     void api.listPresets().then(setPresets).catch(e => setError(errorOf(e)));
-    void request<{ llmConfigured: boolean }>("/api/v1/runtime-info").then(r => setLlmConfigured(r.llmConfigured)).catch(() => setLlmConfigured(null));
+    void request<{ llmConfigured: boolean; codeBlockLimits?: CodeBlockLimits }>("/api/v1/runtime-info").then(r => {
+      setLlmConfigured(r.llmConfigured); if (r.codeBlockLimits) setLimits(r.codeBlockLimits);
+    }).catch(() => setLlmConfigured(null));
     const current = new URLSearchParams(window.location.search).get("codeWorkspace");
     if (current) void open(current, true); else setReady(true);
   }, [refreshWorkspaces]);
@@ -125,6 +130,9 @@ export function CodeBlockWorkspace() {
     });
   }
   async function save(): Promise<CodeBlockWorkspaceRecord> {
+    if (inputError) throw new Error(inputError);
+    if (new TextEncoder().encode(json({ input: draft, expectedRevision: workspace?.revision })).byteLength > limits.maximumRequestBytes)
+      throw new Error("저장 요청의 바이트 한도를 초과했습니다. 입력은 보존했습니다. 작업을 나누어 주세요.");
     if (!draft.title.trim()) { setTitleInvalid(true); setScreen("compose"); throw new Error("작업 제목을 입력하세요."); }
     if (workspace && !dirty && json(draft) === json(workspace.input)) return workspace;
     const record = await request<CodeBlockWorkspaceRecord>(workspace ? `/api/v1/code-block-workspaces/${workspace.id}` : "/api/v1/code-block-workspaces", {
@@ -160,7 +168,7 @@ export function CodeBlockWorkspace() {
       <div className="form-row"><label>저장한 작업<select aria-label="저장한 코드 작업" value={workspace?.id ?? "new"} disabled={busy} onChange={e => dirty ? setPendingOpen(e.target.value) : void open(e.target.value)}>
         <option value="new">새 작업</option>{workspaces.map(w => <option key={w.id} value={w.id}>{w.title} · {w.blockCount}개</option>)}</select></label>
         <button disabled={busy} onClick={() => dirty ? setPendingOpen("new") : void open("new")}>새 작업</button>
-        <button disabled={busy} onClick={() => void action(async () => { await save(); })}>초안 저장</button>
+        <button disabled={busy || Boolean(inputError)} onClick={() => void action(async () => { await save(); })}>초안 저장</button>
         <button disabled={busy || !workspace} onClick={() => setConfirmDelete(true)}>작업 삭제</button>
         <span className={llmConfigured === false ? "warning" : "help"}>{llmConfigured === null ? "LLM 구성 여부 확인 불가" : llmConfigured ? "LLM 구성됨" : "LLM 미설정 · 정적 구조만 제공"}</span></div>
       {pendingOpen && <div className="warning">저장하지 않은 초안이 있습니다. <button onClick={() => void action(async () => { await save(); await open(pendingOpen); })}>저장하고 열기</button>
@@ -171,7 +179,8 @@ export function CodeBlockWorkspace() {
       {error && <p className="error" role="alert">{error}</p>}{busy && <p role="status">작업을 처리하고 있습니다…</p>}
       <div className="form-row code-block-title-row"><label>작업 제목 (필수)<input ref={titleInput} aria-label="작업 제목" required aria-invalid={titleInvalid} disabled={busy} placeholder="코드 블럭 다이어그램" value={draft.title} maxLength={200}
         onChange={e => { setTitleInvalid(false); change({ ...draft, title: e.target.value }); }} /></label>
-        <p className="help">{dirty ? "저장하지 않은 초안" : workspace ? `저장됨 · 수정 ${workspace.revision}` : "새 초안"} · {draft.blocks.reduce((n, b) => n + b.code.length, 0).toLocaleString()} / 100,000자</p></div>
+        <p className="help">{dirty ? "저장하지 않은 초안" : workspace ? `저장됨 · 수정 ${workspace.revision}` : "새 초안"} · {draft.blocks.reduce((n, b) => n + b.code.length, 0).toLocaleString()} / {limits.maximumTotalCharacters.toLocaleString()}자</p></div>
+      {inputError && <p className="error" role="alert">{inputError}</p>}
       <div className="code-block-screen-tabs" role="tablist" aria-label="코드 작업 화면" onKeyDown={e => {
         if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
         e.preventDefault(); const next = e.key === "Home" ? "compose" : e.key === "End" ? "results" : screen === "compose" ? "results" : "compose";
@@ -182,12 +191,23 @@ export function CodeBlockWorkspace() {
       </div>
     </section>
     <fieldset id="code-panel-compose" role="tabpanel" aria-labelledby="code-tab-compose" className="code-block-controls" disabled={busy} hidden={screen !== "compose"}>
-      <CodeBlockComposer key={draftKey} draft={draft} groups={groups} presets={presets} onChange={change} />
-      <div className="code-block-generate-actions"><button className="primary code-block-generate" disabled={Boolean(running && !dirty)} onClick={() => void generate()}>다이어그램 생성</button></div>
+      <CodeBlockComposer key={draftKey} draft={draft} groups={groups} presets={presets} limits={limits} onChange={change} />
+      <div className="code-block-generate-actions"><button className="primary code-block-generate" disabled={Boolean(inputError || running && !dirty)} onClick={() => void generate()}>다이어그램 생성</button></div>
     </fieldset>
     {run && <section className="panel code-block-run-status" aria-label="생성 상태"><strong>{run.stageMessage}</strong>
       {!terminal(run.state) && <><progress max={100} value={run.progress} /><span> {run.progress}%</span><button disabled={busy} onClick={() => void action(async () => setRun(await request<CodeBlockRun>(`/api/v1/code-block-runs/${run.id}/cancel`, { method: "POST" })))}>생성 취소</button></>}
       {run.errorMessage && <p className="error">{run.errorMessage}</p>}
+      {run.execution && <p className="help">완료 {run.execution.completedUnits}단위 · 재사용 {run.execution.reusedUnits}단위 · 요청 {run.execution.requests}회 · {run.execution.elapsedSeconds} / {run.execution.budgetSeconds}초</p>}
+      {run.canResume && <button disabled={busy || dirty || Boolean(running) || run.inputRevision !== workspace?.revision} onClick={() => void action(async () => {
+        const resumed = await request<CodeBlockRun>(`/api/v1/code-block-runs/${run.id}/resume`, { method: "POST", body: json({ expectedRevision: run.revision }) });
+        selectRun(resumed); await refreshRuns(resumed.workspaceId);
+      })}>완료 단위부터 이어서 생성</button>}
+      <button disabled={busy} onClick={() => void action(async () => {
+        const report = await request(`/api/v1/code-block-runs/${run.id}/diagnostics`);
+        const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));
+        const link = document.createElement("a"); link.href = url; link.download = `code-block-${run.id}-diagnostics.json`; link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      })}>작업 진단 다운로드</button>
       {run.warnings.length > 0 && <details><summary>분석 안내 {run.warnings.length}건</summary><ul>{run.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></details>}
       {run.inputRevision !== workspace?.revision && <p className="warning">이 결과는 과거 입력의 고정 스냅샷입니다.</p>}
       {run.state === "NeedsClarification" && <div><h3>관계 확인</h3>{run.questions.map(q => <fieldset key={q.id}><legend>{q.prompt}</legend>

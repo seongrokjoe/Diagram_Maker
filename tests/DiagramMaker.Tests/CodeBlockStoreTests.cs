@@ -123,7 +123,7 @@ public sealed class CodeBlockStoreTests
         Assert.Throws<ArgumentException>(() => service.ValidateInput(Input() with { Relations = [new("r", "one", "one", "calls", "code", "spoof")] }));
         Assert.Throws<ArgumentException>(() => service.ValidateInput(Input() with { Groups = [new("g", "Group", ["foreign"])] }));
         Assert.Throws<ArgumentException>(() => service.ValidateInput(Input() with { Groups = [new("g", "Group", ["one"], [null!])] }));
-        Assert.Throws<ArgumentException>(() => service.ValidateInput(Input(new string('x', 20_001))));
+        Assert.Throws<ArgumentException>(() => service.ValidateInput(Input(new string('x', 100_001))));
         Assert.Throws<ArgumentException>(() => service.ValidateInput(Input() with { Blocks = [new("../path", "csharp", "Bad", "code")] }));
         var workspace = await service.CreateAsync(Input(""), "alice", Ct);
         await Assert.ThrowsAsync<ArgumentException>(() => service.StartAsync(workspace.Id, new(1), "alice", Ct));

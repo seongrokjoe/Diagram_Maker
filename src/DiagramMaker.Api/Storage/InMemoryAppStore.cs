@@ -59,7 +59,7 @@ public sealed partial class InMemoryAppStore : IAppStore
             var now = DateTimeOffset.UtcNow;
             var job = _analyses.Values
                 .Where(candidate => candidate.State == AnalysisState.Queued ||
-                                    (candidate.LeaseUntil < now && candidate.State is not AnalysisState.Completed and not AnalysisState.Partial and not AnalysisState.Failed))
+                                    (candidate.LeaseUntil < now && !IsAnalysisTerminal(candidate.State)))
                 .OrderBy(static candidate => candidate.CreatedAt)
                 .FirstOrDefault();
 
@@ -74,6 +74,7 @@ public sealed partial class InMemoryAppStore : IAppStore
                 Progress = 5,
                 StageMessage = "Resolving immutable revisions",
                 LeaseUntil = now.Add(leaseDuration),
+                LeaseId = Guid.NewGuid(), Revision = job.Revision + 1,
                 UpdatedAt = now
             };
             _analyses[leased.Id] = leased;

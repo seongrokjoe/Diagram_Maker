@@ -396,6 +396,10 @@ export type AnalysisHistorySummary = {
 export type AnalysisResponse = {
   id: string;
   state: string;
+  revision?: number;
+  canResume?: boolean;
+  stopReason?: string;
+  execution?: { stage: string; completedUnits: number; reusedUnits: number; requests: number; elapsedSeconds: number; budgetSeconds: number };
   baseSha?: string;
   targetSha?: string;
   progress: number;

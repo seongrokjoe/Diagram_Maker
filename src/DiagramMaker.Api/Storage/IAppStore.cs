@@ -9,6 +9,8 @@ public interface IAppStore : IAsyncDisposable, ICodeBlockStore
     Task<RepositoryDefinition?> GetRepositoryAsync(Guid id, CancellationToken cancellationToken);
     Task SaveRepositoryAsync(RepositoryDefinition repository, CancellationToken cancellationToken);
     Task SaveAnalysisAsync(AnalysisJob job, CancellationToken cancellationToken);
+    Task<bool> UpdateAnalysisAsync(AnalysisJob job, int expectedRevision, CancellationToken cancellationToken);
+    Task<bool> RenewAnalysisLeaseAsync(Guid id, Guid leaseId, TimeSpan duration, CancellationToken cancellationToken);
     Task<AnalysisJob?> GetAnalysisAsync(Guid id, CancellationToken cancellationToken);
     Task<IReadOnlyList<AnalysisJob>> ListAnalysesByPlanAsync(Guid planId, int limit, CancellationToken cancellationToken);
     Task<AnalysisJob?> TryLeaseAnalysisAsync(TimeSpan leaseDuration, CancellationToken cancellationToken);

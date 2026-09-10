@@ -11,5 +11,6 @@ export type CodeBlockView = { viewId: string; selection: DiagramViewSelection; s
   warnings: string[]; errorMessage?: string; reused: boolean; llmStatus: string; failureStage?: string };
 export type CodeBlockRun = { id: string; workspaceId: string; inputRevision: number; revision: number; state: string; progress: number; stageMessage: string;
   createdAt: string; groups: CodeBlockGroup[]; questions: CodeBlockQuestion[]; results: Array<{ groupId: string; title: string; blockIds: string[]; views: CodeBlockView[]; availability: DiagramAvailability[] }>;
-  warnings: string[]; errorMessage?: string };
+  warnings: string[]; errorMessage?: string; canResume?: boolean; stopReason?: string;
+  execution?: { stage: string; completedUnits: number; reusedUnits: number; requests: number; elapsedSeconds: number; budgetSeconds: number } };
 export type CodeBlockEvidence = { blockId: string; blockTitle: string; startLine: number; endLine: number; content: string; contentHash: string };

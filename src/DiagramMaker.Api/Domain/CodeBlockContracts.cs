@@ -49,7 +49,8 @@ public sealed record AnswerCodeBlockQuestionsRequest(int ExpectedInputRevision, 
     IReadOnlyList<CodeBlockAnswer> Answers, bool SkipRemaining = false);
 public sealed record CodeBlockBehavior(string Id, string Summary, IReadOnlyList<string> FactIds,
     IReadOnlyList<string> NodeIds, IReadOnlyList<string> EdgeIds);
-public sealed record CodeBlockUnderstanding(string Summary, string RecommendedType, IReadOnlyList<CodeBlockBehavior> Behaviors);
+public sealed record CodeBlockUnderstanding(string Summary, string RecommendedType, IReadOnlyList<CodeBlockBehavior> Behaviors,
+    IReadOnlyList<string>? RequestedSymbolIds = null);
 public sealed record CodeBlockSemanticElement(string Id, string Summary, IReadOnlyList<string> NodeIds,
     IReadOnlyList<string> FactIds, string Condition, string Outcome);
 public sealed record CodeBlockControlLabel(string Id, string Label);
@@ -69,7 +70,9 @@ public sealed record CodeBlockRun(Guid Id, Guid WorkspaceId, string OwnerUserId,
     IReadOnlyList<CodeBlockRelation>? Relations = null, IReadOnlyList<CodeBlockQuestion>? Questions = null,
     IReadOnlyList<CodeBlockAnswer>? Answers = null, IReadOnlyList<CodeBlockGroupResult>? Results = null,
     IReadOnlyList<string>? Warnings = null, string? ErrorCode = null, string? ErrorMessage = null,
-    IReadOnlyList<string>? RegenerateViewIds = null, bool QuestionsResolved = false)
+    IReadOnlyList<string>? RegenerateViewIds = null, bool QuestionsResolved = false,
+    IReadOnlyList<SemanticCheckpoint>? Checkpoints = null, IReadOnlyList<LlmDiagnostic>? Diagnostics = null,
+    SemanticProgress? Execution = null, string? StopReason = null, Guid? SourceRunId = null)
 {
     [JsonIgnore] public bool IsTerminal => State is CodeBlockRunState.Completed or CodeBlockRunState.Partial
         or CodeBlockRunState.Failed or CodeBlockRunState.Cancelled;
@@ -78,7 +81,8 @@ public sealed record CodeBlockRunSummary(Guid Id, Guid WorkspaceId, int InputRev
     CodeBlockRunState State, int Progress, string StageMessage, DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt, IReadOnlyList<CodeBlockGroupSelection> Groups,
     IReadOnlyList<CodeBlockQuestion> Questions, IReadOnlyList<CodeBlockGroupSummary> Results,
-    IReadOnlyList<string> Warnings, string? ErrorCode, string? ErrorMessage);
+    IReadOnlyList<string> Warnings, string? ErrorCode, string? ErrorMessage,
+    SemanticProgress? Execution = null, string? StopReason = null, bool CanResume = false);
 public sealed record CodeBlockPageSummary(string Id, string Title, Guid ArtifactId,
     string? Level = null, IReadOnlyList<string>? BlockIds = null, IReadOnlyList<string>? SymbolIds = null,
     string? ResultKind = null);

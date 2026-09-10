@@ -216,7 +216,7 @@ public sealed class CodeBlockPipelineTests
         return (input, graph, new CodeBlockProjectionService(new()).Build(graph, [], new("g", "source", ["a"]), new("v", "flowchart", "balanced"))[0].Diagram);
     }
     private static InternalLlmClient Client(LlmOptions options, ILlmCompletionTransport transport) => new(Options.Create(options), new(), new(), transport, new(transport));
-    private sealed class CodeTransport : ILlmCompletionTransport
+    internal sealed class CodeTransport : ILlmCompletionTransport
     {
         public bool Enabled { get; init; } = true;
         public bool IsEnabled => Enabled;

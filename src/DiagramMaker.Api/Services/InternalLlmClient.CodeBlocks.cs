@@ -5,7 +5,7 @@ namespace DiagramMaker.Services;
 
 public sealed partial class InternalLlmClient
 {
-    public const string CodeBlockPromptVersion = "code-block-semantic-v2";
+    public const string CodeBlockPromptVersion = "code-block-semantic-v3";
     private const string CodeBehaviorPolicy = EvidencePolicy +
         "This is pasted code behavior, with no Git history or changes. Explain preparation, core work, validation and error handling using actual arguments and assignments. " +
         "User relations are user assertions, not code proof or execution order. Missing context stays unknown. Preserve conditions, loops, early returns and failures. " +
@@ -15,6 +15,7 @@ public sealed partial class InternalLlmClient
     private static readonly JsonElement CodeUnderstandingSchema = ParseSchema("""
         {"type":"object","additionalProperties":false,"properties":{
           "summary":{"type":"string","maxLength":500},"recommendedType":{"type":"string"},
+          "requestedSymbolIds":{"type":["array","null"],"maxItems":8,"items":{"type":"string"}},
           "behaviors":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{
             "id":{"type":"string"},"summary":{"type":"string","maxLength":500},"factIds":{"type":"array","items":{"type":"string"}},
             "nodeIds":{"type":"array","items":{"type":"string"}},"edgeIds":{"type":"array","items":{"type":"string"}}},
@@ -46,30 +47,23 @@ public sealed partial class InternalLlmClient
         // Each function/type is a complete context unit. Never truncate a source body.
         foreach (var symbol in graph.Symbols.Where(s => group.BlockIds.Contains(s.BlockId) && (s.Steps.Count > 0 || s.OwnerId is null)))
         {
-            var block = input.Blocks.First(b => b.Id == symbol.BlockId);
-            var facts = symbol.Steps.Select(s => s.Id).Append(symbol.Id).ToHashSet();
-            var result = await structured.CompleteAsync<CodeBlockUnderstanding>(CodeBehaviorPolicy +
-                "Describe the supplied symbol's role with factIds. nodeIds and edgeIds must be empty. recommendedType may be empty in this phase.",
-                BoundedJson(new { block.Title, block.Description, block.Language, code = block.Code[symbol.Location.StartOffset..symbol.Location.EndOffset], symbol,
-                    relatedBlocks = input.Blocks.Where(b => group.BlockIds.Contains(b.Id) && b.Id != block.Id).Select(b => new { b.Id, b.Title, b.Description }),
-                    relations = graph.Relations.Where(r => r.FromSymbolId == symbol.Id || r.ToSymbolId == symbol.Id) }),
-                CodeUnderstandingSchema, GetOutputTokens(_options.DiagramOutputTokens, input.EnableThinking), input.EnableThinking,
-                value => value.Behaviors is not { Count: > 0 } || value.Behaviors.Any(b => string.IsNullOrWhiteSpace(b.Summary) ||
-                    b.FactIds is not { Count: > 0 } || b.FactIds.Any(id => !facts.Contains(id)) || b.NodeIds is not { Count: 0 } || b.EdgeIds is not { Count: 0 })
-                    ? "CodeUnderstandingEvidence" : null, cancellationToken, allowRepair: false);
-            behaviors.AddRange(result.Value.Behaviors);
+            behaviors.AddRange(await UnderstandCodeUnitAsync(input, graph, group, symbol, symbol.Steps, true, cancellationToken));
         }
         var recommendation = await structured.CompleteAsync<CodeBlockUnderstanding>(CodeBehaviorPolicy +
             "Summarize this group and recommend exactly one AVAILABLE diagram type. Same group does not imply a relationship. Return behaviors as an empty array.",
-            BoundedJson(new { group.Title, behaviors, availability, relations = graph.Relations.Where(r => group.BlockIds.Contains(r.FromBlockId) && group.BlockIds.Contains(r.ToBlockId)) }),
+            CodeContextJson(new { group.Title, behaviors, availability, relations = graph.Relations.Where(r => group.BlockIds.Contains(r.FromBlockId) && group.BlockIds.Contains(r.ToBlockId)) }),
             CodeUnderstandingSchema, GetOutputTokens(_options.ReviewOutputTokens, input.EnableThinking), input.EnableThinking,
-            value => string.IsNullOrWhiteSpace(value.Summary) || !availability.Any(a => a.Available && a.Type == value.RecommendedType)
+            value => value.RequestedSymbolIds is { Count: > 0 } || string.IsNullOrWhiteSpace(value.Summary) || !availability.Any(a => a.Available && a.Type == value.RecommendedType)
                 ? "UnavailableRecommendation" : null, cancellationToken, allowRepair: false);
         return recommendation.Value with { Behaviors = behaviors };
     }
 
-    public async Task<SemanticGeneration?> PlanCodeBlockDiagramAsync(DiagramIr candidate, CodeBlockWorkspaceInput input, CodeBlockGraph graph,
-        CodeBlockUnderstanding? understanding, DiagramViewSelection selection, CancellationToken cancellationToken)
+    public Task<SemanticGeneration?> PlanCodeBlockDiagramAsync(DiagramIr candidate, CodeBlockWorkspaceInput input, CodeBlockGraph graph,
+        CodeBlockUnderstanding? understanding, DiagramViewSelection selection, CancellationToken cancellationToken) =>
+        PlanCodeBlockCoreAsync(candidate, input, graph, understanding, selection, cancellationToken, false);
+
+    private async Task<SemanticGeneration?> PlanCodeBlockCoreAsync(DiagramIr candidate, CodeBlockWorkspaceInput input, CodeBlockGraph graph,
+        CodeBlockUnderstanding? understanding, DiagramViewSelection selection, CancellationToken cancellationToken, bool partial, bool forceSplit = false)
     {
         if (!IsEnabled) return null;
         var evidenceIds = candidate.Nodes.SelectMany(n => n.EvidenceIds).Concat(candidate.Edges.SelectMany(e => e.EvidenceIds)).ToHashSet();
@@ -78,15 +72,26 @@ public sealed partial class InternalLlmClient
         var symbols = graph.Symbols.Where(s => localFacts.Contains(s.Id) || s.Steps.Any(step => localFacts.Contains(step.Id)) ||
             s.Calls.Any(call => localFacts.Contains(call.Id)) || graph.Transitions.Any(t => t.SymbolId == s.Id && localFacts.Contains(t.Id))).ToArray();
         var functions = symbols.Select(s => { var b = input.Blocks.First(b => b.Id == s.BlockId); return new
-            { s.Id, s.BlockId, s.Name, s.Kind, s.Signature, s.Location, s.Calls, b.Title, b.Description, b.Language,
-                code = b.Code[s.Location.StartOffset..s.Location.EndOffset] }; }).ToArray();
-        var context = new { candidate, excerpts, functions, relations = graph.Relations.Where(r =>
+            { s.Id, s.BlockId, s.Name, s.Kind, s.Signature, s.Location,
+                calls = partial ? s.Calls.Where(call => localFacts.Contains(call.Id) || s.Steps.Any(step => localFacts.Contains(step.Id) &&
+                    step.Location.StartOffset <= call.Location.StartOffset && step.Location.EndOffset >= call.Location.EndOffset)).ToArray() : s.Calls,
+                b.Title, b.Description, b.Language,
+                code = partial ? null : b.Code[s.Location.StartOffset..s.Location.EndOffset], partialContext = partial,
+                sourceSegments = partial ? s.Steps.Where(step => localFacts.Contains(step.Id) || candidate.Edges.Any(e => (e.SourceFactIds ?? []).Contains(step.Id)))
+                    .Select(step => new { step.Id, step.Location, step.Statement, step.ControlPath, step.Definitions }).ToArray() : null }; }).ToArray();
+        var context = new { candidate, excerpts, functions, relatedSymbols = RelatedCodeSymbols(graph, symbols.Select(s => s.Id).ToArray()), relations = graph.Relations.Where(r =>
             symbols.Any(s => s.BlockId == r.FromBlockId || s.BlockId == r.ToBlockId)), understanding = understanding is null ? null : understanding with
             { Behaviors = understanding.Behaviors.Where(b => b.FactIds.Any(localFacts.Contains)).ToArray() }, selection };
-        try { BoundedJson(context); }
+        try
+        {
+            if (forceSplit) throw new DiagramGenerationException("EVIDENCE_INPUT_LIMIT", "문맥 분할이 필요합니다.");
+            CodeContextJson(context);
+        }
         catch (DiagramGenerationException)
         {
             var units = candidate.Nodes.GroupBy(n => n.Group ?? n.Id).Select(g => g.ToArray()).ToArray();
+            if (units.Length <= 1 && candidate.Nodes.Count > 1)
+                units = candidate.Nodes.Chunk((candidate.Nodes.Count + 1) / 2).ToArray();
             if (units.Length <= 1 || candidate.Type == "sequence")
                 return new SemanticGeneration(candidate, "Incomplete", ["의미 설명 미완료: 한 함수·제어 문맥이 LLM 입력 한도를 초과합니다. 원문을 자르지 않았습니다."], [], 0, FailureStage: "input-limit");
             var pieces = new List<SemanticGeneration>();
@@ -94,7 +99,7 @@ public sealed partial class InternalLlmClient
             {
                 var ids = unit.Select(n => n.Id).ToHashSet();
                 var part = candidate with { Nodes = unit, Edges = candidate.Edges.Where(e => ids.Contains(e.SourceId) && ids.Contains(e.TargetId)).ToArray() };
-                pieces.Add((await PlanCodeBlockDiagramAsync(part, input, graph, understanding, selection, cancellationToken))!);
+                pieces.Add((await PlanCodeBlockCoreAsync(part, input, graph, understanding, selection, cancellationToken, true))!);
             }
             if (pieces.Any(p => p.Status != "Semantic")) return new SemanticGeneration(candidate, "Incomplete",
                 pieces.SelectMany(p => p.Warnings).Distinct().ToArray(), [], pieces.Sum(p => p.Attempts), FailureStage: pieces.First(p => p.Status != "Semantic").FailureStage);
@@ -106,12 +111,24 @@ public sealed partial class InternalLlmClient
             var complete = pieces.All(p => p.Status == "Semantic");
             var warnings = pieces.SelectMany(p => p.Warnings).Distinct().ToArray();
             var behaviors = pieces.SelectMany(p => p.Explanation?.Behaviors ?? []).ToArray();
-            return new SemanticGeneration(candidate with { Nodes = nodes, Edges = edges }, complete ? "Semantic" : "Incomplete", warnings, [], pieces.Sum(p => p.Attempts),
+            var mergedPlan = new CodeBlockSemanticPlan("분할 코드 동작", nodes.Select(n => new CodeBlockSemanticElement(n.Id, n.Label,
+                mapping.Where(pair => pair.Value == n.Id).Select(pair => pair.Key).ToArray(), n.SourceFactIds ?? [],
+                n.Kind is "condition" or "loop" ? n.Label : "", n.Label)).ToArray(),
+                pieces.SelectMany(p => p.Diagram.Edges).DistinctBy(e => e.Id).Where(e => !string.IsNullOrWhiteSpace(e.Label))
+                    .Select(e => new SemanticMessage(e.Id, e.Label)).Where(_ => candidate.Type != "flowchart").ToArray(),
+                behaviors.Select(b => b with { NodeIds = b.NodeIds.SelectMany(id => mapping.Where(pair => pair.Value == id).Select(pair => pair.Key)).Distinct().ToArray() }).ToArray());
+            if (ValidateCodePlan(candidate, mergedPlan) is { } invalid)
+                return new SemanticGeneration(candidate, "Incomplete", ["분할 결과의 원본 제어 경계를 확인하지 못했습니다: " + invalid], [], pieces.Sum(p => p.Attempts), FailureStage: "plan-validation");
+            var merged = ApplyCodePlan(candidate, mergedPlan);
+            validator.Validate(merged);
+            return new SemanticGeneration(merged, complete ? "Semantic" : "Incomplete", warnings, [], pieces.Sum(p => p.Attempts),
                 new DiagramExplanation(understanding?.Summary ?? "함수별 코드 동작과 확인된 관계", [], behaviors.SelectMany(b => b.FactIds).Distinct().ToArray(),
                     evidenceIds.ToArray(), complete ? "Semantic" : "Incomplete", warnings, Behaviors: behaviors));
         }
         var issues = Array.Empty<string>();
         var failureStage = "plan-validation";
+        object? rejectedPlan = null;
+        string? failureMessage = null;
         for (var attempt = 0; attempt < 2; attempt++)
         {
             try
@@ -126,15 +143,16 @@ public sealed partial class InternalLlmClient
                     "Preserve the original predicate polarity: true still means the original condition is true. Do not reverse a question's meaning. " +
                     "Each behavior must reference actual nodes/edges and retain original conditions, exceptions and relevant argument values. " +
                     "Use selection.overrides.detailLevel and presetId: compact groups more eligible chains; detailed explains individual actions. Never omit control paths for brevity.",
-                    BoundedJson(new { context, repairIssues = issues }), CodePlanSchema,
+                    CodeContextJson(new { context, repairIssues = issues, rejectedPlan }), CodePlanSchema,
                     GetOutputTokens(_options.DiagramOutputTokens, input.EnableThinking), input.EnableThinking,
                     value => ValidateCodePlan(candidate, value), cancellationToken, allowRepair: false);
+                rejectedPlan = result.Value;
                 var review = await structured.CompleteAsync<DiagramPlanReview>(CodeBehaviorPolicy +
                     "Review the plan against the supplied source. Reject unsupported behavior, lost core actions/arguments/assertions, incorrect branches or invented execution order. " +
                     "Check that source facts support every semantic explanation. Return accepted and issues.",
-                    BoundedJson(new { context, proposedPlan = result.Value }), PlanReviewSchema,
+                    CodeContextJson(new { context, proposedPlan = result.Value }), PlanReviewSchema,
                     GetOutputTokens(_options.ReviewOutputTokens, input.EnableThinking), input.EnableThinking,
-                    value => value.Issues is null ? "MissingReview" : null, cancellationToken, allowRepair: false);
+                    value => value.Issues is null || value.Accepted && value.Issues.Count > 0 || !value.Accepted && value.Issues.Count == 0 ? "InvalidReview" : null, cancellationToken, allowRepair: false);
                 if (!review.Value.Accepted) { failureStage = "semantic-review"; issues = review.Value.Issues.ToArray(); continue; }
                 var plan = new DiagramPlan(result.Value.Summary, result.Value.Elements.Select(e => new SemanticElement(e.Id, e.Summary, e.NodeIds)).ToArray(), result.Value.Messages, []);
                 var projected = ApplyCodePlan(candidate, result.Value);
@@ -152,14 +170,23 @@ public sealed partial class InternalLlmClient
             {
                 failureStage = e is LlmClientException llmError && llmError.Code != "LLM_SCHEMA_INVALID" ? "llm-request" : "plan-validation";
                 issues = [e is LlmClientException detail ? detail.FailureKind ?? detail.Code : "InvalidCodePlan"];
+                failureMessage = LlmFailure.Describe(e);
+                if ((e is LlmClientException { Code: "LLM_INPUT_LIMIT" or "LLM_CONTEXT_LIMIT" or "LLM_RESPONSE_TRUNCATED" } ||
+                    e is DiagramGenerationException { Code: "EVIDENCE_INPUT_LIMIT" }) && candidate.Nodes.Count > 1)
+                    return await PlanCodeBlockCoreAsync(candidate, input, graph, understanding, selection, cancellationToken, partial, true);
+                if (e is LlmClientException { RejectedContent: { } content })
+                {
+                    try { rejectedPlan = JsonSerializer.Deserialize<JsonElement>(content); }
+                    catch (JsonException) { rejectedPlan = content; }
+                }
             }
         }
-        return new SemanticGeneration(candidate, "Incomplete", [failureStage switch
+        return new SemanticGeneration(candidate, "Incomplete", [failureMessage ?? (failureStage switch
         {
             "semantic-review" => "의미 검토 실패: 원본 동작과 설명의 일치를 확인하지 못했습니다.",
             "llm-request" => "LLM 요청 실패: 응답 또는 시간 제한을 확인하세요.",
             _ => "의미 계획 검증 실패: 구조·근거·분기 또는 코드 범위를 확인하지 못했습니다."
-        }], [], 2, FailureStage: failureStage);
+        })], [], 2, FailureStage: failureStage);
     }
 
     internal static string? ValidateCodePlan(DiagramIr candidate, CodeBlockSemanticPlan plan)

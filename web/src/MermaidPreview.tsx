@@ -3,6 +3,7 @@ import type { DiagramArtifact } from "./types";
 import { clampZoom, renderAlias as alias, renderElementMap, zoomScrollDelta } from "./diagramInteraction";
 import { mermaidSafetyError } from "./mermaidSafety";
 import { prepareMermaidDisplay } from "./mermaidDisplay";
+import { sanitizeSvg } from "./svgSafety";
 
 export type DiagramSelection = { kind: "node" | "edge"; id: string };
 export type DiagramInlineEdit = DiagramSelection & { value: string };
@@ -33,38 +34,6 @@ function loadMermaid(): Promise<MermaidApi> {
     document.head.appendChild(script);
   });
   return mermaidPromise;
-}
-
-function sanitizeSvg(svg: string, displayMarker = ""): string {
-  const parser = new DOMParser();
-  const document = parser.parseFromString(svg, "image/svg+xml");
-  document.querySelectorAll("script, foreignObject, iframe, object, embed, image, animate, animateMotion, animateTransform, set").forEach((element) => element.remove());
-  // Exported SVG has no application CSP. Remove CSS imports, escaped tokens and
-  // every URL except local fragment references before rendering or downloading.
-  document.querySelectorAll("style").forEach(element => {
-    const css = element.textContent ?? "";
-    if (/[@\\]/.test(css) || [...css.matchAll(/url\(([^)]+)\)/gi)]
-      .some(([, ref]) => !ref.trim().replace(/^['"]|['"]$/g, "").startsWith("#"))) element.remove();
-  });
-  // Some renderers auto-link ordinary URL text. Keep the visible label while
-  // discarding the link element and all of its navigation behavior.
-  document.querySelectorAll("a").forEach(element => element.replaceWith(...element.childNodes));
-  if (displayMarker) {
-    const text = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_TEXT);
-    while (text.nextNode()) text.currentNode.nodeValue = text.currentNode.nodeValue?.split(displayMarker).join("") ?? "";
-  }
-  document.querySelectorAll("*").forEach((element) => {
-    for (const attribute of [...element.attributes]) {
-      const name = attribute.name.toLowerCase();
-      const value = attribute.value.trim().toLowerCase();
-      const unsafeReference = (name === "href" || name === "xlink:href") && !value.startsWith("#");
-      const unsafeUrl = [...value.matchAll(/url\(([^)]+)\)/g)]
-        .some(([, reference]) => !reference.trim().replace(/^['"]|['"]$/g, "").startsWith("#"));
-      if (name.startsWith("on") || unsafeReference || value.startsWith("javascript:") || unsafeUrl ||
-        (name === "style" && /[@\\]/.test(value))) element.removeAttribute(attribute.name);
-    }
-  });
-  return new XMLSerializer().serializeToString(document.documentElement);
 }
 
 function renderMermaid(mermaid: MermaidApi, id: string, source: string): Promise<{ svg: string }> {
@@ -106,7 +75,7 @@ type MermaidPreviewProps = {
 export function MermaidPreview({ source, artifact, downloadName = "diagram", editable = false, compact = false,
   zoomable = false, interactive = false, selected = emptySelections, inlineEdit, onSelect, onEditRequest, onInlineEditChange,
   onInlineEditCommit, onInlineEditCancel, onInteractionReady, onSaveRevision, toolbarContent, fitLabel = "100%로 초기화" }: MermaidPreviewProps) {
-  const id = useId().replaceAll(":", "_");
+  const id = useId().replace(/[^A-Za-z0-9_-]/g, character => `_${character.codePointAt(0)!.toString(16)}_`);
   const canvasRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState(source);
   const [svg, setSvg] = useState("");

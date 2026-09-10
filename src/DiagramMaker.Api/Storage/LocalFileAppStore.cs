@@ -83,8 +83,17 @@ public sealed partial class LocalFileAppStore(string filePath) : IAppStore
     public Task<IReadOnlyList<AnalysisJob>> ListAnalysesByPlanAsync(Guid planId, int limit, CancellationToken cancellationToken) =>
         _inner.ListAnalysesByPlanAsync(planId, limit, cancellationToken);
 
-    public Task<AnalysisJob?> TryLeaseAnalysisAsync(TimeSpan leaseDuration, CancellationToken cancellationToken) =>
-        _inner.TryLeaseAnalysisAsync(leaseDuration, cancellationToken);
+    public async Task<AnalysisJob?> TryLeaseAnalysisAsync(TimeSpan leaseDuration, CancellationToken cancellationToken)
+    {
+        await _analysisFileGate.WaitAsync(cancellationToken);
+        try
+        {
+            var leased = await _inner.TryLeaseAnalysisAsync(leaseDuration, cancellationToken);
+            if (leased is not null) await PersistRecordAsync(_analysisDirectory, leased.Id, leased, cancellationToken);
+            return leased;
+        }
+        finally { _analysisFileGate.Release(); }
+    }
 
     public async Task SaveAnalysisPlanAsync(AnalysisPlan plan, CancellationToken cancellationToken)
     {
@@ -141,6 +150,7 @@ public sealed partial class LocalFileAppStore(string filePath) : IAppStore
         await _inner.DisposeAsync();
         _fileLock.Dispose();
         _codeFileGate.Dispose();
+        _analysisFileGate.Dispose();
     }
 
     private async Task PersistRepositoriesAsync(CancellationToken cancellationToken)

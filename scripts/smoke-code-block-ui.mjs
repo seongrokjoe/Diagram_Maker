@@ -293,6 +293,13 @@ try {
   await workspace.getByLabel('정적 구조 보기', { exact: true }).check();
   const five = await (await page.request.get(`${origin}/api/v1/code-block-runs/${fiveId}`)).json();
   assert.equal(five.results[0].views.length, 5);
+  const diagnosticDownload = page.waitForEvent('download');
+  await workspace.getByRole('button', { name: '작업 진단 다운로드', exact: true }).click();
+  const diagnosticFile = path.join(fixture, 'downloaded-diagnostics.json');
+  await (await diagnosticDownload).saveAs(diagnosticFile);
+  const diagnostic = JSON.parse(await readFile(diagnosticFile, 'utf8'));
+  assert.equal(diagnostic.id, fiveId); assert.equal(diagnostic.version, 1);
+  assert.ok(!('checkpoints' in diagnostic) && !JSON.stringify(diagnostic).includes('class Machine'));
   for (const view of five.results[0].views) {
     assert.ok(view.pages.length, `${view.selection.diagramType} has source-backed pages`);
     await workspace.locator(`[role="treeitem"][data-row-id="${view.viewId}:${view.pages[0].id}"]`).click();

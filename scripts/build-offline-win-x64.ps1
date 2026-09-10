@@ -1,5 +1,5 @@
 param(
-    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$')][string]$Version = '0.1.0-internal.4',
+    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$')][string]$Version = '0.1.0-internal.5',
     [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')][string]$NodeVersion = '24.12.0',
     [switch]$SkipTests
 )
@@ -148,6 +148,7 @@ Copy-Item -LiteralPath (Join-Path $nodeExtractRoot 'LICENSE') -Destination $pack
 
 Copy-Item -Path (Join-Path $projectRoot 'packaging\windows\*.cmd') -Destination $stageRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot 'packaging\windows\OFFLINE_INSTALL_KO.txt') -Destination $stageRoot
+Copy-Item -LiteralPath (Join-Path $projectRoot 'packaging\windows\INTERNAL_TEST_KO.txt') -Destination $stageRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot 'packaging\windows\config') -Destination $stageRoot -Recurse
 
 $licenseRoot = Join-Path $stageRoot 'licenses'
