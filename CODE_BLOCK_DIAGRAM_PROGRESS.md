@@ -6,6 +6,16 @@
 
 ## 현재 상태
 
+- 2026-09-11 perf.1 배포 커밋 완료, 원격 푸시 승인 검토로 중단.
+  커밋 `65124a5ed8c6e85a5f5ed00374ccdc8d9e2f6a89`에 소스·새 ZIP/SHA·검증 증적·internal.5 삭제 반영.
+  증적 텍스트 줄바꿈과 로그 줄 끝 공백을 정리했으며 제품 소스와 ZIP은 재검증한 해시 그대로다.
+  자동 승인 검토가 `git push origin main`을 두 차례 거부하여 실제 push 명령은 실행되지 않았다.
+  GitHub API로 인증 계정/소유자 seongrokjoe 일치, admin/push 권한과 공개 저장소임을 확인했다.
+  남은 거부 사유: 공개 목적지 `https://github.com/seongrokjoe/Diagram_Maker`의 main에
+  소스·검증 기록·ZIP 전체를 전송한다는 구체적인 사용자 승인 부족.
+  다음: 해당 공개 목적지/내용에 대한 사용자 승인 후 일반 push → 원격 SHA 일치 확인.
+  원격은 마지막 확인 시 f6be5d3이며, 구버전 파일은 Git 이력에 보존되어 있다.
+
 - 2026-09-11 perf.1 배포 푸시/지난 ZIP 정리 승인: 사용자 요청으로 배포 폴더의
   internal.5 ZIP(94,167,458바이트)과 체크섬을 정리하고 perf.1 ZIP/SHA만 남겼다.
   삭제 목록·원래 해시·복구 커밋은 `artifacts/performance-validation/removed-packages.json`.
