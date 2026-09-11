@@ -1,0 +1,45 @@
+{
+  "status": "passed",
+  "checks": [
+    "connection",
+    "diagram-contract",
+    "thinking-contract",
+    "malformed response rejected",
+    "HTTP redirect rejected"
+  ],
+  "requests": [
+    {
+      "thinking": false,
+      "structured": false,
+      "mode": "valid"
+    },
+    {
+      "thinking": false,
+      "structured": true,
+      "mode": "valid"
+    },
+    {
+      "thinking": true,
+      "structured": true,
+      "mode": "valid"
+    },
+    {
+      "thinking": false,
+      "structured": true,
+      "mode": "malformed"
+    },
+    {
+      "thinking": false,
+      "structured": true,
+      "mode": "malformed"
+    },
+    {
+      "thinking": false,
+      "structured": false,
+      "mode": "redirect"
+    }
+  ],
+  "networkMode": "restricted",
+  "syntheticOnly": true,
+  "corporateLlmTested": false
+}

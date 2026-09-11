@@ -46,6 +46,10 @@ LLM 구성 여부와 실패 단계가 표시되며 미설정·요청 실패·검
 
 화면은 전체 누적값과 이번 실행의 완료·재사용·요청·실제 HTTP 전송·대기 시간을 구분합니다. **작업 진단 다운로드**의 v2 JSON에는 단계, 전송 여부, 토큰 한도/사용량, 시간과 오류 코드만 들어가며 코드·프롬프트·모델 응답·서버 주소는 포함하지 않습니다. 묶음 기본 한도는 입력 48,000토큰, 생성 출력 8,000토큰, 검토 출력 2,000토큰이며 설정된 서버 상한을 존중합니다. Thinking은 기존 출력 예약을 사용합니다. [성능 검증 기록](CODE_DIAGRAM_PERFORMANCE_REPORT.md)의 합성 요청 수와 사내 실모델의 5분 목표는 별도로 확인합니다.
 
+**요청 오류 진단**은 화면에서도 최초·후속 오류, 응답 항목 검증 사유와 문자/토큰 한도를 보여줍니다. `MaxInputCharacters`는 문자 수이며 입력 토큰 상한인 `MaxInputTokens`와 다릅니다. 기본 문자 수 2,000,000, 입력 토큰 200,000을 사용하는 [완성 JSON 예제](packaging/windows/config/llm-policy.example.json)와 [설정 안내](packaging/windows/config/LLM_POLICY_KO.txt)를 제공합니다. 검토 입력만 커지면 생성된 의미를 보존하고 검토를 나눕니다.
+
+최신 Windows 시험 패키지는 [0.1.0-perf.2 ZIP](artifacts/release/DiagramMaker-0.1.0-perf.2-win-x64.zip)과 [SHA-256](artifacts/release/DiagramMaker-0.1.0-perf.2-win-x64.zip.sha256)입니다. 변경 사항과 검증 결과는 [perf.2 보고서](CODE_DIAGRAM_PERF2_REPORT.md)에 기록했습니다.
+
 LLM 설정의 `MaxInputTokens`와 `MaxContextTokens` 기본값은 각각 200,000이고 `OutputHardLimit`은 60,000입니다. 입력과 출력 예약의 합계에 문맥 상한을 적용합니다. `UseServerTokenization`으로 서버의 토큰 계산을 시도하고 지원하지 않으면 보수적인 추정치를 표시합니다. `structured_outputs` 미지원이 명시된 경우에만 `response_format`을 시도하고, 둘 다 미지원이면 JSON 지시문을 사용하되 동일한 근거 검증을 수행합니다. Thinking 기본값은 계속 OFF입니다.
 
 URL과 `click`이 포함된 일반 라벨은 표시할 수 있습니다. 실행 가능한 링크·click 명령·설정 지시문은 차단하며 Mermaid strict와 SVG 정제를 유지합니다. 자동으로 링크가 된 표시 문자열은 링크 동작만 제거하고 글자는 보존합니다.

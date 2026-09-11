@@ -2,6 +2,9 @@
 
 기준: `f6be5d3`, 기존 복구 체크포인트와 Git 이력 보존. 새 시험 버전: `0.1.0-perf.1`.
 
+후속 시험 버전은 [perf.2 수정·검증 기록](CODE_DIAGRAM_PERF2_REPORT.md)을 참고한다.
+2026-09-11 사용자 요청으로 배포 폴더의 perf.1 ZIP/체크섬을 정리했으며 `fc5da78` Git 이력에서 복구할 수 있다.
+
 ## 변경한 동작
 
 - 선택한 형식의 원본 사실을 합쳐 의미를 생성·검토하고 여러 요약/상세 페이지에 적용한다.
@@ -43,7 +46,7 @@
 
 ZIP의 모든 파일이 실제 검증한 배포 폴더와 일치하며, 코드 블럭 파서·프런트엔드·동봉 Node·갱신한 사내 시험 안내가 포함된다.
 기존 internal.5 ZIP은 SHA-256 `c71bfe6b35cdd71ce047766426039f5b2cd5e5482408fac74ceba310616ef2ed`를 확인한 뒤,
-2026-09-11 사용자 요청에 따라 배포 폴더에서 ZIP과 체크섬을 정리했다. 현재 배포 폴더에는 perf.1 두 파일만 있다.
+2026-09-11 사용자 요청에 따라 배포 폴더에서 ZIP과 체크섬을 정리했다. perf.1 배포 당시에는 perf.1 두 파일만 남겼다.
 삭제 목록은 `artifacts/performance-validation/removed-packages.json`이며 기존 파일은 `f6be5d3` Git 이력에서 복구할 수 있다.
 
 검증 로그·화면·진단은 `artifacts/performance-validation/`에 있다. `package-audit.json`은 ZIP 대조 결과,
@@ -51,9 +54,9 @@ ZIP의 모든 파일이 실제 검증한 배포 폴더와 일치하며, 코드 �
 시험 패키지는 빌드 당시 기준 `f6be5d3` 이후의 작업본 변경을 포함한다. `.git` 없는 비동기화 작업본에서 빌드했으므로
 패키지 manifest의 `sourceCommit`은 `unavailable`, `sourceTreeDirty`는 null이며 정확한 소스는 위 목록으로 식별한다.
 2026-09-11 사용자 요청으로 소스·시험 ZIP·검증 증적과 구버전 정리를 커밋 `65124a5`에 반영했다.
-원격 푸시는 자동 승인 검토가 거부하여 실행되지 않았다. 인증 계정의 저장소 소유권과 쓰기 권한은 확인했으며,
-공개 저장소 `https://github.com/seongrokjoe/Diagram_Maker`의 main에 소스·검증 기록·ZIP을 전송한다는
-구체적인 사용자 승인이 남은 요구 사항이다.
+이후 사용자가 공개 저장소 `https://github.com/seongrokjoe/Diagram_Maker`의 main에
+소스·검증 기록·ZIP 전송을 승인했고 정상 push를 완료했다(`f6be5d3..fc5da78`).
+원격 커밋 `fc5da78255b41aeb90a26a301ffc1f052e817e38` 일치를 확인했다.
 빌드 후 제품 소스 212개와 ZIP 해시가 검증 당시와 같음을 재확인했으며 미해결 로컬 검증 실패는 없다.
 
 ## 실행 명령과 사내 시험

@@ -11,6 +11,15 @@ export async function checkSemanticProgress({ page, fixture, run }) {
       elapsedSeconds: 326, budgetSeconds: 900, totalElapsedSeconds: 926, attemptNumber: 3,
       attemptCompletedUnits: 4, attemptRequests: 5, transportRequests: 17, attemptTransportRequests: 6,
       waitMilliseconds: 20000, attemptWaitMilliseconds: 5000,
+      recentFailures: [
+        { id: 'generation-failure', stage: 'llm-SharedSemanticResponse', state: 'Failed', sent: true,
+          errorCode: 'LLM_SCHEMA_INVALID', validationCode: 'SharedTextNotKorean', purpose: 'generation',
+          inputCharacters: 34000, inputCharacterLimit: 56500,
+          validationDetails: { expectedItems: 40, receivedItems: 40, missingItems: 0, duplicateItems: 0,
+            unknownItems: 0, field: 'items.summary', itemIndex: 0, actualLength: 80, allowedLength: 80 } },
+        { id: 'repair-limit', stage: 'llm-SharedSemanticResponse', state: 'Failed', sent: false,
+          errorCode: 'LLM_INPUT_CHARACTERS', purpose: 'repair', inputCharacters: 60700, inputCharacterLimit: 56500 },
+      ],
     } });
   const pattern = /\/api\/v1\/(code-block-runs|code-block-workspaces)\//;
   const routeHandler = async route => {
@@ -34,6 +43,11 @@ export async function checkSemanticProgress({ page, fixture, run }) {
     assert.match(await progress.innerText(), /전체: 완료 12단위.*실제 전송 17회/);
     assert.match(await progress.innerText(), /이번 실행 3: 새 완료 4단위.*실제 전송 6회/);
     await progress.getByText('5분이 지났습니다.', { exact: false }).waitFor();
+    const failures = progress.getByLabel('요청 오류 진단', { exact: true });
+    assert.match(await failures.innerText(), /최초 기록.*의미 생성.*전송 후/);
+    assert.match(await failures.innerText(), /후속 기록.*응답 수정.*전송 전/);
+    assert.match(await failures.innerText(), /60,700 \/ 허용 56,500자/);
+    assert.match(await failures.innerText(), /SharedTextNotKorean/);
     assert.equal(await workspace.locator('.structured-diagram-editor').count(), 0);
     assert.equal(pageRequests, 0, 'Running results must not fetch pages');
     for (const width of [1440, 390]) {

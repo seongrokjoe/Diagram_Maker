@@ -1,0 +1,31 @@
+{
+  "status": "passed",
+  "syntheticOnly": true,
+  "packageRoot": "C:\\Users\\고정현\\AppData\\Local\\Temp\\DiagramMaker-performance-20260910\\artifacts\\stage\\DiagramMaker-0.1.0-perf.2-win-x64",
+  "checks": [
+    {
+      "name": "code-block",
+      "lines": 1212,
+      "functions": 40,
+      "formats": 1,
+      "requests": 4,
+      "pages": 41
+    },
+    {
+      "name": "code-block",
+      "lines": 1212,
+      "functions": 40,
+      "formats": 3,
+      "requests": 6,
+      "pages": 43
+    },
+    {
+      "name": "git",
+      "lines": 1212,
+      "functions": 40,
+      "formats": 3,
+      "requests": 20,
+      "pages": 51
+    }
+  ]
+}

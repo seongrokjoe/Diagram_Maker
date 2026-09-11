@@ -49,7 +49,9 @@ public sealed class SemanticExecution : IDisposable
         diagnostics.Skip(initialRequests).Sum(d => d.TransportAttempts > 0 ? d.TransportAttempts : d.Sent ? 1 + d.Retries : 0),
         diagnostics.Skip(initialRequests).Sum(d => d.TokenizationRequests),
         diagnostics.Sum(d => d.ElapsedMilliseconds), diagnostics.Skip(initialRequests).Sum(d => d.ElapsedMilliseconds),
-        diagnostics.LastOrDefault(d => d.State == "Running")?.StartedAt);
+        diagnostics.LastOrDefault(d => d.State == "Running")?.StartedAt,
+        diagnostics.Where(d => d.ErrorCode is not null).Take(1)
+            .Concat(diagnostics.Where(d => d.ErrorCode is not null).TakeLast(3)).DistinctBy(d => d.Id).ToArray());
 
     public SemanticExecution(LlmOptions options, IReadOnlyList<SemanticCheckpoint>? saved, CancellationToken cancellationToken, Func<Task>? onProgress = null,
         IReadOnlyList<LlmDiagnostic>? savedDiagnostics = null, SemanticProgress? savedProgress = null)
@@ -100,7 +102,7 @@ public sealed class SemanticExecution : IDisposable
                 catch (JsonException) { /* Old or incomplete checkpoints are recomputed. */ }
                 if (cached.State == "Failed" && cached.ErrorCode is { } errorCode)
                     throw new LlmClientException(errorCode, "이 단위는 이전 실행에서 실패했습니다. 완료 결과를 보존하고 실패 범위를 다시 생성하세요.",
-                        failureKind: cached.FailureKind, rejectedContent: cached.RejectedContent);
+                        failureKind: cached.FailureKind, rejectedContent: cached.RejectedContent, validationDetails: cached.ValidationDetails);
             }
             current.checkpoints.RemoveAll(c => c.Key == unitKey);
             current.checkpoints.Add(new(unitKey, stage, "null", "Pending"));
@@ -123,10 +125,11 @@ public sealed class SemanticExecution : IDisposable
         {
             // Operational interruptions remain retryable. Replaying an invalid
             // semantic response on every resume cannot make forward progress.
-            if (error.Code is "LLM_SCHEMA_INVALID" or "LLM_RESPONSE_TRUNCATED" or "LLM_INPUT_LIMIT" or "LLM_CONTEXT_LIMIT")
+            if (error.Code is "LLM_SCHEMA_INVALID" or "LLM_RESPONSE_TRUNCATED" or "LLM_INPUT_LIMIT" or "LLM_CONTEXT_LIMIT" or "LLM_INPUT_CHARACTERS")
             {
                 current.checkpoints.RemoveAll(c => c.Key == unitKey);
-                current.checkpoints.Add(new(unitKey, stage, "null", "Failed", error.Code, error.FailureKind, error.RejectedContent));
+                current.checkpoints.Add(new(unitKey, stage, "null", "Failed", error.Code, error.FailureKind, error.RejectedContent,
+                    ValidationDetails: error.ValidationDetails));
                 await current.NotifyAsync();
             }
             throw;
@@ -159,6 +162,7 @@ internal static class LlmFailure
         LlmClientException { Code: "LLM_DISABLED" } => "LLM이 비활성화되어 있습니다. LLM 설정을 확인하세요.",
         LlmClientException { Code: "LLM_RESPONSE_TRUNCATED" } e => $"LLM 출력이 토큰 한도에서 잘렸습니다 (요청 {e.RequestedMaxOutputTokens?.ToString() ?? "미확인"}, 사용 {e.CompletionTokens?.ToString() ?? "미확인"}). 더 작은 단위로 다시 생성하세요.",
         LlmClientException { Code: "LLM_CONTEXT_LIMIT" or "LLM_INPUT_LIMIT" } => "LLM 입력과 출력 예약이 문맥 한도를 초과했습니다. 문맥/토큰 설정을 확인하세요.",
+        LlmClientException { Code: "LLM_INPUT_CHARACTERS" } => "요청의 문자 수 한도를 초과했습니다. 분할 가능한 근거를 나누고 완료된 결과를 보존합니다.",
         LlmClientException { Code: "LLM_REQUEST_TIMEOUT" or "LLM_NO_RESPONSE_TIMEOUT" } => "LLM 응답 시간 제한에 도달했습니다. 서버 대기 상태와 작업 진단을 확인하세요.",
         LlmClientException { Code: "LLM_SCHEMA_INVALID" } e => $"LLM 응답 계약 또는 코드 근거 검증 실패 ({e.FailureKind ?? e.Code}). 작업 진단에서 실패 단계를 확인하세요.",
         LlmClientException e => $"LLM 요청 실패 ({e.Code}). 작업 진단에서 서버 응답과 전송 여부를 확인하세요.",

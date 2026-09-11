@@ -12,7 +12,9 @@ import { assertLocalPath, gitEnvironment } from '../tools/git-worker/local-secur
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 assertLocalPath(root);
 const fixture = await mkdtemp(path.join(root, 'artifacts/shared-semantics-'));
-const packageRoot = process.argv[2] ? await realpath(path.resolve(root, process.argv[2])) : null;
+const packageArgument = process.argv.slice(2).find(value => !value.startsWith('--'));
+const packageRoot = packageArgument ? await realpath(path.resolve(root, packageArgument)) : null;
+const maxInputCharacters = process.argv.includes('--characters-60000') ? 60000 : 2000000;
 if (packageRoot) {
   const relative = path.relative(await realpath(path.join(root, 'artifacts/stage')), packageRoot);
   assert.ok(relative && relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative));
@@ -61,7 +63,7 @@ try {
   const policy = path.join(fixture, 'synthetic-llm.json');
   const networkPolicy = path.join(fixture, 'network-policy.json');
   await writeFile(policy, JSON.stringify({ Llm: { Enabled: true, Endpoint: llmOrigin + '/v1/chat/completions',
-    AllowedOrigin: llmOrigin, UseServerTokenization: false, MaxTransientRetries: 0 } }));
+    AllowedOrigin: llmOrigin, UseServerTokenization: false, MaxTransientRetries: 0, MaxInputCharacters: maxInputCharacters } }));
   await writeFile(networkPolicy, JSON.stringify({ LocalRoots: [root], LlmOrigins: [llmOrigin], LlmAddressRanges: ['127.0.0.1/32'], Databases: [] }));
   const runtime = packageRoot ?? path.join(fixture, 'api');
   if (!packageRoot) {

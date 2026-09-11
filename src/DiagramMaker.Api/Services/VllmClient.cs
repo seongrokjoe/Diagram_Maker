@@ -19,7 +19,7 @@ public sealed class LlmClientException(
     int? requestedMaxOutputTokens = null,
     int? promptTokens = null,
     int? completionTokens = null,
-    int? totalTokens = null, string? rejectedContent = null)
+    int? totalTokens = null, string? rejectedContent = null, LlmValidationDetails? validationDetails = null)
     : Exception(message, innerException)
 {
     public string Code { get; } = code;
@@ -30,6 +30,7 @@ public sealed class LlmClientException(
     public int? PromptTokens { get; } = promptTokens;
     public int? CompletionTokens { get; } = completionTokens;
     public int? TotalTokens { get; } = totalTokens;
+    public LlmValidationDetails? ValidationDetails { get; } = validationDetails;
     // Transient repair context, never part of a log message or persisted diagnostic.
     [System.Text.Json.Serialization.JsonIgnore] public string? RejectedContent { get; } = rejectedContent;
 }
@@ -41,7 +42,7 @@ public sealed record VllmCompletionRequest(
     bool EnableThinking,
     JsonElement? StructuredSchema = null,
     double? Temperature = null,
-    int? Seed = null, int? InputTokenLimit = null);
+    int? Seed = null, int? InputTokenLimit = null, int? InputCharacterLimit = null, string? Purpose = null);
 
 public sealed record VllmCompletionResult(
     string Content,
@@ -98,7 +99,10 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
         var watch = Stopwatch.StartNew();
         var diagnostic = new LlmDiagnostic(Guid.NewGuid().ToString("N"), execution?.Stage ?? "completion", execution?.UnitId ?? "",
             "Preparing", DateTimeOffset.UtcNow, OutputLimit: request.MaxOutputTokens,
-            Purpose: execution?.Stage.Contains("Review", StringComparison.Ordinal) == true ? "review" : "generation");
+            Purpose: request.Purpose ?? (execution?.Stage.Contains("Review", StringComparison.Ordinal) == true ? "review" : "generation"),
+            InputCharacters: request.UserPrompt.Length, InputCharacterLimit: request.InputCharacterLimit,
+            InputTokenLimit: Math.Min(_options.MaxInputTokens, request.InputTokenLimit ?? _options.MaxInputTokens),
+            ContextTokenLimit: _options.MaxContextTokens);
         try
         {
             if (_client is null) throw new LlmClientException("LLM_DISABLED", "The internal LLM is disabled.");
