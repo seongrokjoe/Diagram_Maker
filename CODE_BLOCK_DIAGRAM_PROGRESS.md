@@ -6,6 +6,15 @@
 
 ## 현재 상태
 
+- 2026-09-11 perf.2 배포 푸시 완료: 커밋 `dc65ee085aa333e8410e1fe6122fee841edc5ad4`에
+  소스·최신 ZIP/SHA·선별 합성 검증 증적과 perf.1 ZIP/SHA 삭제를 반영했다.
+  `git push origin main` exit 0(`fc5da78..dc65ee0`), 원격 main의 동일 SHA를 확인했다.
+  배포 폴더에는 `DiagramMaker-0.1.0-perf.2-win-x64.zip`과 체크섬만 있다.
+  커밋 후 소스 216개와 ZIP 해시가 검증 당시와 같음을 재확인했다. GitHub는 ZIP 크기에 대한
+  권장 한도 경고를 출력했으나 정상 수신했다. 기존 Git 이력/체크포인트는 보존했다.
+  다음: 사내에서 동봉 설정 예제를 승인 값으로 적용하고 실제 문제 코드의 의미 품질·진단·완료 시간을
+  확인한다. 사내 LLM/PostgreSQL 실연결은 기존과 같이 미검증이며 로컬 미해결 검증 실패는 없다.
+
 - 2026-09-11 perf.2 배포 푸시·구버전 정리 요청 수신: 사용자 지시에 따라 배포 폴더의
   perf.1 ZIP(94,208,344바이트)과 체크섬을 제거하고 최신 perf.2 ZIP/SHA만 남겼다.
   삭제 전 해시와 복구 커밋 `fc5da78`은 `artifacts/perf2-validation/removed-packages.json`에 기록했다.

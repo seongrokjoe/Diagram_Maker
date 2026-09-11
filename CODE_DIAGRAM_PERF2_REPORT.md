@@ -87,7 +87,9 @@ Windows 실행기까지 7개 검증 명령 모두 통과했다. 배포판에서�
 `sourceTreeDirty`는 null이다. 기준 커밋 이후의 미커밋 변경을 위 소스 목록으로 식별한다.
 2026-09-11 사용자 요청에 따라 배포 폴더의 perf.1 ZIP/체크섬을 제거하고 최신 perf.2 ZIP/SHA만 남겼다.
 삭제 파일과 해시, 복구 커밋 `fc5da78`은 `artifacts/perf2-validation/removed-packages.json`에 기록했다.
-소스·최신 패키지·선별 합성 검증 증적과 삭제 내역을 함께 커밋하여 origin/main에 게시한다.
+소스·최신 패키지·선별 합성 검증 증적과 삭제 내역을 커밋 `dc65ee085aa333e8410e1fe6122fee841edc5ad4`에
+반영해 origin/main에 정상 push했다(`fc5da78..dc65ee0`, exit 0). 원격 SHA 일치와 커밋 후 소스 216개 및
+ZIP 해시 유지를 확인했다. GitHub의 대용량 파일 권장 한도 경고는 있었으며 업로드는 완료됐다.
 
 ## 재현 명령과 남은 사내 시험
 
