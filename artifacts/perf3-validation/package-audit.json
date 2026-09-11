@@ -1,0 +1,18 @@
+﻿{
+    "status":  "passed",
+    "version":  "0.1.0-perf.3",
+    "sha256":  "a05aad6cf07c24170a6d7fa103806ac74febf92ba330053f51df24e4182659c8",
+    "bytes":  94236262,
+    "files":  1819,
+    "stageFilesMatch":  true,
+    "sourceFilesMatch":  218,
+    "baseCommit":  "affd8e92a909d1c18b770c1d896b412bf162b486",
+    "manifestSourceCommit":  "unavailable",
+    "manifestSourceTreeDirty":  null,
+    "sourceNote":  "Built from an uncommitted source mirror without .git; source-inventory.json records the exact validated files.",
+    "perf2Sha256":  "711b777085ef85f181bee4ddfb6efcc6afd430adc0d25c6509331aaf876a61f4",
+    "llmPolicyExampleMatch":  true,
+    "maxInputCharacters":  2000000,
+    "maxInputTokens":  200000,
+    "maxContextTokens":  200000
+}

@@ -43,10 +43,11 @@ const llm = createServer(async (request, response) => {
     const properties = payload.structured_outputs.json.properties;
     let context = JSON.parse(payload.messages[1].content);
     context = context.context ?? context;
-    if (properties.items) batches.push({ source: context.sourceKind, items: context.items.length,
+    const reviewing = !!properties.items?.items.properties.issues;
+    if (properties.items) batches.push({ source: context.sourceKind, reviewing, outputLimit: payload.max_tokens, items: context.items.length,
       kinds: context.items.map(item => item.kind), characters: payload.messages[1].content.length,
       facts: context.sources.facts.length, sourceCharacters: context.sources.facts.reduce((n, f) => n + (f.content?.length ?? 0), 0) });
-    const result = properties.accepted ? { accepted: true, issues: [] } : {
+    const result = reviewing ? { items: context.items.map(item => ({ id: item.id, issues: [] })) } : {
       summary: '원본 코드의 입력값을 가공하고 결과를 반환합니다', recommendedType: context.available[0],
       items: context.items.map(item => ({ id: item.id, summary: '입력값을 누적하고 반환합니다', description: '원본 근거에 표시된 값을 누적하고 호출한 곳으로 반환합니다' })),
     };
@@ -63,7 +64,9 @@ try {
   const policy = path.join(fixture, 'synthetic-llm.json');
   const networkPolicy = path.join(fixture, 'network-policy.json');
   await writeFile(policy, JSON.stringify({ Llm: { Enabled: true, Endpoint: llmOrigin + '/v1/chat/completions',
-    AllowedOrigin: llmOrigin, UseServerTokenization: false, MaxTransientRetries: 0, MaxInputCharacters: maxInputCharacters } }));
+    AllowedOrigin: llmOrigin, UseServerTokenization: false, MaxTransientRetries: 0, MaxInputCharacters: maxInputCharacters,
+    // Match the shipped policy example instead of inheriting appsettings' larger review budget.
+    DiagramOutputTokens: 8000, ReviewOutputTokens: 2000 } }));
   await writeFile(networkPolicy, JSON.stringify({ LocalRoots: [root], LlmOrigins: [llmOrigin], LlmAddressRanges: ['127.0.0.1/32'], Databases: [] }));
   const runtime = packageRoot ?? path.join(fixture, 'api');
   if (!packageRoot) {
@@ -105,11 +108,15 @@ try {
     const workspace = await request('/code-block-workspaces', 'POST', { title: '고정 합성 C++ 성능',
       blocks: [{ id: 'code', language: 'cpp', title: 'C++', code: source(1) }], groups: [{ id: 'g', title: '전체', blockIds: ['code'], views: selected }] }, 201);
     const before = requestCount;
+    const beforeBatch = batches.length;
     const queued = await request(`/code-block-workspaces/${workspace.id}/runs`, 'POST', { expectedRevision: workspace.revision }, 202);
     const run = await poll(`/code-block-runs/${queued.id}`);
     assert.equal(run.state, 'Completed', run.errorMessage ?? JSON.stringify(run.results.map(g => g.views.map(v => v.warnings))));
     const requests = requestCount - before;
-    assert.ok(requests > 0 && requests <= 12, `C++ ${selected.length} formats: ${requests} requests`);
+    const generationRequests = batches.slice(beforeBatch).filter(b => !b.reviewing).length;
+    assert.equal(generationRequests, selected.length === 1 ? 2 : 3, 'Generation count must retain the perf.2 baseline');
+    assert.ok(requests > 0 && requests <= 30, `C++ ${selected.length} formats: ${requests} requests`);
+    assert.ok(batches.filter(b => b.reviewing).every(b => b.items <= 16 && b.outputLimit === 2000), 'Reviews must fit the default output budget');
     const diagnostic = await request(`/code-block-runs/${run.id}/diagnostics`);
     assert.equal(diagnostic.version, 2); assert.equal(diagnostic.execution.transportRequests, requests);
     let pages = 0;
@@ -117,7 +124,8 @@ try {
       const artifact = await request(`/code-block-runs/${run.id}/groups/g/views/${view.viewId}/pages/${page.id}`);
       assert.equal(artifact.explanation.status, 'Semantic'); assert.ok(artifact.mermaidDsl); pages++;
     }
-    checks.push({ name: 'code-block', lines: 1212, functions: 40, formats: selected.length, requests, pages });
+    assert.equal(pages, selected.length === 1 ? 41 : 43, 'All baseline pages must remain');
+    checks.push({ name: 'code-block', lines: 1212, functions: 40, formats: selected.length, requests, generationRequests, reviewRequests: requests - generationRequests, pages });
     const next = await request(`/code-block-workspaces/${workspace.id}/runs`, 'POST', { expectedRevision: workspace.revision }, 202);
     assert.equal((await poll(`/code-block-runs/${next.id}`)).state, 'Completed');
     assert.equal(requestCount - before, requests, 'Unchanged completed results should not call the LLM again');
@@ -141,8 +149,11 @@ try {
     }
   }
   const requests = requestCount - before;
-  assert.ok(requests <= 32, `Git request count: ${requests}`);
-  checks.push({ name: 'git', lines: 1212, functions: 40, formats: 3, requests, pages });
+  assert.ok(requests <= 64, `Git request count: ${requests}`);
+  assert.ok(batches.filter(b => b.source === 'git' && !b.reviewing).length <= 10, 'Git generation must remain shared across pages');
+  assert.equal(pages, 51, 'All Git baseline pages must remain');
+  const generationRequests = batches.filter(b => b.source === 'git' && !b.reviewing).length;
+  checks.push({ name: 'git', lines: 1212, functions: 40, formats: 3, requests, generationRequests, reviewRequests: requests - generationRequests, pages });
   await writeFile(path.join(fixture, 'result.json'), JSON.stringify({ status: 'passed', syntheticOnly: true, packageRoot, checks }, null, 2));
   console.log(JSON.stringify({ fixture, checks }));
 } catch (error) {

@@ -1,0 +1,40 @@
+  복원할 프로젝트를 확인하는 중...
+  복원할 모든 프로젝트가 최신 상태입니다.
+  DiagramMaker.Api -> C:\Users\고정현\AppData\Local\Temp\DiagramMaker-performance-20260910\src\DiagramMaker.Api\bin\Release\net9.0\DiagramMaker.Api.dll
+  DiagramMaker.Tests -> C:\Users\고정현\AppData\Local\Temp\DiagramMaker-performance-20260910\tests\DiagramMaker.Tests\bin\Release\net9.0\DiagramMaker.Tests.dll
+C:\Users\고정현\AppData\Local\Temp\DiagramMaker-performance-20260910\tests\DiagramMaker.Tests\bin\Release\net9.0\DiagramMaker.Tests.dll(.NETCoreApp,Version=v9.0)에 대한 테스트 실행
+VSTest 버전 17.14.1 (arm64)
+
+테스트 실행을 시작하는 중입니다. 잠시 기다려 주세요...
+지정된 패턴과 일치한 총 테스트 파일 수는 1개입니다.
+powershell : [xUnit.net 00:00:03.23]     DiagramMaker.Tests.SharedSemanticTests.TwelveHundredLinesAndFortyFunctionsShar
+eGenerationAndBoundReviewOutput(language: "cpp") [FAIL]
+위치 줄:2 문자:1
++ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify. ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([xUnit.net 00:0...: "cpp") [FAIL]:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  실패 DiagramMaker.Tests.SharedSemanticTests.TwelveHundredLinesAndFortyFunctionsShareGenerationAndBoundReviewOutput(language: "cpp") [129 ms]
+  오류 메시지:
+   System.IO.IOException : 파이프가 닫히는 중입니다.
+  스택 추적:
+     at System.IO.RandomAccess.WriteAtOffset(SafeFileHandle handle, ReadOnlySpan`1 buffer, Int64 fileOffset)
+   at System.IO.RandomAccess.<>c.<WriteAtOffsetAsync>b__21_0(ValueTuple`4 state)
+   at System.Threading.AsyncOverSyncWithIoCancellation.InvokeAsync[TState](Action`1 action, TState state, CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.IO.Strategies.BufferedFileStreamStrategy.WriteToNonSeekableAsync(ReadOnlyMemory`1 source, CancellationToken cancellationToken)
+   at System.IO.StreamWriter.<FlushAsyncInternal>g__Core|79_0(Boolean flushStream, Boolean flushEncoder, CancellationToken cancellationToken)
+   at System.IO.StreamWriter.WriteAsyncInternal(ReadOnlyMemory`1 source, Boolean appendNewLine, CancellationToken cancellationToken)
+   at DiagramMaker.Services.CodeBlockAnalyzer.AnalyzeAsync(Guid workspaceId, IReadOnlyList`1 blocks, CancellationToken cancellationToken) in C:\Users\고정현\AppData\Local\Temp\DiagramMaker-performance-20260910\src\DiagramMaker.Api\Services\CodeBlockAnalyzer.cs:line 36
+   at DiagramMaker.Tests.SharedSemanticTests.TwelveHundredLinesAndFortyFunctionsShareGenerationAndBoundReviewOutput(String language) in C:\Users\고정현\AppData\Local\Temp\DiagramMaker-performance-20260910\tests\DiagramMaker.Tests\SharedSemanticTests.cs:line 312
+--- End of stack trace from previous location ---
+
+실패!  - 실패:     1, 통과:   230, 건너뜀:     0, 전체:   231, 기간: 6 s - DiagramMaker.Tests.dll (net9.0)
+.NET regression tests failed with exit code 1
+At C:\Users\고정현\AppData\Local\Temp\DiagramMaker-performance-20260910\scripts\offline-common.ps1:61 char:32
++ ... EXITCODE -ne 0) { throw "$Step failed with exit code $LASTEXITCODE" }
++                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (.NET regression...ith exit code 1:String) [], RuntimeException
+    + FullyQualifiedErrorId : .NET regression tests failed with exit code 1
+ 

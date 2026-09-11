@@ -1,0 +1,6 @@
+Diagram Maker will listen only on http://127.0.0.1:5080
+Press Ctrl+C to stop.
+2026-09-11 11:55:10 info: Microsoft.Hosting.Lifetime[14] Now listening on: http://127.0.0.1:5080
+2026-09-11 11:55:10 info: Microsoft.Hosting.Lifetime[0] Application started. Press Ctrl+C to shut down.
+2026-09-11 11:55:10 info: Microsoft.Hosting.Lifetime[0] Hosting environment: Development
+2026-09-11 11:55:10 info: Microsoft.Hosting.Lifetime[0] Content root path: C:\Users\������\AppData\Local\Temp\DiagramMaker-performance-20260910\artifacts\windows-launchers-qH4yX4\app

@@ -26,6 +26,8 @@ public sealed class SemanticExecution : IDisposable
     private readonly long previousElapsed;
     private readonly int attemptNumber;
     private readonly DateTimeOffset startedAt = DateTimeOffset.UtcNow;
+    private (string Group, string? Parent, int Attempt, IReadOnlyList<string> Ancestors)? requestScope;
+    private readonly bool protocolUpgraded;
     public string Stage { get; private set; } = "preparing";
     public string UnitId { get; private set; } = "";
     public int BudgetSeconds { get; }
@@ -51,7 +53,9 @@ public sealed class SemanticExecution : IDisposable
         diagnostics.Sum(d => d.ElapsedMilliseconds), diagnostics.Skip(initialRequests).Sum(d => d.ElapsedMilliseconds),
         diagnostics.LastOrDefault(d => d.State == "Running")?.StartedAt,
         diagnostics.Where(d => d.ErrorCode is not null).Take(1)
-            .Concat(diagnostics.Where(d => d.ErrorCode is not null).TakeLast(3)).DistinctBy(d => d.Id).ToArray());
+            .Concat(diagnostics.Where(d => d.ErrorCode is not null && d.RecoveryState != "Recovered").TakeLast(3))
+            .Concat(diagnostics.Where(d => d.ErrorCode is not null).TakeLast(3)).DistinctBy(d => d.Id).ToArray(),
+        diagnostics.LastOrDefault(), protocolUpgraded);
 
     public SemanticExecution(LlmOptions options, IReadOnlyList<SemanticCheckpoint>? saved, CancellationToken cancellationToken, Func<Task>? onProgress = null,
         IReadOnlyList<LlmDiagnostic>? savedDiagnostics = null, SemanticProgress? savedProgress = null)
@@ -62,6 +66,9 @@ public sealed class SemanticExecution : IDisposable
         budget = CancellationTokenSource.CreateLinkedTokenSource(parent);
         budget.CancelAfter(TimeSpan.FromSeconds(BudgetSeconds));
         checkpoints = (saved ?? []).ToList();
+        protocolUpgraded = savedProgress?.ProtocolUpgraded == true ||
+            checkpoints.Any(c => c.Stage.StartsWith("shared-", StringComparison.Ordinal)) &&
+            !(savedDiagnostics ?? []).Any(d => d.ProtocolVersion == "shared-requests-v3");
         diagnostics = (savedDiagnostics ?? []).Select(d => d.State is "Running" or "Preparing"
             ? d with { State = "Interrupted", ErrorCode = "PROCESS_INTERRUPTED" } : d).ToList();
         initialRequests = diagnostics.Count;
@@ -125,7 +132,7 @@ public sealed class SemanticExecution : IDisposable
         {
             // Operational interruptions remain retryable. Replaying an invalid
             // semantic response on every resume cannot make forward progress.
-            if (error.Code is "LLM_SCHEMA_INVALID" or "LLM_RESPONSE_TRUNCATED" or "LLM_INPUT_LIMIT" or "LLM_CONTEXT_LIMIT" or "LLM_INPUT_CHARACTERS")
+            if (error.Code is "LLM_SCHEMA_INVALID" or "LLM_RESPONSE_TRUNCATED" or "LLM_INPUT_LIMIT" or "LLM_CONTEXT_LIMIT" or "LLM_INPUT_CHARACTERS" or "LLM_OUTPUT_BUDGET")
             {
                 current.checkpoints.RemoveAll(c => c.Key == unitKey);
                 current.checkpoints.Add(new(unitKey, stage, "null", "Failed", error.Code, error.FailureKind, error.RejectedContent,
@@ -139,10 +146,50 @@ public sealed class SemanticExecution : IDisposable
 
     public async Task RecordAsync(LlmDiagnostic record)
     {
+        if (record.ProtocolVersion is null && requestScope is { } scope)
+            record = record with { ProtocolVersion = "shared-requests-v3", RecoveryGroupId = scope.Group,
+                ParentGroupId = scope.Parent, Attempt = scope.Attempt, AncestorGroupIds = scope.Ancestors };
+        if (record.ProtocolVersion is not null && record.ErrorCode is not null && record.RecoveryState is null)
+            record = record with { RecoveryState = "Retrying" };
         var index = diagnostics.FindIndex(d => d.Id == record.Id);
         if (index >= 0) diagnostics[index] = record; else diagnostics.Add(record);
         await NotifyAsync();
     }
+    public IDisposable BeginRequestScope(string group, string? parentGroup, int attempt)
+    {
+        var before = requestScope;
+        // Preflight splits have no HTTP diagnostic of their own. Persist the
+        // complete ancestry on requests so recovery still reaches those leaves after resume.
+        var ancestors = parentGroup is null ? [] : new[] { parentGroup }
+            .Concat(before is { } enclosing && (enclosing.Group == parentGroup || enclosing.Group == group)
+                ? enclosing.Ancestors : []).Distinct(StringComparer.Ordinal).ToArray();
+        requestScope = (group, parentGroup, attempt, ancestors);
+        return new RequestScope(() => requestScope = before);
+    }
+    public async Task SetRecoveryAsync(string group, string state, bool descendants = false, bool protocolOnly = false)
+    {
+        var groups = new HashSet<string> { group };
+        if (descendants)
+        {
+            int before;
+            do
+            {
+                before = groups.Count;
+                foreach (var record in diagnostics.Where(d => d.ParentGroupId is not null && groups.Contains(d.ParentGroupId)))
+                    if (record.RecoveryGroupId is not null) groups.Add(record.RecoveryGroupId);
+            } while (groups.Count > before);
+        }
+        for (var i = 0; i < diagnostics.Count; i++)
+        {
+            var record = diagnostics[i];
+            if (record.ErrorCode is not null && record.RecoveryGroupId is not null &&
+                (groups.Contains(record.RecoveryGroupId) || descendants && record.AncestorGroupIds?.Contains(group) == true) &&
+                record.RecoveryState != "Recovered" && (!protocolOnly || record.ValidationCode != "SemanticReviewRejected"))
+                diagnostics[i] = record with { RecoveryState = state };
+        }
+        await NotifyAsync();
+    }
+    private sealed class RequestScope(Action restore) : IDisposable { public void Dispose() => restore(); }
     public async Task MarkSplitAsync()
     {
         var index = checkpoints.FindIndex(c => c.Key.StartsWith(UnitId, StringComparison.Ordinal));

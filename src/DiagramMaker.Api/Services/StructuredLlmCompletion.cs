@@ -16,16 +16,18 @@ public sealed class StructuredLlmCompletion(ILlmCompletionTransport client)
         string systemPrompt, string userPrompt, JsonElement schema, int maxOutputTokens,
         bool enableThinking, Func<T, string?> validator, CancellationToken cancellationToken,
         double? temperature = null, int? seed = null, bool allowRepair = true, int? inputTokenLimit = null,
-        int? inputCharacterLimit = null, string? requestPurpose = null, Func<T, LlmValidationDetails?>? validationDetails = null)
+        int? inputCharacterLimit = null, string? requestPurpose = null, Func<T, LlmValidationDetails?>? validationDetails = null,
+        IReadOnlySet<string>? responseIds = null)
     {
         var key = JsonSerializer.Serialize(new { systemPrompt, userPrompt, schema, maxOutputTokens, enableThinking, temperature, seed, allowRepair });
         if (inputTokenLimit is not null) key += ":input=" + inputTokenLimit;
         if (inputCharacterLimit is not null) key += ":characters=" + inputCharacterLimit;
         if (requestPurpose is not null) key += ":purpose=" + requestPurpose;
+        if (responseIds is not null) key += ":item-ids-v1=" + JsonSerializer.Serialize(responseIds.Order(StringComparer.Ordinal));
         return (await SemanticExecution.RunAsync("llm-" + typeof(T).Name, key,
             async () => await CompleteCoreAsync(systemPrompt, userPrompt, schema, maxOutputTokens, enableThinking, validator,
                 SemanticExecution.Current?.Token ?? cancellationToken, temperature, seed, allowRepair, inputTokenLimit,
-                inputCharacterLimit, requestPurpose, validationDetails),
+                inputCharacterLimit, requestPurpose, validationDetails, responseIds),
             // A valid rejection is also a completed review. Persist it so a
             // resume continues at repair instead of asking the same review again.
             result => result.Value is not null && validator(result.Value) is null))!;
@@ -35,10 +37,12 @@ public sealed class StructuredLlmCompletion(ILlmCompletionTransport client)
         string systemPrompt, string userPrompt, JsonElement schema, int maxOutputTokens,
         bool enableThinking, Func<T, string?> validator, CancellationToken cancellationToken,
         double? temperature, int? seed, bool allowRepair, int? inputTokenLimit,
-        int? inputCharacterLimit, string? requestPurpose, Func<T, LlmValidationDetails?>? validationDetails)
+        int? inputCharacterLimit, string? requestPurpose, Func<T, LlmValidationDetails?>? validationDetails,
+        IReadOnlySet<string>? responseIds)
     {
-        var ids = new PromptIds();
+        var ids = new PromptIds(responseIds);
         userPrompt = ids.Encode(userPrompt);
+        schema = ids.BindSchema(schema);
         async Task CheckCharacters(string prompt, string? purpose)
         {
             if (inputCharacterLimit is not { } limit || prompt.Length <= limit) return;
@@ -56,6 +60,9 @@ public sealed class StructuredLlmCompletion(ILlmCompletionTransport client)
         if (firstAttempt.Value is not null)
         {
             if (firstAttempt.Value is DiagramMaker.Domain.DiagramPlanReview { Accepted: false }) await RecordValidationAsync("SemanticReviewRejected");
+            if (firstAttempt.Value is SharedSemanticReview review && review.Items.Any(i => i.Issues.Count > 0))
+                await RecordValidationAsync("SemanticReviewRejected", new(review.Items.Count, review.Items.Count,
+                    IssueCodes: review.Items.SelectMany(i => i.Issues).Distinct().Order().ToArray()));
             return new StructuredCompletionResult<T>(firstAttempt.Value, first, RepairUsed: false);
         }
         await RecordValidationAsync(firstAttempt.FailureKind, firstAttempt.ValidationDetails);
@@ -129,12 +136,28 @@ public sealed class StructuredLlmCompletion(ILlmCompletionTransport client)
 
         try
         {
+            if (typeof(T) == typeof(SharedSemanticReview) && SharedReviewValidation.CheckJson(normalized.Json) is { } wireFailure)
+                return new StructuredAttempt<T>(default, wireFailure);
+            if (ids.CheckResponseMembership(normalized.Json, typeof(T) == typeof(SharedSemanticReview)) is { } membership)
+                return new StructuredAttempt<T>(default, membership.Code, membership.Details);
             var value = JsonSerializer.Deserialize<T>(ids.Restore(normalized.Json), JsonOptions);
             if (value is null) return new StructuredAttempt<T>(default, "Deserialization");
             var failureKind = validator(value);
+            var details = failureKind is null ? null : validationDetails?.Invoke(value);
+            if (details is { UnknownItems: > 0 })
+            {
+                var returned = value switch
+                {
+                    SharedSemanticResponse response => response.Items.Where(i => i is not null).Select(i => i.Id),
+                    SharedSemanticReview review => review.Items.Where(i => i is not null).Select(i => i.Id),
+                    _ => []
+                };
+                var nonTarget = ids.CountNonTargetIds(returned);
+                details = details with { NonTargetItems = nonTarget, UnknownAliases = details.UnknownItems - nonTarget };
+            }
             return failureKind is null
                 ? new StructuredAttempt<T>(value, null)
-                : new StructuredAttempt<T>(default, failureKind, validationDetails?.Invoke(value));
+                : new StructuredAttempt<T>(default, failureKind, details);
         }
         catch (JsonException)
         {

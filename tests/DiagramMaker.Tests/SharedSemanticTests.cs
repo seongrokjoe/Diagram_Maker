@@ -298,7 +298,7 @@ public sealed class SharedSemanticTests(ITestOutputHelper output)
     [Theory]
     [InlineData("csharp")]
     [InlineData("cpp")]
-    public async Task TwelveHundredLinesAndFortyFunctionsUseAtMostTwelveRequestsAcrossAvailableFormats(string language)
+    public async Task TwelveHundredLinesAndFortyFunctionsShareGenerationAndBoundReviewOutput(string language)
     {
         var source = string.Join("\n", Enumerable.Range(0, 4).Select(c =>
             $"class Example{c} {{\n" + (language == "cpp" ? "public:\n" : "// methods\n") +
@@ -318,12 +318,21 @@ public sealed class SharedSemanticTests(ITestOutputHelper output)
         var transport = new CodeBlockPipelineTests.CodeTransport();
         var result = await Client(transport).PlanCodeBlockGroupAsync(input, graph, group, selections, Ct);
         output.WriteLine($"{language}: {transport.Requests.Count} requests, {result!.Pages.Count} pages, {selections.Length} types");
-        foreach (var request in transport.Requests.Where(r => r.StructuredSchema!.Value.GetProperty("properties").TryGetProperty("items", out _)))
+        var generations = transport.Requests.Where(r => r.Purpose != "review").ToArray();
+        var reviews = transport.Requests.Where(r => r.Purpose == "review").ToArray();
+        foreach (var request in generations)
         {
             using var json = JsonDocument.Parse(request.UserPrompt);
             output.WriteLine($"Batch: {request.UserPrompt.Length} chars, {json.RootElement.GetProperty("items").GetArrayLength()} annotations");
         }
-        Assert.InRange(transport.Requests.Count, 2, 12);
+        Assert.InRange(generations.Length, 1, 6);
+        Assert.InRange(reviews.Length, generations.Length, 24);
+        Assert.All(reviews, request =>
+        {
+            Assert.Equal(2000, request.MaxOutputTokens);
+            using var json = JsonDocument.Parse(request.UserPrompt);
+            Assert.InRange(json.RootElement.GetProperty("context").GetProperty("items").GetArrayLength(), 1, 16);
+        });
         Assert.True(result.Pages.Count > 40);
         Assert.All(result.Pages.Values, page => Assert.Equal("Semantic", page.Status));
         foreach (var selection in selections)

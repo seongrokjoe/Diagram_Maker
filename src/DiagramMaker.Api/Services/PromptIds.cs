@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 
 namespace DiagramMaker.Services;
 
-internal sealed class PromptIds
+internal sealed class PromptIds(IReadOnlySet<string>? responseIds = null)
 {
     private readonly Dictionary<string, string> names = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> originals = new(StringComparer.Ordinal);
@@ -17,10 +17,11 @@ internal sealed class PromptIds
             Visit(root, "", (value, key) => { if (Reference(key)) reserved.Add(value); return value; });
             var index = names.Count;
             Visit(root, "", (value, key) => {
-                if (!Reference(key) || value.Length < 16) return value;
+                if (!Reference(key) || value.Length < 16 && responseIds?.Contains(value) != true) return value;
                 if (!names.TryGetValue(value, out var alias))
                 {
-                    do { alias = "ref" + (++index); } while (reserved.Contains(alias) || originals.ContainsKey(alias));
+                    var prefix = responseIds?.Contains(value) == true ? "item" : "ref";
+                    do { alias = prefix + (++index); } while (reserved.Contains(alias) || originals.ContainsKey(alias));
                     names[value] = alias; originals[alias] = value;
                 }
                 return alias;
@@ -28,6 +29,31 @@ internal sealed class PromptIds
             return root?.ToJsonString(PromptJson.Options) ?? json;
         }
         catch (JsonException) { return json; }
+    }
+    public JsonElement BindSchema(JsonElement schema)
+    {
+        if (responseIds is null) return schema;
+        var node = JsonNode.Parse(schema.GetRawText())!;
+        node["properties"]!["items"]!["items"]!["properties"]!["id"]!["enum"] =
+            JsonSerializer.SerializeToNode(responseIds.Select(id => names.GetValueOrDefault(id, id)).Order(StringComparer.Ordinal));
+        return JsonSerializer.SerializeToElement(node);
+    }
+    public int CountNonTargetIds(IEnumerable<string> ids) => ids.Count(id =>
+        responseIds?.Contains(id) != true && names.ContainsKey(id));
+    public SharedValidationProblem? CheckResponseMembership(string json, bool review)
+    {
+        if (responseIds is null) return null;
+        using var document = JsonDocument.Parse(json);
+        if (!document.RootElement.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array) return null;
+        var expected = responseIds.Select(id => names.GetValueOrDefault(id, id)).ToHashSet();
+        var returned = items.EnumerateArray().Where(i => i.ValueKind == JsonValueKind.Object &&
+            i.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String).Select(i => i.GetProperty("id").GetString()!).ToArray();
+        var unknown = returned.Where(id => !expected.Contains(id)).ToArray();
+        if (unknown.Length == 0) return null;
+        var nonTarget = unknown.Count(id => originals.TryGetValue(id, out var original) && !responseIds.Contains(original));
+        return new(review ? "SharedReviewUnknownIds" : "SharedUnknownIds", new(expected.Count, items.GetArrayLength(),
+            expected.Except(returned).Count(), returned.Length - returned.Distinct().Count(), unknown.Length,
+            NonTargetItems: nonTarget, UnknownAliases: unknown.Length - nonTarget));
     }
     public string Restore(string json)
     {

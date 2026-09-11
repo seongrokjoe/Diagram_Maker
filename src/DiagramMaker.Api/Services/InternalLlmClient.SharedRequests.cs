@@ -13,7 +13,7 @@ public sealed partial class InternalLlmClient
     {
         var available = selections.Select(s => s.DiagramType).Distinct().ToArray();
         var outputTokens = Math.Min(thinking ? GetThinkingOutputTokens() : Math.Min(8000, _options.DiagramOutputTokens), _options.OutputHardLimit);
-        var reviewTokens = Math.Min(thinking ? GetThinkingOutputTokens() : Math.Min(2000, _options.ReviewOutputTokens), _options.OutputHardLimit);
+        var reviewTokens = Math.Min(thinking ? GetThinkingOutputTokens() : _options.ReviewOutputTokens, _options.OutputHardLimit);
         var inputLimit = Math.Min(48000, Math.Min(_options.MaxInputTokens, _options.MaxContextTokens - outputTokens - 4096));
         var characterLimit = _options.MaxInputCharacters - Math.Min(3500, _options.MaxInputCharacters / 3);
         var instructions = selections.Select(s => s.RefinementInstruction).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct().ToArray();
@@ -32,7 +32,7 @@ public sealed partial class InternalLlmClient
         string Serialize(object value) => masker.Mask(JsonSerializer.Serialize(value, PromptJson.Options));
         bool Fits(IReadOnlyList<SharedSemanticItem> batch)
         {
-            var encoded = new PromptIds().Encode(Serialize(Context(batch)));
+            var encoded = new PromptIds(batch.Select(i => i.Id).ToHashSet()).Encode(Serialize(Context(batch)));
             return encoded.Length <= characterLimit && batch.Count <= Math.Max(1, Math.Min(outputTokens, 8000) / 100) &&
                 Encoding.UTF8.GetByteCount(encoded) + Math.Min(outputTokens, Math.Min(8000, inputLimit / 6)) +
                 Math.Min(4096, inputLimit / 4) <= inputLimit;
@@ -64,10 +64,11 @@ public sealed partial class InternalLlmClient
         return new(string.Join("\n", summaries.Distinct()).TruncateSummary(), recommendation, annotations);
 
         async Task<SharedSemanticResponse?> GenerateBatch(IReadOnlyList<SharedSemanticItem> batch, int depth,
-            int firstAttempt = 0, object? inheritedRejected = null, object? inheritedIssues = null)
+            int firstAttempt = 0, object? inheritedRejected = null, object? inheritedIssues = null, string? parentGroup = null)
         {
             if (consecutiveFailures >= 3) return null;
-            var key = Serialize(new { policy = 2, context = Context(batch), firstAttempt, inheritedRejected, inheritedIssues });
+            var key = Serialize(new { policy = "shared-requests-v3", context = Context(batch), firstAttempt, inheritedRejected, inheritedIssues });
+            var recoveryGroup = SemanticExecution.Hash("generation:" + key)[..16];
             var result = await SemanticExecution.RunAsync("shared-" + sourceKind, key, async () =>
             {
                 var remaining = batch;
@@ -79,6 +80,7 @@ public sealed partial class InternalLlmClient
                 for (var attempt = firstAttempt; attempt < 2; attempt++)
                 {
                     var ids = remaining.Select(i => i.Id).ToHashSet();
+                    using var requestScope = SemanticExecution.Current?.BeginRequestScope(recoveryGroup, parentGroup, attempt + 1);
                     try
                     {
                         var context = Context(remaining);
@@ -99,13 +101,16 @@ public sealed partial class InternalLlmClient
                             value => SharedSemanticValidation.Check(value, ids, available)?.Code, ct,
                             _options.NaturalDiagramTemperature, _options.NaturalDiagramSeed, allowRepair: false,
                             inputTokenLimit: inputLimit, inputCharacterLimit: characterLimit, requestPurpose: attempt == 0 ? "generation" : "repair",
-                            validationDetails: value => SharedSemanticValidation.Check(value, ids, available)?.Details);
+                            validationDetails: value => SharedSemanticValidation.Check(value, ids, available)?.Details, responseIds: ids);
+                        if (SemanticExecution.Current is { } generated)
+                            await generated.SetRecoveryAsync(recoveryGroup, "Recovered", protocolOnly: true);
                         summary = planned.Value.Summary; recommended = planned.Value.RecommendedType;
-                        var review = await ReviewBatch(remaining, planned.Value, depth);
+                        var review = await ReviewBatch(remaining, planned.Value, depth, recoveryGroup);
                         approved.AddRange(review.Approved);
-                        if (review.RetryIds.Count == 0) break;
-                        remaining = remaining.Where(i => review.RetryIds.Contains(i.Id)).ToArray();
-                        rejected = planned.Value; issues = review.Issues;
+                        if (review.Rejected.Count == 0) break;
+                        var rejectedIds = review.Rejected.Select(i => i.Id).ToHashSet();
+                        remaining = remaining.Where(i => rejectedIds.Contains(i.Id)).ToArray();
+                        rejected = planned.Value; issues = SharedReviewValidation.RepairIssues(review.Rejected);
                     }
                     catch (LlmClientException error) when (SharedLimit(error))
                     {
@@ -116,7 +121,7 @@ public sealed partial class InternalLlmClient
                             foreach (var part in new[] { remaining.Take(half).ToArray(), remaining.Skip(half).ToArray() })
                             {
                                 var child = await GenerateBatch(part, depth + 1, attempt,
-                                    SelectRejected(rejected, part.Select(i => i.Id).ToHashSet()), issues);
+                                    SelectRejected(rejected, part.Select(i => i.Id).ToHashSet()), issues, recoveryGroup);
                                 if (child is not null) { approved.AddRange(child.Items); summary = child.Summary; recommended = child.RecommendedType; }
                             }
                         }
@@ -131,43 +136,87 @@ public sealed partial class InternalLlmClient
                 }
                 return new SharedSemanticResponse(summary, recommended, approved);
             }, value => value.Items.Count > 0);
+            if (SemanticExecution.Current is { } finished)
+                await finished.SetRecoveryAsync(recoveryGroup, result?.Items.Count == batch.Count ? "Recovered" : "Exhausted", descendants: true);
             consecutiveFailures = result?.Items.Count > 0 ? 0 : consecutiveFailures + 1;
             return result;
         }
 
-        async Task<SharedReviewOutcome> ReviewBatch(IReadOnlyList<SharedSemanticItem> batch, SharedSemanticResponse proposed, int depth)
+        async Task<SharedReviewOutcome> ReviewBatch(IReadOnlyList<SharedSemanticItem> batch, SharedSemanticResponse proposed,
+            int depth, string parentGroup, int correctionUsed = 0)
         {
             var prompt = Serialize(new { context = Context(batch), proposed });
-            return (await SemanticExecution.RunAsync("shared-review", prompt, async () =>
+            var key = Serialize(new { policy = "shared-review-v2", prompt, correctionUsed });
+            var group = SemanticExecution.Hash("review:" + key)[..16];
+            var ids = batch.Select(i => i.Id).ToHashSet();
+            var outcome = (await SemanticExecution.RunAsync("shared-review", key, async () =>
             {
-                try
+                using var budgetScope = SemanticExecution.Current?.BeginRequestScope(group, parentGroup, correctionUsed + 1);
+                var needed = SharedReviewValidation.OutputBudget(prompt, ids);
+                if (needed > reviewTokens)
                 {
-                    var review = await structured.CompleteAsync<DiagramPlanReview>(EvidencePolicy +
-                        "Independently check each annotation against its supplied source and facts. Reject invented roles, missing core actions or assertions, reversed branch polarity, " +
-                        "unsupported business meaning, mixed function scopes, and retained behavior described as a new Git change. " +
-                        "Every annotated preparation chain must express all its observed outcomes. Return accepted and issues, without source copies.",
-                        prompt, PlanReviewSchema, reviewTokens, thinking,
-                        value => value.Issues is null || value.Accepted == (value.Issues.Count > 0) ? "InvalidReview" : null,
-                        ct, allowRepair: false, inputTokenLimit: inputLimit, inputCharacterLimit: characterLimit, requestPurpose: "review");
-                    return review.Value.Accepted ? new SharedReviewOutcome(proposed.Items, [], []) :
-                        new SharedReviewOutcome([], batch.Select(i => i.Id).ToArray(), review.Value.Issues);
+                    if (batch.Count > 1 && depth < 12) return await Split(correctionUsed);
+                    if (SemanticExecution.Current is { } execution)
+                        await execution.RecordAsync(new(Guid.NewGuid().ToString("N"), execution.Stage, execution.UnitId,
+                            "Failed", DateTimeOffset.UtcNow, OutputLimit: reviewTokens, ErrorCode: "LLM_OUTPUT_BUDGET",
+                            Purpose: "review", RequiredOutputTokens: needed));
+                    return new SharedReviewOutcome([], [], ids.ToArray());
                 }
-                catch (LlmClientException error) when (SharedLimit(error))
+                for (var correction = correctionUsed; correction < 2; correction++)
                 {
-                    if (batch.Count < 2 || depth >= 12) return new SharedReviewOutcome([], [], ["ReviewInputLimit"]);
+                    using var requestScope = SemanticExecution.Current?.BeginRequestScope(group, parentGroup, correction + 1);
+                    try
+                    {
+                        var reviewPrompt = correction == 0 ? prompt : Serialize(new { context = Context(batch), proposed,
+                            correction = "The previous review response violated the JSON contract or was truncated. Return compact JSON only. Copy every items.id once, with issues as an array of at most three allowed codes; use an empty array for an approved item. Do not include accepted, explanations or source copies." });
+                        var review = await structured.CompleteAsync<SharedSemanticReview>(EvidencePolicy +
+                            "Independently check EVERY annotation against its own supplied source and facts. Return items with the exact annotation id and issues. " +
+                            "Use an empty issues array only when the item passes. Otherwise use at most three distinct issue codes: " +
+                            "missing_action for missing core actions or assertions; incorrect_outcome for wrong arguments, assignments or outcomes; " +
+                            "reversed_condition for reversed branch polarity; invented_call for unsupported calls or execution order; " +
+                            "unsupported_role for invented role or business meaning; mixed_scope for mixed function scopes; " +
+                            "incorrect_change for wrong added/removed/retained Git behavior; insufficient_evidence for unsupported claims. " +
+                            "Every preparation chain must express all observed outcomes. Return compact JSON, no accepted flag, prose or source copies.",
+                            reviewPrompt, SharedReviewValidation.Schema(ids.Count), reviewTokens, thinking,
+                            value => SharedReviewValidation.Check(value, ids)?.Code, ct, allowRepair: false,
+                            inputTokenLimit: inputLimit, inputCharacterLimit: characterLimit, requestPurpose: "review",
+                            validationDetails: value => SharedReviewValidation.Check(value, ids)?.Details, responseIds: ids);
+                        if (SemanticExecution.Current is { } validated)
+                            await validated.SetRecoveryAsync(group, "Recovered", protocolOnly: true);
+                        var rejected = review.Value.Items.Where(i => i.Issues.Count > 0).ToArray();
+                        var rejectedIds = rejected.Select(i => i.Id).ToHashSet();
+                        return new SharedReviewOutcome(proposed.Items.Where(i => !rejectedIds.Contains(i.Id)).ToArray(), rejected, []);
+                    }
+                    catch (LlmClientException error) when (SharedLimit(error) || error.Code == "LLM_SCHEMA_INVALID")
+                    {
+                        // A review protocol failure never consumes an annotation repair.
+                        if (error.Code == "LLM_SCHEMA_INVALID" && correction == 0 ||
+                            error.Code == "LLM_RESPONSE_TRUNCATED" && batch.Count == 1 && correction == 0) continue;
+                        if (batch.Count > 1 && depth < 12) return await Split(correction);
+                        return new SharedReviewOutcome([], [], ids.ToArray());
+                    }
+                }
+                return new SharedReviewOutcome([], [], ids.ToArray());
+
+                async Task<SharedReviewOutcome> Split(int used)
+                {
                     if (SemanticExecution.Current is { } execution) await execution.MarkSplitAsync();
                     var approved = new List<SharedSemanticAnnotation>();
-                    var retries = new List<string>(); var issues = new List<string>();
+                    var rejected = new List<SharedItemReview>(); var failed = new List<string>();
                     var half = (batch.Count + 1) / 2;
                     foreach (var part in new[] { batch.Take(half).ToArray(), batch.Skip(half).ToArray() })
                     {
-                        var ids = part.Select(i => i.Id).ToHashSet();
-                        var result = await ReviewBatch(part, proposed with { Items = proposed.Items.Where(i => ids.Contains(i.Id)).ToArray() }, depth + 1);
-                        approved.AddRange(result.Approved); retries.AddRange(result.RetryIds); issues.AddRange(result.Issues);
+                        var partIds = part.Select(i => i.Id).ToHashSet();
+                        var result = await ReviewBatch(part, proposed with { Items = proposed.Items.Where(i => partIds.Contains(i.Id)).ToArray() }, depth + 1, group, used);
+                        approved.AddRange(result.Approved); rejected.AddRange(result.Rejected); failed.AddRange(result.FailedIds);
                     }
-                    return new SharedReviewOutcome(approved, retries, issues.Distinct().ToArray());
+                    return new SharedReviewOutcome(approved, rejected, failed);
                 }
             }, _ => true))!;
+            if (SemanticExecution.Current is { } finished)
+                await finished.SetRecoveryAsync(group, outcome.FailedIds.Count > 0 ? "Exhausted" :
+                    outcome.Rejected.Count > 0 ? "Retrying" : "Recovered");
+            return outcome;
         }
     }
 
@@ -199,4 +248,4 @@ public sealed partial class InternalLlmClient
 }
 
 internal sealed record SharedReviewOutcome(IReadOnlyList<SharedSemanticAnnotation> Approved,
-    IReadOnlyList<string> RetryIds, IReadOnlyList<string> Issues);
+    IReadOnlyList<SharedItemReview> Rejected, IReadOnlyList<string> FailedIds);

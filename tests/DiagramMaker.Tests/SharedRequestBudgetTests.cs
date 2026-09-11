@@ -51,6 +51,7 @@ public sealed class SharedRequestBudgetTests
     public async Task ReviewCharacterOverflowSplitsOnlyReviewsAndResumesTwiceWithoutRegeneration()
     {
         var options = OptionsForTest();
+        options.ReviewOutputTokens = 10000; // Exercise the independent character boundary, not proactive output splitting.
         using var handler = new BudgetHandler();
         using var transport = new VllmClient(options, handler: handler);
         var client = new InternalLlmClient(Options.Create(options), new(), new(), transport, new(transport));
@@ -154,8 +155,10 @@ public sealed class SharedRequestBudgetTests
             using var data = JsonDocument.Parse(prompt);
             var root = data.RootElement;
             object response;
-            if (body.RootElement.GetProperty("structured_outputs").GetProperty("json").GetProperty("properties").TryGetProperty("accepted", out _))
-            { ReviewRequests++; response = new DiagramPlanReview(true, []); }
+            if (body.RootElement.GetProperty("structured_outputs").GetProperty("json").GetProperty("properties")
+                .GetProperty("items").GetProperty("items").GetProperty("properties").TryGetProperty("issues", out _))
+            { ReviewRequests++; response = new SharedSemanticReview(root.GetProperty("context").GetProperty("items").EnumerateArray()
+                .Select(i => new SharedItemReview(i.GetProperty("id").GetString()!, [])).ToArray()); }
             else
             {
                 GenerationRequests++;
@@ -164,7 +167,7 @@ public sealed class SharedRequestBudgetTests
                 {
                     RepairRequests++;
                     Assert.Equal(JsonValueKind.Object, rejected.ValueKind);
-                    Assert.All(rejected.GetProperty("items").EnumerateArray(), i => Assert.StartsWith("ref", i.GetProperty("id").GetString()));
+                    Assert.All(rejected.GetProperty("items").EnumerateArray(), i => Assert.StartsWith("item", i.GetProperty("id").GetString()));
                 }
                 if (root.TryGetProperty("context", out var context)) root = context;
                 var annotations = root.GetProperty("items").EnumerateArray().Select(item =>
