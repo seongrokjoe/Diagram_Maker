@@ -6,6 +6,14 @@
 
 ## 현재 상태
 
+- 2026-09-11 perf.3 배포 완료: 구현·테스트·문서·최신 Windows 패키지·선별 검증 증적과
+  perf.2 ZIP/SHA 삭제를 커밋 `900504bbb15a7843eb8a67447eee317c2218191b`로 확정하고
+  `origin/main`에 일반 push했다. `git ls-remote origin refs/heads/main`으로 원격 SHA 일치를 확인했고
+  push 직후 작업 트리는 깨끗했다. perf.3 ZIP SHA-256은
+  `a05aad6cf07c24170a6d7fa103806ac74febf92ba330053f51df24e4182659c8`이다.
+  다음: 사내 승인 LLM 설정과 실제 문제 코드가 제공되는 환경에서 의미 품질·오류 복구·완료 시간을 확인한다.
+  PostgreSQL 실연결도 해당 서버/자격 증명이 제공되는 환경에서 별도 확인한다. 로컬 미해결 실패는 없다.
+
 - 2026-09-11 perf.3 배포 푸시·구버전 정리 요청 수신: 사용자 지시에 따라 배포 폴더의 perf.2 ZIP과
   체크섬을 삭제하고 최신 perf.3 ZIP/SHA만 남겼다. 삭제 파일의 해시·크기와 복구 커밋 `affd8e9`는
   `artifacts/perf3-validation/removed-packages.json`에 기록했다. 소스 218개 및 perf.3 ZIP의 검증 시점
