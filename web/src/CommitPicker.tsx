@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { api } from "./api";
 import type { GitCommit } from "./types";
 
@@ -29,7 +29,42 @@ export function CommitPicker({
   const [shaInput, setShaInput] = useState("");
   const [resolving, setResolving] = useState(false);
   const [shaError, setShaError] = useState("");
+  const [open, setOpen] = useState(false);
+  const [popupStyle, setPopupStyle] = useState<CSSProperties>({});
+  const picker = useRef<HTMLFieldSetElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const search = useRef<HTMLInputElement>(null);
+  const popupId = useId();
   const requestSequence = useRef(0);
+  const resolveSequence = useRef(0);
+  const currentValue = useRef(value);
+  currentValue.current = value;
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    function position() {
+      const bounds = trigger.current?.getBoundingClientRect();
+      if (!bounds) return;
+      const below = window.innerHeight - bounds.bottom - 12;
+      const above = bounds.top - 12;
+      const upward = below < 340 && above > below;
+      setPopupStyle({ top: upward ? "auto" : "calc(100% + 6px)", bottom: upward ? "calc(100% + 6px)" : "auto", maxHeight: Math.max(160, upward ? above : below) });
+    }
+    position();
+    search.current?.focus();
+    window.addEventListener("resize", position);
+    window.addEventListener("scroll", position, true);
+    return () => { window.removeEventListener("resize", position); window.removeEventListener("scroll", position, true); };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    function outside(event: PointerEvent) {
+      if (event.target instanceof Node && !picker.current?.contains(event.target)) setOpen(false);
+    }
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, [open]);
 
   useEffect(() => {
     const normalized = query.trim();
@@ -46,7 +81,12 @@ export function CommitPicker({
     setError("");
     setShaInput("");
     setShaError("");
+    setOpen(false);
+    setResolving(false);
+    setLoading(false);
     requestSequence.current += 1;
+    resolveSequence.current += 1;
+    return () => { requestSequence.current += 1; resolveSequence.current += 1; };
   }, [repositoryId]);
 
   useEffect(() => {
@@ -60,9 +100,9 @@ export function CommitPicker({
         const visible = items.slice(0, pageSize);
         setCommits(visible);
         setHasMore(items.length > pageSize);
-        const current = visible.find((commit) => commit.sha === value);
+        const current = visible.find((commit) => commit.sha === currentValue.current);
         if (current) setSelected(current);
-        if (autoSelectFirst && !value && debouncedQuery === "" && visible[0]) {
+        if (autoSelectFirst && !currentValue.current && debouncedQuery === "" && visible[0]) {
           setSelected(visible[0]);
           onSelect(visible[0]);
         }
@@ -73,6 +113,7 @@ export function CommitPicker({
       .finally(() => {
         if (requestSequence.current === sequence) setLoading(false);
       });
+    return () => { requestSequence.current += 1; };
   }, [repositoryId, debouncedQuery]);
 
   useEffect(() => {
@@ -91,12 +132,32 @@ export function CommitPicker({
   }, [value, commits, repositoryId, selected?.sha]);
 
   function choose(commit: GitCommit) {
+    resolveSequence.current += 1;
+    setResolving(false);
     setSelected(commit);
     onSelect(commit);
+    setOpen(false);
+    trigger.current?.focus();
+  }
+
+  function focusOption(index: number) {
+    const options = picker.current?.querySelectorAll<HTMLButtonElement>('[role="option"]');
+    const option = options?.[index];
+    option?.focus({ preventScroll: true });
+    option?.scrollIntoView({ block: "nearest" });
+  }
+
+  function optionKey(event: KeyboardEvent, index: number) {
+    const target = event.key === "ArrowDown" ? Math.min(index + 1, commits.length - 1)
+      : event.key === "ArrowUp" ? Math.max(index - 1, 0)
+      : event.key === "Home" ? 0 : event.key === "End" ? commits.length - 1 : null;
+    if (target !== null) { event.preventDefault(); focusOption(target); }
   }
 
   async function loadMore() {
     if (!repositoryId || loading || !hasMore) return;
+    // Keep focus inside the popup while the paging button disables or disappears.
+    search.current?.focus({ preventScroll: true });
     const sequence = ++requestSequence.current;
     setLoading(true);
     setError("");
@@ -114,44 +175,61 @@ export function CommitPicker({
   }
 
   async function resolveSha() {
+    if (!repositoryId || resolving) return;
     const revision = shaInput.trim();
     setShaError("");
     if (!/^[0-9a-fA-F]{7,64}$/.test(revision)) {
       setShaError("7~64자리의 16진수 커밋 SHA를 입력하세요.");
       return;
     }
+    picker.current?.querySelector<HTMLInputElement>(".sha-input-row input")?.focus({ preventScroll: true });
     setResolving(true);
+    const sequence = ++resolveSequence.current;
     try {
       const commit = await api.resolveCommit(repositoryId, revision);
-      setSelected(commit);
-      onSelect(commit);
+      if (resolveSequence.current !== sequence) return;
+      choose(commit);
       setShaInput("");
     } catch (reason) {
-      setShaError(messageOf(reason, "해당 커밋을 찾지 못했습니다."));
+      if (resolveSequence.current === sequence) setShaError(messageOf(reason, "해당 커밋을 찾지 못했습니다."));
     } finally {
-      setResolving(false);
+      if (resolveSequence.current === sequence) setResolving(false);
     }
   }
 
   const selectedCommit = selected?.sha === value ? selected : commits.find((commit) => commit.sha === value) ?? null;
-  return <fieldset className="commit-picker" disabled={!repositoryId}>
+  return <fieldset ref={picker} className="commit-picker" disabled={!repositoryId}
+    onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false); }}
+    onKeyDown={event => { if (event.key === "Escape" && open) { event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus(); } }}>
     <legend>{label}</legend>
     <p className="help">기본 브랜치 <strong>{defaultBranch || "-"}</strong>의 전체 이력에서 찾습니다.</p>
-    {selectedCommit && <div className="selected-commit" aria-live="polite">
-      <strong>{oneLine(selectedCommit.message)}</strong>
-      <span><code>{selectedCommit.sha.slice(0, 12)}</code> · {selectedCommit.authorName || "작성자 미상"} · {formatDate(selectedCommit.authoredAt)}</span>
-    </div>}
+    <div className="commit-dropdown-anchor">
+    <button ref={trigger} type="button" className="commit-trigger" aria-label={`${label} 선택`} aria-expanded={open} aria-haspopup="dialog" aria-controls={open ? popupId : undefined}
+      onClick={() => setOpen(current => !current)} onKeyDown={event => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setOpen(true); } }}>
+      <span className="commit-trigger-content" aria-live="polite">
+        <strong>{selectedCommit ? oneLine(selectedCommit.message) : value ? value : loading ? "커밋을 불러오는 중…" : "커밋 선택"}</strong>
+        <span>{selectedCommit ? <><code>{selectedCommit.sha.slice(0, 12)}</code> · {selectedCommit.authorName || "작성자 미상"} · {formatDate(selectedCommit.authoredAt)}</> : "메시지, SHA 또는 작성자로 검색"}</span>
+      </span><span className="commit-chevron" aria-hidden="true">{open ? "▴" : "▾"}</span>
+    </button>
+    {open && <div id={popupId} className="commit-popover" role="dialog" aria-label={`${label} 찾기`} style={popupStyle}>
     <label>메시지, SHA 또는 작성자 검색
-      <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="검색어 2자 이상" />
+      <input ref={search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="검색어 2자 이상" aria-controls={`${popupId}-results`}
+        onKeyDown={event => {
+          if (event.nativeEvent.isComposing) return;
+          if (event.key === "Enter") event.preventDefault();
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); focusOption(event.key === "ArrowDown" ? 0 : commits.length - 1); }
+        }} />
     </label>
     {query.trim().length === 1 && <p className="help">검색어를 두 글자 이상 입력하면 전체 이력을 검색합니다.</p>}
-    <div className="commit-results" role="listbox" aria-label={`${label} 검색 결과`}>
+    <div id={`${popupId}-results`} className="commit-results" role="listbox" aria-label={`${label} 검색 결과`} aria-busy={loading}>
       {commits.map((commit) => <button
         type="button"
         role="option"
         aria-selected={commit.sha === value}
         className={commit.sha === value ? "active" : ""}
         key={commit.sha}
+        tabIndex={-1}
+        onKeyDown={event => optionKey(event, commits.indexOf(commit))}
         onClick={() => choose(commit)}
       >
         <strong>{oneLine(commit.message)}</strong>
@@ -159,22 +237,26 @@ export function CommitPicker({
       </button>)}
       {!loading && commits.length === 0 && <p className="commit-empty">표시할 커밋이 없습니다.</p>}
     </div>
-    {error && <p className="error-text">{error}</p>}
+    {error && <p className="error-text" role="alert">{error}</p>}
     {hasMore && <button type="button" className="secondary commit-more" disabled={loading} onClick={() => void loadMore()}>{loading ? "불러오는 중..." : "이전 커밋 50개 더 보기"}</button>}
     {loading && commits.length === 0 && <p className="help">커밋을 불러오는 중입니다...</p>}
     <details className="sha-picker">
       <summary>목록에 없는 커밋 SHA 직접 입력</summary>
       <div className="sha-input-row">
         <input
+          aria-label={`${label} SHA 직접 입력`}
           value={shaInput}
           onChange={(event) => setShaInput(event.target.value)}
-          onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void resolveSha(); } }}
+          onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); void resolveSha(); } }}
           placeholder="7자리 이상의 커밋 SHA"
         />
         <button type="button" className="secondary" disabled={resolving || !shaInput.trim()} onClick={() => void resolveSha()}>{resolving ? "확인 중" : "SHA 확인"}</button>
       </div>
-      {shaError && <p className="error-text">{shaError}</p>}
+      {shaError && <p className="error-text" role="alert">{shaError}</p>}
     </details>
+    </div>}
+    </div>
+    {!open && error && <p className="error-text" role="alert">{error}</p>}
   </fieldset>;
 }
 

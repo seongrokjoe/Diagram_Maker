@@ -100,6 +100,7 @@ export type DiagramChangeMarker = {
 };
 
 export type DiagramEdge = {
+  relationOrigin?: string; originalExpression?: string; returnValue?: string; terminationTarget?: string;
   context?: CodeContext;
   id: string;
   sourceId: string;
@@ -144,7 +145,8 @@ export type DiagramExplanation = {
 };
 
 export type SequenceBlock = { id: string; kind: string; label: string; children: SequenceBlock[]; edgeId?: string;
-  participantIds?: string[]; detailPageId?: string };
+  participantIds?: string[]; detailPageId?: string; evidenceIds?: string[]; sourceFactIds?: string[];
+  originalExpression?: string; terminationTarget?: string };
 
 export type DiagramAvailability = { type: string; available: boolean; reason?: string };
 

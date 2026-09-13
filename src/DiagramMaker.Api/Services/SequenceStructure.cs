@@ -17,7 +17,7 @@ public static class SequenceStructure
             foreach (var block in items)
             {
                 if (string.IsNullOrWhiteSpace(block.Id) || !ids.Add(block.Id) || block.Children is null ||
-                    block.Kind is not ("message" or "sequence" or "scenario" or "alt" or "branch" or "loop" or "note" or "unordered"))
+                    block.Kind is not ("message" or "sequence" or "scenario" or "alt" or "branch" or "loop" or "note" or "unordered" or "break" or "opt"))
                     return "Invalid or duplicate sequence block.";
                 if (block.ParticipantIds?.Any(id => !nodeIds.Contains(id)) == true) return "Unknown note participant.";
                 if (block.Kind == "message" && (block.EdgeId is null || !edgeIds.Contains(block.EdgeId) ||

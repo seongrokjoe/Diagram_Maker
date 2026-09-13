@@ -33,13 +33,9 @@ public sealed class DiagramProjectionService
 
         foreach (var type in types)
         {
-            if (type == "state")
-            {
-                availability.Add(new DiagramAvailability(type, false, "정적 분석 결과에 명시적인 상태 전이 근거가 없어 생성하지 않습니다."));
-                continue;
-            }
             var ir = type switch
             {
+                "state" => ExecutionStateProjection.Build(repositoryName, graph, comparison, selected, direction),
                 "class" => BuildClass(repositoryName, graph, comparison, selected, changes, contextFilesTruncated, maximumNodes, maximumEdges, direction, relationDepth, focusOnChanges),
                 "sequence" => BuildSequence(repositoryName, graph, comparison, selected, changes, contextFilesTruncated, maximumNodes, maximumEdges, direction, focusOnChanges),
                 "code-relation" => BuildCodeRelation(repositoryName, graph, comparison, selected, changes, contextFilesTruncated, maximumNodes, maximumEdges, direction, relationDepth, focusOnChanges),
@@ -49,6 +45,7 @@ public sealed class DiagramProjectionService
             {
                 availability.Add(new DiagramAvailability(type, false, type == "flowchart"
                     ? "지원하지 않는 제어 구문이 있거나 제어 흐름 근거가 없어 정확한 흐름도를 제공할 수 없습니다."
+                    : type == "state" ? "동일 변수의 조건과 대입으로 확인된 상태 전이 근거가 없습니다."
                     : "선택한 변경과 연결되는 호출·타입 관계 근거가 없어 이 유형을 생성할 수 없습니다."));
                 continue;
             }
@@ -125,6 +122,8 @@ public sealed class DiagramProjectionService
         IReadOnlyDictionary<string, string> changes, bool truncated, int maxNodes, int maxEdges, string direction,
         bool focusOnChanges)
     {
+        if (graph.Executions is { Count: > 0 })
+            return GitExecutionProjection.Build(repositoryName, graph, comparison, selected, direction);
         var callable = selected.Where(id => graph.Identities.FirstOrDefault(identity => identity.Id == id)?.Kind is "method" or "constructor" or "function")
             .ToHashSet(StringComparer.Ordinal);
         if (callable.Count == 0) callable = selected.ToHashSet(StringComparer.Ordinal);

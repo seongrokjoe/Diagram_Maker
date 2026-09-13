@@ -11,9 +11,9 @@ public sealed class CodeBlockProjectionService(DiagramPresetCatalog presets)
     {
         var symbols = graph.Symbols.Where(s => group.BlockIds.Contains(s.BlockId)).ToArray();
         var ids = symbols.Select(s => s.Id).ToHashSet();
-        var calls = symbols.SelectMany(s => s.Calls).Any(c => c.TargetSymbolId is not null && ids.Contains(c.TargetSymbolId));
+        var calls = symbols.SelectMany(s => s.Calls).Any();
         return [new("flowchart", symbols.Any(s => s.Steps.Count > 0), "실행 가능한 함수 본문 또는 처리 구문이 필요합니다."),
-            new("sequence", calls, "코드로 확인된 호출 대상이 필요합니다. 사용자 관계는 코드 관계도에서 볼 수 있습니다."),
+            new("sequence", calls, "코드에서 관측된 호출이 필요합니다. 미해결 대상은 구현 미확인으로 표시합니다."),
             new("class", symbols.Any(IsType), "실제 클래스·구조체·인터페이스 선언이 필요합니다."),
             new("state", graph.Transitions.Any(t => ids.Contains(t.SymbolId)), "동일 상태 변수의 조건과 대입으로 확인된 전이가 필요합니다."),
             new("code-relation", symbols.Length > 0, "함수 또는 타입 선언이나 처리 구문이 필요합니다.")];
@@ -42,8 +42,14 @@ public sealed class CodeBlockProjectionService(DiagramPresetCatalog presets)
         }
         else if (selection.DiagramType == "sequence")
         {
-            foreach (var symbol in symbols.Where(s => s.Calls.Any(c => c.TargetSymbolId is not null && ids.Contains(c.TargetSymbolId))))
+            foreach (var symbol in symbols.Where(s => s.Calls.Count > 0))
             {
+                if (symbol.Execution is { Count: > 0 })
+                {
+                    pages.Add(new CodeBlockCandidatePage(Detail(symbol.Id), symbol.Name,
+                        ExecutionSequenceProjection.Build(symbol, graph, direction), SymbolIds: [symbol.Id], BlockIds: [symbol.BlockId]));
+                    continue;
+                }
                 var edges = symbol.Calls.Where(c => c.TargetSymbolId is not null && ids.Contains(c.TargetSymbolId)).OrderBy(c => c.Order).Select(c =>
                     Edge(c.Id, symbol.Id, c.TargetSymbolId!, "message", c.Statement ?? c.Name,
                         graph.Evidence.Where(e => e.Location == c.Location).Select(e => e.Id).ToArray(), [c.Id], "code") with

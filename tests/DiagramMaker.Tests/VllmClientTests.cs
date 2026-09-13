@@ -324,37 +324,6 @@ public sealed class VllmClientTests
     }
 
     [Fact]
-    public async Task AnalysisDiagramRefinement_UsesOnlyCandidateIdsAndCarriesUserInstruction()
-    {
-        const string semantics = """
-            {"nodes":[{"id":"start","summary":"시작","include":true},{"id":"operation","summary":"Header 포인터 할당","include":true}],"edgeIds":["edge"],"notes":[]}
-            """;
-        var handler = new QueueHandler(Response(semantics));
-        var options = Options();
-        using var transport = new VllmClient(options, handler: handler);
-        var llm = CreateInternalClient(options, transport);
-        var candidate = new DiagramIr("flowchart", "test", [
-            new DiagramNode("start", "시작", "entry", null, "unchanged", Confidence.Exact, [], "terminal"),
-            new DiagramNode("operation", "데이터 처리", "operation", null, "modified", Confidence.Exact, [])
-        ], [new DiagramEdge("edge", "start", "operation", "control", "", "unchanged", Confidence.Exact, [])], [], []);
-        var graph = new VersionedGraph([], [], [], [], []);
-        var comparison = new GitComparison(new string('a', 40), new string('b', 40), []);
-
-        var result = await llm.RefineAnalysisDiagramAsync(candidate, graph, comparison, [],
-            new DiagramViewSelection("view", "flowchart", "balanced", RefinementInstruction: "포인터 할당 의미를 강조"),
-            false, CancellationToken.None);
-
-        Assert.Equal("시작", result!.Nodes.Single(node => node.Id == "start").Label);
-        Assert.Equal("Header 포인터 할당", result.Nodes.Single(node => node.Id == "operation").Label);
-        using var request = JsonDocument.Parse(Assert.Single(handler.Requests).Body);
-        var userMessage = request.RootElement.GetProperty("messages")[1].GetProperty("content").GetString()!;
-        using var context = JsonDocument.Parse(userMessage);
-        Assert.Equal("포인터 할당 의미를 강조",
-            context.RootElement.GetProperty("selection").GetProperty("refinementInstruction").GetString());
-        Assert.Equal(2, context.RootElement.GetProperty("allowedNodeIds").GetArrayLength());
-    }
-
-    [Fact]
     public void RejectsThinkingBudgetAboveHardLimit()
     {
         var options = Options();

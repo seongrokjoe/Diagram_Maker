@@ -8,7 +8,7 @@ internal sealed record SharedValidationProblem(string Code, LlmValidationDetails
 internal static class SharedSemanticValidation
 {
     public static SharedValidationProblem? Check(SharedSemanticResponse value, IReadOnlySet<string> expected,
-        IReadOnlyList<string> available)
+        IReadOnlyList<string> available, bool validateText = true)
     {
         var returned = (value.Items ?? []).Where(i => i is not null && !string.IsNullOrEmpty(i.Id)).Select(i => i.Id).ToArray();
         var details = new LlmValidationDetails(expected.Count, value.Items?.Count ?? 0,
@@ -22,14 +22,19 @@ internal static class SharedSemanticValidation
         if (details.DuplicateItems > 0) return new("SharedDuplicateIds", details);
         if (details.MissingItems > 0) return new("SharedMissingIds", details);
         if (value.Items.Count != expected.Count) return new("SharedItemCountMismatch", details);
+        if (!validateText) return null;
         for (var i = 0; i < value.Items.Count; i++)
         {
-            var item = value.Items[i];
-            var error = Text(item.Summary, 80, "items.summary", i) ?? Text(item.Description, 500, "items.description", i);
+            var error = CheckItem(value.Items[i], i, details);
             if (error is not null) return error;
         }
         return null;
+    }
 
+    public static SharedValidationProblem? CheckItem(SharedSemanticAnnotation item, int index, LlmValidationDetails? details = null)
+    {
+        details ??= new(1, 1);
+        return Text(item.Summary, 80, "items.summary", index) ?? Text(item.Description, 500, "items.description", index);
         SharedValidationProblem? Text(string? text, int maximum, string field, int index)
         {
             var metadata = details with { Field = field, ItemIndex = index, ActualLength = text?.Length ?? 0, AllowedLength = maximum };
@@ -39,6 +44,21 @@ internal static class SharedSemanticValidation
             if (Regex.IsMatch(text, @"[<>`;{}]|&&|\|\||==|!=")) return new("SharedTextCodeSyntax", metadata);
             return null;
         }
+    }
+
+    public static string? CheckJson(string json)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(json);
+        var root = document.RootElement;
+        if (root.ValueKind != System.Text.Json.JsonValueKind.Object || root.EnumerateObject().Count() != 3 ||
+            !root.TryGetProperty("summary", out var summary) || summary.ValueKind != System.Text.Json.JsonValueKind.String ||
+            !root.TryGetProperty("recommendedType", out var type) || type.ValueKind != System.Text.Json.JsonValueKind.String ||
+            !root.TryGetProperty("items", out var items) || items.ValueKind != System.Text.Json.JsonValueKind.Array) return "SharedItemsInvalid";
+        foreach (var item in items.EnumerateArray())
+            if (item.ValueKind != System.Text.Json.JsonValueKind.Object || item.EnumerateObject().Count() != 3 ||
+                !new[] { "id", "summary", "description" }.All(name => item.TryGetProperty(name, out var field) && field.ValueKind == System.Text.Json.JsonValueKind.String))
+                return "SharedItemsInvalid";
+        return null;
     }
 
     public static string RepairInstruction(string code) => code switch

@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { assertLocalPath, gitEnvironment } from '../tools/git-worker/local-security.mjs';
+import { executionMeaningFixture } from './execution-meaning-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 assertLocalPath(root);
@@ -31,7 +32,7 @@ await writeFile(path.join(repositoryPath, 'Example.cpp'), source(1)); git('add',
 const baseSha = git('rev-parse', 'HEAD');
 await writeFile(path.join(repositoryPath, 'Example.cpp'), source(2)); git('add', 'Example.cpp'); git('commit', '-m', 'Synthetic increment change');
 const targetSha = git('rev-parse', 'HEAD');
-let requestCount = 0, output = '', server, closed;
+let requestCount = 0, output = '', server, closed, testMode = 'valid';
 const checks = [];
 const batches = [];
 const llm = createServer(async (request, response) => {
@@ -40,14 +41,22 @@ const llm = createServer(async (request, response) => {
     let body = ''; for await (const chunk of request) body += chunk;
     const payload = JSON.parse(body);
     assert.equal(payload.chat_template_kwargs.enable_thinking, false);
-    const properties = payload.structured_outputs.json.properties;
+    const schema = payload.structured_outputs?.json ?? payload.response_format?.json_schema?.schema;
+    if (testMode === 'http-error' || testMode === 'schema-compatibility' && JSON.stringify(schema).includes('maxLength')) {
+      response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: testMode === 'http-error'
+        ? 'PRIVATE source at https://secret.example.invalid credential=PRIVATE'
+        : 'The provided JSON schema contains features not supported by xgrammar.' } }));
+      return;
+    }
+    const properties = schema.properties;
     let context = JSON.parse(payload.messages[1].content);
     context = context.context ?? context;
     const reviewing = !!properties.items?.items.properties.issues;
     if (properties.items) batches.push({ source: context.sourceKind, reviewing, outputLimit: payload.max_tokens, items: context.items.length,
       kinds: context.items.map(item => item.kind), characters: payload.messages[1].content.length,
       facts: context.sources.facts.length, sourceCharacters: context.sources.facts.reduce((n, f) => n + (f.content?.length ?? 0), 0) });
-    const result = reviewing ? { items: context.items.map(item => ({ id: item.id, issues: [] })) } : {
+    const result = properties.steps ? executionMeaningFixture(context) : properties.accepted ? { accepted: true, issues: [] } :
+      reviewing ? { items: context.items.map(item => ({ id: item.id, issues: [] })) } : {
       summary: '원본 코드의 입력값을 가공하고 결과를 반환합니다', recommendedType: context.available[0],
       items: context.items.map(item => ({ id: item.id, summary: '입력값을 누적하고 반환합니다', description: '원본 근거에 표시된 값을 누적하고 호출한 곳으로 반환합니다' })),
     };
@@ -65,7 +74,7 @@ try {
   const networkPolicy = path.join(fixture, 'network-policy.json');
   await writeFile(policy, JSON.stringify({ Llm: { Enabled: true, Endpoint: llmOrigin + '/v1/chat/completions',
     AllowedOrigin: llmOrigin, UseServerTokenization: false, MaxTransientRetries: 0, MaxInputCharacters: maxInputCharacters,
-    // Match the shipped policy example instead of inheriting appsettings' larger review budget.
+    // Match the shipped policy example and application defaults.
     DiagramOutputTokens: 8000, ReviewOutputTokens: 2000 } }));
   await writeFile(networkPolicy, JSON.stringify({ LocalRoots: [root], LlmOrigins: [llmOrigin], LlmAddressRanges: ['127.0.0.1/32'], Databases: [] }));
   const runtime = packageRoot ?? path.join(fixture, 'api');
@@ -96,7 +105,7 @@ try {
     const result = await response.json(); assert.equal(response.status, status, JSON.stringify(result)); return result;
   }
   async function poll(url) {
-    for (let i = 0; i < 600; i++) {
+    for (let i = 0; i < 9000; i++) {
       const result = await request(url);
       if (['Completed', 'Partial', 'Failed', 'Ready'].includes(result.state)) return result;
       await delay(100);
@@ -104,6 +113,8 @@ try {
     throw new Error('Synthetic pipeline did not finish');
   }
   const views = ['flowchart', 'class', 'code-relation'].map(diagramType => ({ id: diagramType, diagramType, presetId: 'balanced' }));
+  const repository = await request('/repositories', 'POST', { name: 'Synthetic C++', localPath: repositoryPath, defaultBranch: 'main', allowedRoles: ['Reviewer'] }, 201);
+  if (!process.argv.includes('--execution-only')) {
   for (const selected of [views.slice(0, 1), views]) {
     const workspace = await request('/code-block-workspaces', 'POST', { title: '고정 합성 C++ 성능',
       blocks: [{ id: 'code', language: 'cpp', title: 'C++', code: source(1) }], groups: [{ id: 'g', title: '전체', blockIds: ['code'], views: selected }] }, 201);
@@ -114,8 +125,9 @@ try {
     assert.equal(run.state, 'Completed', run.errorMessage ?? JSON.stringify(run.results.map(g => g.views.map(v => v.warnings))));
     const requests = requestCount - before;
     const generationRequests = batches.slice(beforeBatch).filter(b => !b.reviewing).length;
-    assert.equal(generationRequests, selected.length === 1 ? 2 : 3, 'Generation count must retain the perf.2 baseline');
-    assert.ok(requests > 0 && requests <= 30, `C++ ${selected.length} formats: ${requests} requests`);
+    assert.equal(generationRequests, selected.length === 1 ? 7 : 11, 'Generation uses at most twelve annotations per initial batch');
+    assert.ok(batches.slice(beforeBatch).filter(b => !b.reviewing).every(b => b.items <= 12));
+    assert.ok(requests > 0 && requests <= 110, `C++ ${selected.length} formats: ${requests} requests (80 function plan/review requests plus shared labels)`);
     assert.ok(batches.filter(b => b.reviewing).every(b => b.items <= 16 && b.outputLimit === 2000), 'Reviews must fit the default output budget');
     const diagnostic = await request(`/code-block-runs/${run.id}/diagnostics`);
     assert.equal(diagnostic.version, 2); assert.equal(diagnostic.execution.transportRequests, requests);
@@ -125,12 +137,12 @@ try {
       assert.equal(artifact.explanation.status, 'Semantic'); assert.ok(artifact.mermaidDsl); pages++;
     }
     assert.equal(pages, selected.length === 1 ? 41 : 43, 'All baseline pages must remain');
-    checks.push({ name: 'code-block', lines: 1212, functions: 40, formats: selected.length, requests, generationRequests, reviewRequests: requests - generationRequests, pages });
+    checks.push({ name: 'code-block', lines: 1212, functions: 40, formats: selected.length, requests, generationRequests,
+      functionRequests: 80, reviewRequests: requests - generationRequests - 80, pages });
     const next = await request(`/code-block-workspaces/${workspace.id}/runs`, 'POST', { expectedRevision: workspace.revision }, 202);
     assert.equal((await poll(`/code-block-runs/${next.id}`)).state, 'Completed');
     assert.equal(requestCount - before, requests, 'Unchanged completed results should not call the LLM again');
   }
-  const repository = await request('/repositories', 'POST', { name: 'Synthetic C++', localPath: repositoryPath, defaultBranch: 'main', allowedRoles: ['Reviewer'] }, 201);
   const queuedPlan = await request('/analysis-plans', 'POST', { repositoryId: repository.id, baseRevision: baseSha, targetRevision: targetSha, useLlmGrouping: false }, 202);
   let plan = await poll(`/analysis-plans/${queuedPlan.id}`); assert.equal(plan.state, 'Ready');
   assert.ok(plan.candidates.length >= 40);
@@ -149,11 +161,65 @@ try {
     }
   }
   const requests = requestCount - before;
-  assert.ok(requests <= 64, `Git request count: ${requests}`);
-  assert.ok(batches.filter(b => b.source === 'git' && !b.reviewing).length <= 10, 'Git generation must remain shared across pages');
+  assert.equal(requests, 256, '160 function plan/review requests plus 48 generation and 48 review requests');
+  assert.equal(batches.filter(b => b.source === 'git' && !b.reviewing).length, 48,
+    'Both revisions retain execution facts, so input budgets split the shared twelve-item batches further');
   assert.equal(pages, 51, 'All Git baseline pages must remain');
   const generationRequests = batches.filter(b => b.source === 'git' && !b.reviewing).length;
-  checks.push({ name: 'git', lines: 1212, functions: 40, formats: 3, requests, generationRequests, reviewRequests: requests - generationRequests, pages });
+  checks.push({ name: 'git', lines: 1212, functions: 40, formats: 3, requests, generationRequests, functionRequests: 160,
+    reviewRequests: requests - generationRequests - 160, pages });
+  }
+  // Compare one guarded state transition through all five public Git views.
+  const machine = guard => `class Machine { int state; bool ready; public: bool Check(){return true;} void Save(){} bool Run(){if(${guard})state=1;if(Check()!=true)return false;Save();return true;} };`;
+  await writeFile(path.join(repositoryPath, 'Machine.cpp'), machine('state==0'));
+  git('add', 'Machine.cpp'); git('commit', '-m', 'Synthetic state baseline');
+  const stateBase = git('rev-parse', 'HEAD');
+  await writeFile(path.join(repositoryPath, 'Machine.cpp'), machine('state==0 && ready'));
+  git('add', 'Machine.cpp'); git('commit', '-m', 'Synthetic state guard change');
+  const stateTarget = git('rev-parse', 'HEAD');
+  const stateQueued = await request('/analysis-plans', 'POST', { repositoryId: repository.id, baseRevision: stateBase, targetRevision: stateTarget, useLlmGrouping: false }, 202);
+  let statePlan = await poll(`/analysis-plans/${stateQueued.id}`);
+  assert.equal(statePlan.state, 'Ready');
+  const fiveViews = ['flowchart', 'sequence', 'class', 'state', 'code-relation'].map(diagramType => ({ id: diagramType, diagramType, presetId: 'balanced' }));
+  statePlan = await request(`/analysis-plans/${statePlan.id}/selection`, 'PUT', { expectedRevision: statePlan.revision,
+    groups: [{ id: 'state-g', title: '상태 조건 변경', changeIds: statePlan.candidates.map(c => c.id), diagramType: 'state', presetId: 'balanced', views: fiveViews }] });
+  const stateStarted = await request(`/analysis-plans/${statePlan.id}/generate`, 'POST', { expectedRevision: statePlan.revision }, 202);
+  const stateAnalysis = await poll(`/analyses/${stateStarted.id}?includeGraph=false&summary=true`);
+  assert.ok(stateAnalysis.result?.diagramGroups?.length, JSON.stringify(stateAnalysis));
+  const generatedViews = stateAnalysis.result.diagramGroups[0].views;
+  assert.equal(generatedViews.length, 5);
+  for (const view of generatedViews) {
+    assert.equal(view.generationMetadata.llmStatus, 'Semantic', JSON.stringify(view.warnings));
+    const page = await request(`/analyses/${stateAnalysis.id}/groups/state-g/views/${view.viewId}/pages/${view.document.pages[0].id}`);
+    assert.equal(page.ir.type, view.selection.diagramType);
+    if (page.ir.type === 'state') {
+      assert.equal(page.ir.edges.length, 1);
+      assert.equal(page.ir.edges[0].status, 'modified');
+      assert.deepEqual(page.ir.nodes.map(n => n.label.match(/\(([^)]+)\)$/)?.[1]), ['0', '1']);
+      assert.ok(page.ir.edges[0].evidenceIds.length >= 4, 'both guards and writes retain evidence');
+    }
+    if (page.ir.type === 'sequence') {
+      assert.deepEqual(page.ir.edges.filter(e => e.type === 'message').map(e => e.originalExpression), ['Check()', 'Save()']);
+      assert.deepEqual(page.ir.edges.filter(e => e.type === 'return').map(e => e.returnValue), ['false', 'true']);
+    }
+  }
+  checks.push({ name: 'git-five-formats', formats: 5, modifiedStateTransitions: 1, calls: 2, returns: ['false', 'true'] });
+  const settings = await request('/llm/tests/code-diagram-settings');
+  assert.equal(settings.reviewOutputTokens, 2000);
+  assert.ok(!JSON.stringify(settings).includes(llmOrigin) && !('model' in settings));
+  for (testMode of ['valid', 'schema-compatibility', 'http-error']) {
+    const test = await request('/llm/tests/code-diagram-contract', 'POST');
+    assert.equal(test.syntheticOnly, true); assert.equal(test.thinkingEnabled, false);
+    assert.equal(test.success, testMode !== 'http-error', JSON.stringify(test.diagnostics));
+    if (testMode === 'http-error') {
+      assert.equal(test.execution.transportRequests, 1);
+      assert.ok(test.diagnostics.some(d => d.httpStatus === 400 && d.serverErrorCategory === 'unknown'));
+      assert.ok(!test.report.includes('PRIVATE') && !JSON.stringify(test).includes('secret.example'));
+    }
+    if (testMode === 'schema-compatibility') assert.ok(test.diagnostics.some(d => d.schemaRelaxed));
+    await writeFile(path.join(fixture, `self-test-${testMode}.txt`), test.report);
+    checks.push({ name: `self-test-${testMode}`, success: test.success, requests: test.execution.transportRequests });
+  }
   await writeFile(path.join(fixture, 'result.json'), JSON.stringify({ status: 'passed', syntheticOnly: true, packageRoot, checks }, null, 2));
   console.log(JSON.stringify({ fixture, checks }));
 } catch (error) {

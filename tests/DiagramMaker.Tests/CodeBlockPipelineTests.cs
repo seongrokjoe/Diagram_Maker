@@ -50,7 +50,10 @@ public sealed class CodeBlockPipelineTests
         Assert.True(merged.Groups[0].EnableThinking);
         Assert.False(merged.Groups[0].EnableUserRelations);
         var projection = new CodeBlockProjectionService(new());
-        Assert.False(projection.Availability(graph, merged.Groups[0]).Single(a => a.Type == "sequence").Available);
+        Assert.True(projection.Availability(graph, merged.Groups[0]).Single(a => a.Type == "sequence").Available);
+        var sequence = projection.Build(graph, merged.Relations, merged.Groups[0], new("sequence", "sequence", "balanced"))[0].Diagram;
+        Assert.DoesNotContain(sequence.Edges, edge => edge.RelationOrigin == "user");
+        Assert.Contains(sequence.Nodes, node => node.Label.Contains("구현 미확인"));
         var map = projection.Build(graph, merged.Relations, merged.Groups[0], new("v", "code-relation", "balanced"));
         Assert.StartsWith("사용자 제공:", Assert.Single(map[0].Diagram.Edges).Label);
     }
@@ -189,15 +192,15 @@ public sealed class CodeBlockPipelineTests
             return result;
         }
         var first = await Generate();
-        // Each group generates and reviews shared meaning once.
-        Assert.Equal(4, transport.Requests.Count);
-        Assert.All(transport.Requests.Take(2), r => Assert.True(r.EnableThinking));
-        Assert.All(transport.Requests.Skip(2), r => Assert.False(r.EnableThinking));
+        // Each group plans/reviews its function, then generates/reviews shared labels.
+        Assert.Equal(8, transport.Requests.Count);
+        Assert.All(transport.Requests.Take(4), r => Assert.True(r.EnableThinking));
+        Assert.All(transport.Requests.Skip(4), r => Assert.False(r.EnableThinking));
         transport.Requests.Clear();
         var regenerated = await Generate(["va"]);
         Assert.True(regenerated.Groups!.Single(g => g.Id == "ga").EnableThinking);
         Assert.False(regenerated.Groups!.Single(g => g.Id == "gb").EnableThinking);
-        Assert.Equal(2, transport.Requests.Count);
+        Assert.Equal(4, transport.Requests.Count);
         Assert.All(transport.Requests, r => Assert.True(r.EnableThinking));
         Assert.Equal(first.Results![1].Views[0].Pages[0].Diagram.Id, regenerated.Results![1].Views[0].Pages[0].Diagram.Id);
         workspace = await service.SaveAsync(workspace.Id, new(workspace.Revision, input with {
@@ -228,7 +231,9 @@ public sealed class CodeBlockPipelineTests
             Requests.Add(request);
             using var json = JsonDocument.Parse(request.UserPrompt);
             var properties = request.StructuredSchema!.Value.GetProperty("properties");
-            var response = properties.TryGetProperty("items", out var items) && items.GetProperty("items").GetProperty("properties").TryGetProperty("issues", out _)
+            var response = properties.TryGetProperty("steps", out _)
+                ? JsonSerializer.Serialize(WrongFact ? ExecutionPlan(json.RootElement) with { Steps = [] } : ExecutionPlan(json.RootElement), Json)
+                : properties.TryGetProperty("items", out var items) && items.GetProperty("items").GetProperty("properties").TryGetProperty("issues", out _)
                 ? JsonSerializer.Serialize(new SharedSemanticReview(json.RootElement.GetProperty("context").GetProperty("items").EnumerateArray()
                     .Select(i => new SharedItemReview(i.GetProperty("id").GetString()!, RejectReview ? ["unsupported_role"] : [])).ToArray()), Json)
                 : properties.TryGetProperty("items", out _)
@@ -250,6 +255,29 @@ public sealed class CodeBlockPipelineTests
                     wrong ? "invented" : item.GetProperty("id").GetString()!,
                     item.GetProperty("kind").GetString() is "condition" or "loop" or "control" ? "값이 양수인가요?" : "조건에 따라 값을 처리합니다",
                     "원본 코드의 값과 조건을 확인하고 처리합니다")).ToArray());
+        }
+        internal static ExecutionMeaningPlan ExecutionPlan(JsonElement root)
+        {
+            var steps = root.GetProperty("steps").Deserialize<ExecutionMeaningStep[]>(Json)!;
+            var units = new List<ExecutionMeaningUnit>();
+            var owned = new HashSet<string>();
+            var referenced = steps.SelectMany(s => s.ChildIds.Concat(s.AlternativeIds).Concat(s.EvaluationIds)).ToHashSet();
+            var regions = steps.SelectMany(s => new[] { s.ChildIds, s.AlternativeIds, s.EvaluationIds })
+                .Prepend(steps.Where(s => !referenced.Contains(s.Id)).Select(s => s.Id).ToArray());
+            foreach (var region in regions)
+            {
+                var chain = new List<string>();
+                void Flush() { if (chain.Count > 0) { units.Add(new("지역 값을 준비합니다", "원문에 명시된 순서로 지역 값을 설정합니다", chain.ToArray())); chain.Clear(); } }
+                foreach (var id in region)
+                {
+                    if (!owned.Add(id)) continue;
+                    var step = steps.Single(s => s.Id == id);
+                    if (step.Kind is "declare" or "assign") chain.Add(id);
+                    else { Flush(); units.Add(new("조건에 따라 처리합니다", "원본의 실행 사실을 보존하며 외부 구현은 미확인입니다", [id])); }
+                }
+                Flush();
+            }
+            return new("입력 조건을 확인하고 명시된 처리 결과를 반환합니다", "implementation", steps, units);
         }
         public static CodeBlockSemanticPlan Plan(DiagramIr candidate, bool wrongFact) => new("코드 동작 설명",
             candidate.Nodes.Select((n, i) => new CodeBlockSemanticElement("element" + i, n.Kind is "entry" or "exit" ? n.Label : "조건에 따라 값을 처리합니다", [n.Id], n.SourceFactIds!,

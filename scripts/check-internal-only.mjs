@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readLicenseBundle } from "./license-bundle.mjs";
+import { sha256 } from "./license-policy.mjs";
 const forbidden = /CodexCliCompletionTransport|CodexProcessRunner|SampleTestWorkspace|model_provider\s*=\s*[\\"]*openai/;
 export function scanInternalOnly(root, { packaged = false } = {}) {
   const failures = [];
@@ -29,6 +30,10 @@ export function checkPackage(packageRoot) {
     const items = readLicenseBundle(path.join(packageRoot, "licenses"));
     const sbom = JSON.parse(fs.readFileSync(path.join(packageRoot, "licenses/sbom.cdx.json"), "utf8"));
     if (sbom.bomFormat !== "CycloneDX" || sbom.components?.length !== items.length + 1) failures.push("Package SBOM inventory mismatch");
+    const font = items.find(item => item.ecosystem === "assets" && item.name === "pretendard-variable");
+    const fontRoot = path.join(packageRoot, "wwwroot/assets/fonts");
+    const fonts = fs.existsSync(fontRoot) ? fs.readdirSync(fontRoot).filter(file => /^PretendardVariable-.*\.woff2$/.test(file)) : [];
+    if (!font || fonts.length !== 1 || sha256(path.join(fontRoot, fonts[0])) !== font.archiveSha256) failures.push("Packaged font differs from reviewed asset");
   } catch (error) { failures.push(`Invalid license bundle: ${error.message}`); }
   return failures;
 }

@@ -13,7 +13,7 @@ export async function checkSemanticProgress({ page, fixture, run }) {
       waitMilliseconds: 20000, attemptWaitMilliseconds: 5000,
       protocolUpgraded: true,
       lastRequest: { id: 'review-invalid', stage: 'llm-SharedSemanticReview', sent: true, purpose: 'review',
-        outputLimit: 2000, completionTokens: 412, finishReason: 'stop', outputMode: 'structured_outputs' },
+        outputLimit: 2000, completionTokens: 412, finishReason: 'stop', outputMode: 'structured_outputs', schemaRelaxed: true },
       recentFailures: [
         { id: 'generation-failure', stage: 'llm-SharedSemanticResponse', state: 'Failed', sent: true,
           errorCode: 'LLM_SCHEMA_INVALID', validationCode: 'SharedUnknownIds', purpose: 'generation',
@@ -33,6 +33,9 @@ export async function checkSemanticProgress({ page, fixture, run }) {
         { id: 'review-invalid', stage: 'llm-SharedSemanticReview', sent: true, purpose: 'review',
           errorCode: 'LLM_SCHEMA_INVALID', validationCode: 'InvalidReview', outputLimit: 2000, completionTokens: 412,
           recoveryGroupId: 'review-right', parentGroupId: 'review-parent', recoveryState: 'Retrying', attempt: 2 },
+        { id: 'http-error', stage: 'llm-SharedSemanticReview', state: 'Failed', sent: true, purpose: 'review',
+          errorCode: 'LLM_HTTP_400', httpStatus: 400, serverErrorCategory: 'schema-constraint', outputMode: 'structured_outputs',
+          recoveryGroupId: 'review-server', parentGroupId: 'generation-batch', recoveryState: 'RequiresAction', attempt: 1 },
       ],
     } });
   const pattern = /\/api\/v1\/(code-block-runs|code-block-workspaces)\//;
@@ -68,6 +71,9 @@ export async function checkSemanticProgress({ page, fixture, run }) {
     assert.match(await failures.getByLabel('미해결 기록').innerText(), /승인 값과 문제 목록이 모순/);
     assert.match(await failures.getByLabel('복구 완료 기록').innerText(), /출력 한도 2,000토큰 · 사용 2,000토큰/);
     assert.match(await progress.getByLabel('최근 요청 출력 설정').innerText(), /출력 한도 2,000토큰/);
+    assert.match(await progress.getByLabel('최근 요청 출력 설정').innerText(), /호환 스키마/);
+    assert.match(await failures.getByLabel('미해결 기록').innerText(), /서버 응답 HTTP 400/);
+    assert.match(await failures.getByLabel('미해결 기록').innerText(), /서버·설정 확인 필요/);
     assert.match(await progress.innerText(), /정책이 갱신/);
     assert.equal(await workspace.locator('.structured-diagram-editor').count(), 0);
     assert.equal(pageRequests, 0, 'Running results must not fetch pages');

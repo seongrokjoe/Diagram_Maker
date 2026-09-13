@@ -17,9 +17,9 @@ public sealed class StructuredLlmCompletion(ILlmCompletionTransport client)
         bool enableThinking, Func<T, string?> validator, CancellationToken cancellationToken,
         double? temperature = null, int? seed = null, bool allowRepair = true, int? inputTokenLimit = null,
         int? inputCharacterLimit = null, string? requestPurpose = null, Func<T, LlmValidationDetails?>? validationDetails = null,
-        IReadOnlySet<string>? responseIds = null)
+        IReadOnlySet<string>? responseIds = null, bool allowSchemaRelaxation = false)
     {
-        var key = JsonSerializer.Serialize(new { systemPrompt, userPrompt, schema, maxOutputTokens, enableThinking, temperature, seed, allowRepair });
+        var key = JsonSerializer.Serialize(new { systemPrompt, userPrompt, schema, maxOutputTokens, enableThinking, temperature, seed, allowRepair, allowSchemaRelaxation });
         if (inputTokenLimit is not null) key += ":input=" + inputTokenLimit;
         if (inputCharacterLimit is not null) key += ":characters=" + inputCharacterLimit;
         if (requestPurpose is not null) key += ":purpose=" + requestPurpose;
@@ -27,7 +27,7 @@ public sealed class StructuredLlmCompletion(ILlmCompletionTransport client)
         return (await SemanticExecution.RunAsync("llm-" + typeof(T).Name, key,
             async () => await CompleteCoreAsync(systemPrompt, userPrompt, schema, maxOutputTokens, enableThinking, validator,
                 SemanticExecution.Current?.Token ?? cancellationToken, temperature, seed, allowRepair, inputTokenLimit,
-                inputCharacterLimit, requestPurpose, validationDetails, responseIds),
+                inputCharacterLimit, requestPurpose, validationDetails, responseIds, allowSchemaRelaxation),
             // A valid rejection is also a completed review. Persist it so a
             // resume continues at repair instead of asking the same review again.
             result => result.Value is not null && validator(result.Value) is null))!;
@@ -38,7 +38,7 @@ public sealed class StructuredLlmCompletion(ILlmCompletionTransport client)
         bool enableThinking, Func<T, string?> validator, CancellationToken cancellationToken,
         double? temperature, int? seed, bool allowRepair, int? inputTokenLimit,
         int? inputCharacterLimit, string? requestPurpose, Func<T, LlmValidationDetails?>? validationDetails,
-        IReadOnlySet<string>? responseIds)
+        IReadOnlySet<string>? responseIds, bool allowSchemaRelaxation)
     {
         var ids = new PromptIds(responseIds);
         userPrompt = ids.Encode(userPrompt);
@@ -54,7 +54,7 @@ public sealed class StructuredLlmCompletion(ILlmCompletionTransport client)
         }
         await CheckCharacters(userPrompt, requestPurpose);
         var first = await client.CompleteAsync(new VllmCompletionRequest(
-            systemPrompt, userPrompt, maxOutputTokens, enableThinking, schema, temperature, seed, inputTokenLimit, inputCharacterLimit, requestPurpose), cancellationToken);
+            systemPrompt, userPrompt, maxOutputTokens, enableThinking, schema, temperature, seed, inputTokenLimit, inputCharacterLimit, requestPurpose, allowSchemaRelaxation), cancellationToken);
         ThrowIfTruncated(first, initialFailureKind: null, repairAttempted: false);
         var firstAttempt = Deserialize(first.Content, validator, ids, validationDetails);
         if (firstAttempt.Value is not null)
@@ -83,7 +83,7 @@ public sealed class StructuredLlmCompletion(ILlmCompletionTransport client)
         var repairPrompt = JsonSerializer.Serialize(new { originalRequest = userPrompt, rejectedResponse = first.Content, validationIssue = firstAttempt.FailureKind }, PromptJson.Options);
         await CheckCharacters(repairPrompt, "repair");
         var repaired = await client.CompleteAsync(new VllmCompletionRequest(
-            repairSystem, repairPrompt, maxOutputTokens, enableThinking, schema, temperature, seed, inputTokenLimit, inputCharacterLimit, "repair"), cancellationToken);
+            repairSystem, repairPrompt, maxOutputTokens, enableThinking, schema, temperature, seed, inputTokenLimit, inputCharacterLimit, "repair", allowSchemaRelaxation), cancellationToken);
         ThrowIfTruncated(repaired, firstAttempt.FailureKind, repairAttempted: true);
         var repairedAttempt = Deserialize(repaired.Content, validator, ids, validationDetails);
         await RecordValidationAsync(repairedAttempt.FailureKind, repairedAttempt.ValidationDetails);
@@ -121,7 +121,7 @@ public sealed class StructuredLlmCompletion(ILlmCompletionTransport client)
                 totalTokens: result.TotalTokens);
     }
 
-    private static async Task RecordValidationAsync(string? failure, LlmValidationDetails? details = null)
+    internal static async Task RecordValidationAsync(string? failure, LlmValidationDetails? details = null)
     {
         var context = SemanticExecution.Current;
         if (context is not null && failure is not null && context.Diagnostics.LastOrDefault() is { } diagnostic)
@@ -136,6 +136,8 @@ public sealed class StructuredLlmCompletion(ILlmCompletionTransport client)
 
         try
         {
+            if (typeof(T) == typeof(SharedSemanticResponse) && SharedSemanticValidation.CheckJson(normalized.Json) is { } generationFailure)
+                return new StructuredAttempt<T>(default, generationFailure);
             if (typeof(T) == typeof(SharedSemanticReview) && SharedReviewValidation.CheckJson(normalized.Json) is { } wireFailure)
                 return new StructuredAttempt<T>(default, wireFailure);
             if (ids.CheckResponseMembership(normalized.Json, typeof(T) == typeof(SharedSemanticReview)) is { } membership)

@@ -30,6 +30,12 @@ public sealed partial class InternalLlmClient
             foreach (var call in symbol.Calls)
                 sourceFacts.Add(new(call.Id, "call", call.Statement ?? call.Name, [],
                     graph.Evidence.Where(e => e.Location == call.Location).Select(e => e.Id).ToArray(), Span(call.Location)));
+            foreach (var execution in ExecutionSequenceProjection.Flatten(symbol.Execution ?? []))
+            {
+                var evidence = graph.Evidence.FirstOrDefault(e => (execution.EvidenceIds ?? []).Contains(e.Id));
+                sourceFacts.Add(new(execution.Id, "execution-" + execution.Kind, execution.Expression, [], execution.EvidenceIds ?? [],
+                    evidence is null ? null : Span(evidence.Location), Content: execution.Expression));
+            }
         }
         foreach (var transition in graph.Transitions)
         {
@@ -41,7 +47,10 @@ public sealed partial class InternalLlmClient
         }
         sourceFacts.AddRange(graph.Relations.Select(r => new SourceFact(r.Id, "relation", r.Description, [], r.EvidenceIds ?? [], null)));
         var facts = sourceFacts.DistinctBy(f => f.Id).ToArray();
-        var prepared = new SharedSemanticProjection(true, facts);
+        var meanings = await PlanExecutionMeaningsAsync(graph.Symbols.Where(s => group.BlockIds.Contains(s.BlockId) && s.Execution is { Count: > 0 })
+            .Select(s => new ExecutionMeaningInput(s.Id, s.Name, Span(s.Location),
+                input.Blocks.Single(b => b.Id == s.BlockId).Code[s.Location.StartOffset..s.Location.EndOffset], s.Execution!)).ToArray(), input.EnableThinking, cancellationToken);
+        var prepared = new SharedSemanticProjection(true, facts, meanings);
         var projection = new CodeBlockProjectionService(new());
         foreach (var selection in selections)
             foreach (var page in projection.Build(graph, graph.Relations, group, selection))
@@ -67,20 +76,21 @@ public sealed partial class InternalLlmClient
                 }
             }
             return new { blocks = input.Blocks.Where(b => group.BlockIds.Contains(b.Id)).Select(b => new { b.Id, b.Language, b.Title, b.Description }),
-                excerpts, facts = facts.Where(f => ids.Contains(f.Id)).Select(f => new
+                excerpts, functionPlans = RelevantMeanings(meanings, items, facts), facts = facts.Where(f => ids.Contains(f.Id)).Select(f => new
                 { f.Id, f.Kind, blockId = f.Span?.FilePath, start = f.Span?.StartOffset, end = f.Span?.EndOffset,
                     description = f.Span is null ? f.Label : null }) };
         }
         var semantics = await GenerateSharedAsync("code-block", group.Title, prepared.Items.Values.ToArray(), Sources,
             selections, input.EnableThinking, cancellationToken);
-        return prepared.Apply(semantics);
+        return ApplyExecutionStatus(prepared.Apply(semantics), meanings, facts);
     }
 
     public async Task<SharedDiagramGroup?> PlanGitGroupAsync(EvidenceBundle bundle, IReadOnlyList<SharedDiagramInput> diagrams,
         bool enableThinking, CancellationToken cancellationToken)
     {
         if (!IsEnabled) return null;
-        var prepared = new SharedSemanticProjection(false, bundle.Facts);
+        var meanings = await PlanExecutionMeaningsAsync(bundle.ExecutionInputs ?? [], enableThinking, cancellationToken);
+        var prepared = new SharedSemanticProjection(false, bundle.Facts, meanings);
         foreach (var diagram in diagrams) prepared.Add(diagram);
         var represented = diagrams.SelectMany(d => d.Diagram.Nodes.SelectMany(n => n.SourceFactIds ?? [])
             .Concat(d.Diagram.Edges.SelectMany(e => e.SourceFactIds ?? []))).ToHashSet();
@@ -94,14 +104,14 @@ public sealed partial class InternalLlmClient
             // Evidence IDs, blob IDs and full CodeContext objects stay in the
             // server-owned graph. Repeating those on every source line makes
             // overlapping type/method changes dominate the prompt.
-            return new { bundle.BaseSha, bundle.TargetSha, facts = facts.Select(f => new
+            return new { bundle.BaseSha, bundle.TargetSha, functionPlans = RelevantMeanings(meanings, items, bundle.Facts), facts = facts.Select(f => new
                 { f.Id, f.Kind, f.ChangeIds, label = f.Kind == "source" ? null : f.Label,
                     revision = f.Span?.RevisionSha, file = f.Span?.FilePath,
                     startLine = f.Span?.StartLine, endLine = f.Span?.EndLine, f.Content }) };
         }
         var semantics = await GenerateSharedAsync("git", "변경 전후 코드의 동작", prepared.Items.Values.ToArray(), Sources,
             diagrams.Select(d => d.Selection).Distinct().ToArray(), enableThinking, cancellationToken);
-        return prepared.Apply(semantics);
+        return ApplyExecutionStatus(prepared.Apply(semantics), meanings, bundle.Facts);
     }
 
 }

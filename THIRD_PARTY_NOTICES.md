@@ -9,6 +9,7 @@ This file identifies the primary open-source components. The release package's e
 | Npgsql | PostgreSQL client | PostgreSQL License |
 | PostgreSQL | Persistent job/result store | PostgreSQL License |
 | React / React DOM | Web UI | MIT |
+| Pretendard Variable 1.3.9 | Bundled Korean/Latin UI font | SIL Open Font License 1.1 |
 | Mermaid | Diagram rendering | MIT |
 | Tree-sitter C++ / web-tree-sitter | C++ syntax indexing through WebAssembly | MIT |
 | isomorphic-git | Read-only Git object access | MIT |

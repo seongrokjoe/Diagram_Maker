@@ -35,7 +35,7 @@ public sealed record CodeBlockSymbol(string Id, string BlockId, string Name, str
     CodeBlockLocation Location, IReadOnlyList<string> EvidenceIds, IReadOnlyList<CodeBlockStep> Steps,
     IReadOnlyList<ControlFlowEdge> FlowEdges, IReadOnlyList<CodeBlockCall> Calls,
     IReadOnlyList<ClassMemberFact> Members, IReadOnlyList<string> BaseTypes, string? OwnerId = null,
-    bool IsFragment = false, int? ParameterCount = null);
+    bool IsFragment = false, int? ParameterCount = null, IReadOnlyList<ExecutionFact>? Execution = null);
 public sealed record CodeBlockStateTransition(string Id, string SymbolId, string Variable, string From, string To,
     string Condition, IReadOnlyList<string> EvidenceIds);
 public sealed record CodeBlockGraph(IReadOnlyList<CodeBlockSymbol> Symbols, IReadOnlyList<CodeBlockRelation> Relations,

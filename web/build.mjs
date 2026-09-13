@@ -3,9 +3,11 @@ import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSy
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertApprovedBuildPath } from "./offline-policy.mjs";
+import { inspectFont } from "../scripts/font-assets.mjs";
 
 const projectDirectory = dirname(fileURLToPath(import.meta.url));
 assertApprovedBuildPath(projectDirectory);
+const font = inspectFont(resolve(projectDirectory, "src/assets/fonts"));
 const repositoryDirectory = resolve(projectDirectory, "..");
 const outputArgumentIndex = process.argv.indexOf("--outDir");
 const requestedOutput = outputArgumentIndex >= 0 ? process.argv[outputArgumentIndex + 1] : "dist";
@@ -44,6 +46,8 @@ await build({
   target: "es2020",
   define: { "process.env.NODE_ENV": '"production"' },
   outfile: resolve(assetsDirectory, "app.js"),
+  loader: { ".woff2": "file" },
+  assetNames: "fonts/[name]-[hash]",
   legalComments: "none",
   logLevel: "info",
 });
@@ -52,6 +56,8 @@ copyFileSync(
   resolve(projectDirectory, "node_modules/mermaid/dist/mermaid.min.js"),
   resolve(vendorDirectory, "mermaid.min.js"),
 );
+copyFileSync(resolve(projectDirectory, "src/assets/fonts", font.licenseFile), resolve(assetsDirectory, "fonts/LICENSE.txt"));
+copyFileSync(resolve(projectDirectory, "src/assets/fonts/manifest.json"), resolve(assetsDirectory, "fonts/manifest.json"));
 const html = readFileSync(resolve(projectDirectory, "index.html"), "utf8")
   .replace("/src/main.tsx", "/assets/app.js")
   .replace("</head>", '    <link rel="stylesheet" href="/assets/app.css" />\n  </head>');

@@ -2,6 +2,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { Language, Parser } from "web-tree-sitter";
+import { executionFacts } from "./execution-facts.mjs";
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 let parserPromise;
@@ -601,6 +602,7 @@ export async function parseCppFile(filepath, content, projectPath = null) {
           contentFingerprint: fingerprint(node.text),
           calls,
           bases: [],
+          execution: executionFacts(node),
           controlNodes: control.nodes,
           controlEdges: control.edges,
         };

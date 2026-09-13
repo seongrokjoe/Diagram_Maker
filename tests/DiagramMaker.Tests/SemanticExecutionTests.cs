@@ -17,7 +17,7 @@ public sealed class SemanticExecutionTests
         AllowedOrigin = "http://localhost:19001", UseServerTokenization = false, MaxTransientRetries = 0 };
 
     [Fact]
-    public async Task BudgetPreservesPublishedSummaryAndRestartResumesWithoutRepeatingCompletedRequests()
+    public async Task LegacyInterruptedRunStartsNewExecutionFromItsSnapshotAndPreservesPublishedSummary()
     {
         var path = Path.Combine(AppContext.BaseDirectory, "semantic-" + Guid.NewGuid().ToString("N"), "store.json");
         var options = OptionsForTest(); options.SemanticJobBudgetSeconds = 1;
@@ -55,13 +55,17 @@ public sealed class SemanticExecutionTests
             var original = (await store.GetCodeBlockRunAsync(runId, Ct))!;
             await Assert.ThrowsAsync<KeyNotFoundException>(() => service.ResumeAsync(runId, new(original.Revision), "outsider", Ct));
             var resumed = await service.ResumeAsync(runId, new(original.Revision), "owner", Ct);
+            Assert.Equal("shared-semantic-v2", resumed.GenerationVersion);
+            Assert.Equal(original.Snapshot, resumed.Snapshot);
+            Assert.Null(resumed.Checkpoints);
+            Assert.Null(resumed.Results);
             await Assert.ThrowsAsync<CodeBlockConflictException>(() => service.ResumeAsync(runId, new(original.Revision), "owner", Ct));
             var handler = new PipelineHandler();
             using var transport = new VllmClient(options, handler: handler);
             await Processor(store, options, transport).ProcessAsync((await store.TryLeaseCodeBlockRunAsync(TimeSpan.FromMinutes(1), Ct))!, Ct);
             var complete = (await store.GetCodeBlockRunAsync(resumed.Id, Ct))!;
             Assert.Equal(CodeBlockRunState.Completed, complete.State);
-            Assert.True(complete.Execution!.ReusedUnits > 0);
+            Assert.Equal(0, complete.Execution!.ReusedUnits);
             Assert.DoesNotContain(handler.Completed, completedRequests.Contains);
             Assert.Equal(CodeBlockRunState.Partial, (await store.GetCodeBlockRunAsync(runId, Ct))!.State);
             var diagnostic = JsonSerializer.Serialize(complete.Diagnostics, Json);

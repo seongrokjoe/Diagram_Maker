@@ -60,7 +60,7 @@ internal static class CodeBlockPlanValidation
     }
 
     public static IEnumerable<SequenceBlock> ControlBlocks(IEnumerable<SequenceBlock> blocks) => blocks.SelectMany(b =>
-        (b.Kind is "alt" or "loop" ? new[] { b } : []).Concat(ControlBlocks(b.Children)));
+        (b.Kind is "alt" or "loop" or "break" ? new[] { b } : []).Concat(ControlBlocks(b.Children)));
 
     private static string Scope(CodeContext context) => string.Join("|", context.ControlPath.Select(s => s.Id + ":" + s.Branch));
     private static bool NaturalLabel(string? value, int maximum) => !string.IsNullOrWhiteSpace(value) && value.Length <= maximum &&

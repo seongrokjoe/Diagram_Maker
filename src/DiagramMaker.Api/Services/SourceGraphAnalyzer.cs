@@ -10,7 +10,7 @@ namespace DiagramMaker.Services;
 
 public sealed partial class SourceGraphAnalyzer
 {
-    public const string IndexVersion = "source-graph-v9";
+    public const string IndexVersion = "source-graph-v11";
 
     private sealed record ParsedCall(string Name, int StartLine, int EndLine, EvidenceRef Evidence,
         int Order = 0, IReadOnlyList<ControlScope>? ControlPath = null, string? TargetKey = null, bool BindingAttempted = false,
@@ -25,7 +25,7 @@ public sealed partial class SourceGraphAnalyzer
         IReadOnlyList<string> CalledNames,
         IReadOnlyList<string> BaseTypeNames,
         IReadOnlyList<ParsedCall>? CallSites = null,
-        MethodControlFlow? ControlFlow = null);
+        MethodControlFlow? ControlFlow = null, IReadOnlyList<ExecutionFact>? Execution = null);
 
     public VersionedGraph Analyze(Guid repositoryId, GitComparison comparison) => Analyze(repositoryId, comparison, null);
 
@@ -94,12 +94,35 @@ public sealed partial class SourceGraphAnalyzer
         }
 
         edges.AddRange(BuildMemberEdges(allSymbols));
+        var executionEvidence = new List<EvidenceRef>();
+        for (var index = 0; index < allSymbols.Count; index++)
+        {
+            var symbol = allSymbols[index];
+            var version = symbol.Version;
+            var source = comparison.Files.FirstOrDefault(f => (version.RevisionSha == comparison.TargetSha ? f.Path : f.PreviousPath ?? f.Path) == version.FilePath);
+            var content = source is null ? comparison.ContextFiles?.FirstOrDefault(f => f.Path == version.FilePath && f.RevisionSha == version.RevisionSha)?.Content :
+                version.RevisionSha == comparison.TargetSha ? source.AfterContent : source.BeforeContent;
+            IReadOnlyList<ExecutionFact> Map(IReadOnlyList<ExecutionFact> events) => events.Select(e =>
+            {
+                var id = StableIds.Create(version.Id, "execution", e.Id);
+                var evidenceId = StableIds.Create(id, "evidence");
+                var startLine = content is not null && e.StartOffset <= content.Length ? 1 + content[..e.StartOffset].Count(c => c == '\n') : version.StartLine;
+                var endLine = content is not null && e.EndOffset <= content.Length ? 1 + content[..Math.Max(e.StartOffset, e.EndOffset - 1)].Count(c => c == '\n') : version.EndLine;
+                executionEvidence.Add(new(evidenceId, version.RevisionSha, symbol.Evidence.BlobOid, version.FilePath,
+                    startLine, endLine, symbol.Evidence.Analyzer + "Execution", Confidence.Exact, e.StartOffset, e.EndOffset));
+                return e with { Id = id, EvidenceIds = [evidenceId], Evaluation = Map(e.Evaluation), Children = Map(e.Children), Alternative = Map(e.Alternative),
+                    TerminationTarget = e.TerminationTarget?.StartsWith("loop_", StringComparison.Ordinal) == true ? StableIds.Create(version.Id, "execution", e.TerminationTarget) : e.TerminationTarget,
+                    CallSiteId = (symbol.CallSites ?? []).FirstOrDefault(c => c.Evidence.StartOffset == e.StartOffset && c.Evidence.EndOffset == e.EndOffset)?.Evidence.Id };
+            }).ToArray();
+            if (symbol.Execution is not null) allSymbols[index] = symbol with { Execution = Map(symbol.Execution) };
+        }
 
         return new VersionedGraph(
             allSymbols.Select(static symbol => symbol.Identity).DistinctBy(static identity => identity.Id).ToArray(),
             allSymbols.Select(static symbol => symbol.Version).DistinctBy(static version => version.Id).ToArray(),
             edges.DistinctBy(static edge => edge.Id).ToArray(),
             allSymbols.Select(static symbol => symbol.Evidence)
+                .Concat(executionEvidence)
                 .Concat(allSymbols.SelectMany(static symbol => symbol.CallSites ?? []).Select(static call => call.Evidence))
                 .Concat(controlFlows.SelectMany(flow => flow.Nodes).Where(node => node.Context is not null).Select(node =>
                     new EvidenceRef(node.EvidenceIds[0], node.Context!.Span.RevisionSha, node.Context.Span.BlobOid,
@@ -107,7 +130,9 @@ public sealed partial class SourceGraphAnalyzer
                         "RoslynStatement", Confidence.Exact, node.Context.Span.StartOffset, node.Context.Span.EndOffset)))
                 .DistinctBy(static evidence => evidence.Id).ToArray(),
             changes.DistinctBy(static change => change.Id).ToArray(),
-            controlFlows);
+            controlFlows, allSymbols.Where(s => s.Execution is { Count: > 0 }).Select(s => new MethodExecution(
+                s.Identity.Id, s.Version.RevisionSha, s.Version.FilePath, s.Execution!,
+                new(s.Version.RevisionSha, s.Evidence.BlobOid, s.Version.FilePath, s.Version.StartLine, s.Version.EndLine, s.Evidence.StartOffset, s.Evidence.EndOffset))).ToArray());
     }
 
     private static bool IsCppPath(string path) => Path.GetExtension(path).ToLowerInvariant() is
@@ -204,7 +229,7 @@ public sealed partial class SourceGraphAnalyzer
             fact.Calls.Select(call => new ParsedCall(call.Name, call.Line, call.EndLine ?? call.Line,
                 new EvidenceRef(StableIds.Create(revisionSha, blobOid, fact.FilePath, fact.SemanticKey, "cpp-call", call.Order,
                     call.StartOffset, call.EndOffset), revisionSha, blobOid, fact.FilePath, call.Line, call.EndLine ?? call.Line,
-                    "TreeSitterCppCall", Confidence.Exact, call.StartOffset, call.EndOffset), call.Order, call.ControlPath)).ToArray());
+                    "TreeSitterCppCall", Confidence.Exact, call.StartOffset, call.EndOffset), call.Order, call.ControlPath)).ToArray(), Execution: fact.Execution);
     }
 
     private static string? FindBlobOid(GitComparison comparison, string revisionSha, string filePath)
@@ -372,7 +397,8 @@ public sealed partial class SourceGraphAnalyzer
                 signature: DeclarationSignature(method));
             symbols.Add(parsed with
             {
-                ControlFlow = BuildCSharpControlFlow(parsed.Identity.Id, revisionSha, blobOid, path, method, parsed.Evidence.Id)
+                ControlFlow = BuildCSharpControlFlow(parsed.Identity.Id, revisionSha, blobOid, path, method, parsed.Evidence.Id),
+                Execution = CSharpExecutionFacts.Build(method)
             });
         }
 
@@ -389,7 +415,8 @@ public sealed partial class SourceGraphAnalyzer
                 signature: DeclarationSignature(constructor));
             symbols.Add(parsed with
             {
-                ControlFlow = BuildCSharpControlFlow(parsed.Identity.Id, revisionSha, blobOid, path, constructor, parsed.Evidence.Id)
+                ControlFlow = BuildCSharpControlFlow(parsed.Identity.Id, revisionSha, blobOid, path, constructor, parsed.Evidence.Id),
+                Execution = CSharpExecutionFacts.Build(constructor)
             });
         }
 

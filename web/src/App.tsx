@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { AnalysisWorkspace } from "./AnalysisWorkspace";
 import { CodeBlockWorkspace } from "./CodeBlockWorkspace";
+import { CodeDiagramTest } from "./CodeDiagramTest";
 import { api } from "./api";
 import { DiagramEditor } from "./DiagramEditor";
 import { PresetPicker } from "./PresetPicker";
@@ -183,7 +184,7 @@ function NormalApp() {
     </nav>
     {error && <div className="error-panel" role="alert">{error}</div>}
     <main>
-      {tab === "natural" && <section className="workspace-grid">
+      {tab === "natural" && <section className="workspace-grid natural-workspace">
         <form className="panel controls" onSubmit={createNatural}>
           <p className="section-label">NATURAL LANGUAGE</p><h2>요청을 구조화된 다이어그램으로 변환</h2>
           <label>요청<textarea name="prompt" required rows={8} value={naturalPrompt} onChange={(event) => setNaturalPrompt(event.target.value)} placeholder="예: 사용자가 API Gateway를 통해 주문 서비스와 데이터베이스를 호출하는 순서를 그려줘" /></label>
@@ -191,8 +192,8 @@ function NormalApp() {
           {naturalViews.map((view, index) => {
             const typePresets = naturalPresets.filter((preset) => preset.type === view.diagramType);
             return <fieldset className="diagram-view-editor" key={view.id}><legend>다이어그램 {index + 1}</legend>
-              <div className="field-row"><label>다이어그램 종류<select value={view.diagramType} onChange={(event) => { const diagramType = event.target.value as DiagramType; updateNaturalView(view.id, { diagramType, presetId: defaultPreset(diagramType, naturalPresets), overrides: undefined }); }}>{diagramTypes.map((item) => <option key={item.value} value={item.value} disabled={naturalViews.some((other) => other.id !== view.id && other.diagramType === item.value)}>{item.label}</option>)}</select></label>{naturalViews.length > 1 && <button type="button" className="text-button danger" onClick={() => setNaturalViews((current) => current.filter((item) => item.id !== view.id))}>삭제</button>}</div>
-              <PresetPicker presets={typePresets} selectedId={view.presetId} onSelect={(preset) => updateNaturalView(view.id, { presetId: preset.id, overrides: undefined })} />
+              <div className="natural-type-row"><label><span>다이어그램 종류</span><select value={view.diagramType} onChange={(event) => { const diagramType = event.target.value as DiagramType; updateNaturalView(view.id, { diagramType, presetId: defaultPreset(diagramType, naturalPresets), overrides: undefined }); }}>{diagramTypes.map((item) => <option key={item.value} value={item.value} disabled={naturalViews.some((other) => other.id !== view.id && other.diagramType === item.value)}>{item.label}</option>)}</select></label>{naturalViews.length > 1 && <button type="button" className="text-button danger" onClick={() => setNaturalViews((current) => current.filter((item) => item.id !== view.id))}>삭제</button>}</div>
+              <PresetPicker layout="list" presets={typePresets} selectedId={view.presetId} onSelect={(preset) => updateNaturalView(view.id, { presetId: preset.id, overrides: undefined })} />
             </fieldset>;
           })}
           <label className="checkbox"><input type="checkbox" name="enableThinking" checked={naturalThinking} onChange={(event) => setNaturalThinking(event.target.checked)} /> Thinking 모드 사용</label>
@@ -228,7 +229,7 @@ function NormalApp() {
 
       {tab === "llm" && <section className="llm-test-layout">
         <section className="panel controls"><p className="section-label">SYNTHETIC DATA ONLY</p><h2>사내 LLM 연결 점검</h2><p className="help">실제 저장소·커밋·사용자 요청을 보내지 않고 고정된 합성 데이터만 사용합니다.</p><button type="button" className="secondary" disabled={busy} onClick={() => void runLlmTest("connection")}>{elapsedLabel("1. 기본 연결 시험", busyAction === "llm-connection", busySeconds)}</button><button type="button" className="secondary" disabled={busy} onClick={() => void runLlmTest("diagram")}>{elapsedLabel("2. DiagramIR 계약 시험", busyAction === "llm-diagram", busySeconds)}</button><button type="button" className="secondary" disabled={busy} onClick={() => void runLlmTest("thinking")}>{elapsedLabel("3. Thinking 계약 시험", busyAction === "llm-thinking", busySeconds)}</button></section>
-        <section className="panel"><p className="section-label">BOUNDED DIAGNOSTICS</p><h2>시험 결과</h2><div className="llm-result-list"><LlmTestCard title="기본 연결" value={llmTests.connection} /><LlmTestCard title="DiagramIR 구조화" value={llmTests.diagram} /><LlmTestCard title="Thinking 구조화" value={llmTests.thinking} /></div></section>
+        <section className="panel"><p className="section-label">BOUNDED DIAGNOSTICS</p><h2>시험 결과</h2><div className="llm-result-list"><LlmTestCard title="기본 연결" value={llmTests.connection} /><LlmTestCard title="DiagramIR 구조화" value={llmTests.diagram} /><LlmTestCard title="Thinking 구조화" value={llmTests.thinking} /><CodeDiagramTest /></div></section>
       </section>}
     </main>
   </div>;

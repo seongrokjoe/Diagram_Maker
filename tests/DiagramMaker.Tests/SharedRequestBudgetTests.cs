@@ -51,6 +51,7 @@ public sealed class SharedRequestBudgetTests
     public async Task ReviewCharacterOverflowSplitsOnlyReviewsAndResumesTwiceWithoutRegeneration()
     {
         var options = OptionsForTest();
+        options.MaxInputCharacters = 40000;
         options.ReviewOutputTokens = 10000; // Exercise the independent character boundary, not proactive output splitting.
         using var handler = new BudgetHandler();
         using var transport = new VllmClient(options, handler: handler);
@@ -70,16 +71,16 @@ public sealed class SharedRequestBudgetTests
             }, diagnostics, progress);
             using (execution)
             {
-                var operation = client.GenerateSharedAsync("code-block", "경계 검사", Items(40),
+                var operation = client.GenerateSharedAsync("code-block", "경계 검사", Items(12),
                     _ => new { code = new string('x', 28000) }, Views, false, execution.Token);
                 if (attempt < 2) await Assert.ThrowsAnyAsync<OperationCanceledException>(() => operation);
-                else Assert.Equal(40, (await operation).Items.Count);
+                else Assert.Equal(12, (await operation).Items.Count);
                 checkpoints = execution.Checkpoints; diagnostics = execution.Diagnostics; progress = execution.Progress;
             }
         }
         Assert.Equal(1, handler.GenerationRequests);
         Assert.True(handler.ReviewRequests >= 2);
-        Assert.Contains(diagnostics!, d => d.ErrorCode == "LLM_INPUT_CHARACTERS" && d.Purpose == "review" && !d.Sent && d.InputCharacters > 56500);
+        Assert.Contains(diagnostics!, d => d.ErrorCode == "LLM_INPUT_CHARACTERS" && d.Purpose == "review" && !d.Sent && d.InputCharacters > 36500);
         Assert.Contains(checkpoints!, c => c.WasSplit);
         Assert.Equal(handler.GenerationRequests + handler.ReviewRequests, progress!.TransportRequests);
         Assert.True(progress.ReusedUnits > 0);
@@ -89,6 +90,7 @@ public sealed class SharedRequestBudgetTests
     public async Task InvalidResponseThenOversizedRepairUsesJsonPartitionsAndPreservesFailureChain()
     {
         var options = OptionsForTest();
+        options.MaxInputCharacters = 40000;
         using var handler = new BudgetHandler { RejectFirst = true };
         using var transport = new VllmClient(options, handler: handler);
         var client = new InternalLlmClient(Options.Create(options), new(), new(), transport, new(transport));
@@ -97,9 +99,9 @@ public sealed class SharedRequestBudgetTests
         for (var attempt = 0; attempt < 3; attempt++)
         {
             using var execution = new SemanticExecution(options, saved, CancellationToken.None);
-            var response = await client.GenerateSharedAsync("code-block", "경계 검사", Items(40),
+            var response = await client.GenerateSharedAsync("code-block", "경계 검사", Items(12),
                 _ => new { code = new string('x', 28000) }, Views, false, execution.Token);
-            Assert.Equal(40, response.Items.Count);
+            Assert.Equal(12, response.Items.Count);
             saved = execution.Checkpoints;
             if (attempt == 0)
             {

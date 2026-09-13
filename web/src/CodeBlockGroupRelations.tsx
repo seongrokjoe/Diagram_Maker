@@ -13,7 +13,7 @@ export function CodeBlockGroupRelations({ draft, group, blocks, onChange }: {
       const excluded = !group.blockIds.includes(r.toBlockId);
       return <div key={r.id} className="code-block-relation">
         {excluded && <p className="warning">적용 제외 · 도착 블럭이 다른 그룹에 있습니다. 같은 그룹의 블럭으로 변경하면 다시 적용됩니다.</p>}
-        <div className="form-row">
+        <div className="code-block-relation-fields">
           <label>출발 블럭<select aria-label="출발 블럭" value={r.fromBlockId} onChange={e => update(r.id, { fromBlockId: e.target.value })}>
             {blocks.map(b => <option key={b.id} value={b.id}>{b.title}</option>)}</select></label><span>→</span>
           <label>도착 블럭<select aria-label="도착 블럭" value={excluded ? "" : r.toBlockId} onChange={e => update(r.id, { toBlockId: e.target.value })}>
@@ -21,7 +21,7 @@ export function CodeBlockGroupRelations({ draft, group, blocks, onChange }: {
             {blocks.map(b => <option key={b.id} value={b.id}>{b.title}</option>)}</select></label>
           <label>관계 종류<select aria-label="관계 종류" value={r.kind} onChange={e => update(r.id, { kind: e.target.value as CodeBlockRelation["kind"] })}>
             <option value="calls">호출</option><option value="dataflow">데이터 전달</option><option value="uses">의존</option></select></label>
-          <label>관계 설명<input aria-label="관계 설명" placeholder="관계 설명" value={r.description} maxLength={500} onChange={e => update(r.id, { description: e.target.value })} /></label>
+          <label className="relation-description">관계 설명<input aria-label="관계 설명" placeholder="관계 설명" value={r.description} maxLength={500} onChange={e => update(r.id, { description: e.target.value })} /></label>
           <button type="button" onClick={() => onChange({ ...draft, relations: draft.relations?.filter(x => x.id !== r.id) })}>관계 삭제</button>
         </div>
       </div>;

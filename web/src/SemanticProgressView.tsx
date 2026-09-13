@@ -5,7 +5,8 @@ type FailureDiagnostic = {
   inputCharacters?: number; inputCharacterLimit?: number; inputTokens?: number; inputTokenLimit?: number;
   outputLimit?: number; completionTokens?: number; finishReason?: string; outputMode?: string;
   protocolVersion?: string; recoveryGroupId?: string; parentGroupId?: string; attempt?: number;
-  recoveryState?: string; requiredOutputTokens?: number;
+  recoveryState?: string; requiredOutputTokens?: number; state?: string; estimatedInputTokens?: boolean;
+  httpStatus?: number; serverErrorCategory?: string; nextAction?: string; schemaRelaxed?: boolean;
   validationDetails?: { expectedItems: number; receivedItems: number; missingItems: number; duplicateItems: number;
     unknownItems: number; field?: string; itemIndex?: number; actualLength?: number; allowedLength?: number;
     nonTargetItems?: number; unknownAliases?: number; issueCodes?: string[] };
@@ -38,10 +39,11 @@ export function SemanticProgressView({ value, running }: { value: SemanticProgre
     <p>{failures[0]?.id === failure.id ? "최초 기록" : "후속 기록"} · {purpose(failure)} · {failure.sent ? "전송 후" : "전송 전"}: {failureDescription(failure.validationCode, failure.errorCode)}</p>
     <p style={{ overflowWrap: "anywhere" }}>{failure.errorCode}{failure.validationCode && ` / ${failure.validationCode}`}</p>
     {failure.recoveryGroupId && <p style={{ overflowWrap: "anywhere" }}>묶음 {failure.recoveryGroupId}{failure.parentGroupId && ` · 상위 ${failure.parentGroupId}`} · 시도 {failure.attempt ?? 1}
-      {failure.recoveryState === "Retrying" ? (running ? " · 복구 중" : " · 복구 대기") : failure.recoveryState === "Exhausted" ? " · 복구 한도 소진" : " · 복구 완료"}</p>}
+      {failure.recoveryState === "Retrying" ? (running ? " · 복구 중" : " · 복구 대기") : failure.recoveryState === "Exhausted" ? " · 복구 한도 소진" : failure.recoveryState === "RequiresAction" ? " · 서버·설정 확인 필요" : failure.recoveryState === "Recovered" ? " · 복구 완료" : " · 상태 미확인"}</p>}
     <OutputDiagnostic value={failure} />
     {failure.inputCharacters != null && <p>요청 문자 수 {failure.inputCharacters.toLocaleString()}{failure.inputCharacterLimit != null && ` / 허용 ${failure.inputCharacterLimit.toLocaleString()}자`}</p>}
-    {failure.inputTokens != null && <p>입력 토큰 {failure.inputTokens.toLocaleString()}{failure.inputTokenLimit != null && ` / 허용 ${failure.inputTokenLimit.toLocaleString()}`}</p>}
+    {failure.inputTokens != null && <p>입력 토큰 {failure.inputTokens.toLocaleString()}{failure.estimatedInputTokens ? " (추정·예약 포함)" : ""}{failure.inputTokenLimit != null && ` / 허용 ${failure.inputTokenLimit.toLocaleString()}`}</p>}
+    {failure.httpStatus != null && <p>서버 응답 HTTP {failure.httpStatus} · {serverFailure(failure.serverErrorCategory)}</p>}
     {failure.validationDetails && <>
       <p>항목: 필요 {failure.validationDetails.expectedItems}개 · 응답 {failure.validationDetails.receivedItems}개 · 누락 {failure.validationDetails.missingItems}개 · 중복 {failure.validationDetails.duplicateItems}개 · 알 수 없는 ID {failure.validationDetails.unknownItems}개</p>
       {failure.validationDetails.nonTargetItems != null && <p>다른 근거의 ID {failure.validationDetails.nonTargetItems}개 · 알 수 없는 별칭 {failure.validationDetails.unknownAliases ?? 0}개</p>}
@@ -67,12 +69,23 @@ export function SemanticProgressView({ value, running }: { value: SemanticProgre
   </div>;
 }
 
-function purpose(value: FailureDiagnostic) { return value.purpose === "review" ? "의미 검토" : value.purpose === "repair" ? "응답 수정" : "의미 생성"; }
+function purpose(value: FailureDiagnostic) { return value.purpose === "execution-plan" ? "함수 실행 의미 계획" :
+  value.purpose === "execution-review" ? "함수 전체 의미 검토" : value.purpose === "review" ? "의미 검토" : value.purpose === "repair" ? "응답 수정" : "의미 생성"; }
 
 function OutputDiagnostic({ value }: { value: FailureDiagnostic }) {
   return <>{value.outputLimit != null && <p>출력 한도 {value.outputLimit.toLocaleString()}토큰 · 사용 {value.completionTokens?.toLocaleString() ?? "미확인"}토큰
     {value.requiredOutputTokens != null && ` · 필요한 보수적 예산 ${value.requiredOutputTokens.toLocaleString()}토큰`}</p>}
-    {(value.finishReason || value.outputMode) && <p style={{ overflowWrap: "anywhere" }}>종료 사유 {value.finishReason ?? "대기 중"} · 출력 방식 {value.outputMode ?? "미확인"}</p>}</>;
+    {(value.finishReason || value.outputMode) && <p style={{ overflowWrap: "anywhere" }}>종료 사유 {value.finishReason ?? (value.errorCode || value.state === "Failed" ? "응답 없음" : value.state === "Completed" ? "미제공" : "대기 중")} · 출력 방식 {value.outputMode ?? "미확인"}{value.schemaRelaxed && " · 호환 스키마"}</p>}</>;
+}
+
+function serverFailure(category?: string) {
+  return ({ authentication: "서버 접근 권한을 확인하세요.", model: "설정한 모델이 서버에서 제공되는지 확인하세요.",
+    context: "서버 문맥 한도와 입력·출력 예약을 확인하세요.", "output-limit": "서버의 최대 출력 토큰 설정을 확인하세요.",
+    "schema-constraint": "서버가 JSON 스키마 제약을 지원하지 않습니다. 서버 구조화 출력 설정을 확인하세요.",
+    "output-field": "서버가 출력 방식 필드를 지원하지 않습니다. API 호환 설정을 확인하세요.",
+    template: "서버 채팅 템플릿과 Thinking 지원을 확인하세요.", server: "서버 상태를 확인한 뒤 재개하세요.",
+    capacity: "서버 대기열·사용량을 확인한 뒤 재개하세요." } as Record<string, string>)[category ?? ""] ??
+    "오류 유형을 확인하지 못했습니다. 사내 서버에서 해당 시각의 오류 사유를 확인하세요.";
 }
 
 function issueDescription(code: string) {

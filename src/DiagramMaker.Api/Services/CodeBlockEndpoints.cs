@@ -90,6 +90,8 @@ public static class CodeBlockEndpoints
             CodeBlockWorkspaceService service, CancellationToken ct) =>
         {
             var run = await service.GetRunAsync(id, Owner(context), ct);
+            if (context.Request.Query["format"] == "text")
+                return Results.Text(LlmDiagnosticReport.Text(run.State.ToString(), run.StopReason, run.Execution, run.Diagnostics), "text/plain; charset=utf-8");
             return Results.Ok(new { version = 2, run.Id, run.State, run.StopReason, run.Execution, run.GenerationVersion,
                 diagnostics = run.Diagnostics ?? [], checkpointCount = run.Checkpoints?.Count ?? 0 });
         });

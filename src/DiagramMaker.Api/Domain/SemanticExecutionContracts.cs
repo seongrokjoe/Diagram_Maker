@@ -12,7 +12,8 @@ public sealed record LlmDiagnostic(string Id, string Stage, string UnitId, strin
     int? ContextTokenLimit = null, LlmValidationDetails? ValidationDetails = null,
     string? ProtocolVersion = null, string? RecoveryGroupId = null, string? ParentGroupId = null,
     int? Attempt = null, string? RecoveryState = null, int? RequiredOutputTokens = null,
-    IReadOnlyList<string>? AncestorGroupIds = null);
+    IReadOnlyList<string>? AncestorGroupIds = null, int? HttpStatus = null,
+    string? ServerErrorCategory = null, string? NextAction = null, bool SchemaRelaxed = false);
 public sealed record LlmValidationDetails(int ExpectedItems, int ReceivedItems,
     int MissingItems = 0, int DuplicateItems = 0, int UnknownItems = 0,
     string? Field = null, int? ItemIndex = null, int? ActualLength = null, int? AllowedLength = null,

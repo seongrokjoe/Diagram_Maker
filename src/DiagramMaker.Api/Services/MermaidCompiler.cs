@@ -116,7 +116,7 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
             {
                 if (block.EdgeId is null || !edgeMap.TryGetValue(block.EdgeId, out var edge))
                     throw new DiagramValidationException("Sequence block references an unknown event.");
-                builder.Append("    ").Append(aliases[edge.SourceId]).Append(edge.IsIndirect ? "-->>" : "->>")
+                builder.Append("    ").Append(aliases[edge.SourceId]).Append(edge.Type is "response" or "return" or "throw" || edge.IsIndirect ? "-->>" : "->>")
                     .Append(aliases[edge.TargetId]).Append(": ").Append(EscapeSequence(edge.IsIndirect ? $"간접 API: {edge.ViaApi} · {edge.Label}" : edge.Label)).Append('\n');
                 return;
             }
@@ -150,9 +150,9 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
                 }
                 return;
             }
-            if (block.Kind == "loop") builder.Append("    loop ").Append(EscapeSequence(block.Label)).Append('\n');
+            if (block.Kind is "loop" or "break" or "opt") builder.Append("    ").Append(block.Kind).Append(' ').Append(EscapeSequence(block.Label)).Append('\n');
             foreach (var child in block.Children) Append(child);
-            if (block.Kind == "loop") builder.AppendLine("    end");
+            if (block.Kind is "loop" or "break" or "opt") builder.AppendLine("    end");
         }
     }
 

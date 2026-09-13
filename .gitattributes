@@ -1,2 +1,4 @@
 # Preserve reviewed license evidence byte-for-byte on every checkout.
 packaging/licenses/** -text
+web/src/assets/fonts/LICENSE.txt -text
+web/src/assets/fonts/*.woff2 -text

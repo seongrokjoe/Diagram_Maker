@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { assertLocalPath } from '../tools/git-worker/local-security.mjs';
 import { checkSemanticProgress } from './semantic-progress-ui-checks.mjs';
+import { checkExecutionEvidence } from './execution-evidence-ui-checks.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 assertLocalPath(root);
 const { chromium } = createRequire(path.join(root, 'artifacts/ui-check/package.json'))('playwright');
@@ -74,10 +75,10 @@ try {
   assert.equal(await workspace.getByRole('tab', { name: '다이어그램 결과', exact: true }).getAttribute('aria-selected'), 'true');
   await page.keyboard.press('Home');
   assert.equal(await composeTab.getAttribute('aria-selected'), 'true');
-  assert.equal(await composeTab.evaluate(e => getComputedStyle(e).borderBottomWidth), '3px');
+  assert.notEqual(await composeTab.evaluate(e => getComputedStyle(e).backgroundColor), await workspace.getByRole('tab', { name: '다이어그램 결과', exact: true }).evaluate(e => getComputedStyle(e).backgroundColor));
   assert.equal(generationRequests, 0);
   const code = 'int save(int n){return n;}\nint run(){if(ready) return save(1); return 0;}';
-  await workspace.getByLabel('작업 제목', { exact: true }).fill('합성 UI 검증');
+  await workspace.getByLabel('작업 제목', { exact: true }).fill('합성 UI 검증 — 주문 요청 검증과 저장 처리 흐름을 함께 확인하는 긴 작업 제목');
   await workspace.getByLabel('코드', { exact: true }).fill(code);
   await page.getByRole('button', { name: '자연어 다이어그램', exact: true }).click();
   await page.getByRole('button', { name: '코드 블럭 다이어그램', exact: true }).click();
@@ -114,16 +115,29 @@ try {
   await groupList.getByRole('button').last().click();
   await blockEditor.getByLabel('블럭 그룹 이동').selectOption({ label: '그룹 1' });
   assert.equal(await groupList.getByRole('button').count(), 2, 'moving the last block preserves the empty group');
-  for (const width of [1440, 800, 390]) {
+  await workspace.getByLabel('그룹 제목', { exact: true }).fill('주문 요청 검증과 데이터 저장 호출 관계를 포함하는 긴 그룹 제목');
+  await workspace.getByLabel('사용자 관계 추가', { exact: true }).check();
+  for (let i = 0; i < 2; i++) {
+    await workspace.getByRole('button', { name: '관계 추가', exact: true }).click();
+    await workspace.getByLabel('관계 설명', { exact: true }).last().fill('긴 관계 설명 — 요청 데이터 검증 이후 저장 결과를 반환합니다.');
+  }
+  assert.equal(await workspace.locator('.code-block-group-container .code-block-card').count(), 2, 'block cards belong to the group container');
+  assert.equal(await workspace.locator('.code-block-group-container .code-block-output-settings').count(), 1);
+  assert.equal(await workspace.locator('.code-block-relation:visible').count(), 3);
+  const savedPicker = await workspace.locator('.saved-workspace-picker').boundingBox();
+  assert.ok(savedPicker.width >= 360 && savedPicker.width <= 560);
+  for (const width of [1366, 1440, 1920, 800, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     assert.equal(await workspace.locator('[aria-label="전체 블럭 목록"]').count(), 0);
     await workspace.screenshot({ path: path.join(fixture, `compose-${width}.png`) });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'composition has no page overflow');
   }
   await page.setViewportSize({ width: 1440, height: 1000 });
+  for (let i = 0; i < 2; i++) await workspace.getByRole('button', { name: '관계 삭제', exact: true }).last().click();
+  await workspace.getByLabel('사용자 관계 추가', { exact: true }).uncheck();
   const generateButton = workspace.getByRole('button', { name: '다이어그램 생성', exact: true });
   const generateSize = await generateButton.boundingBox();
-  assert.ok(generateSize.width >= 220 && generateSize.height >= 52);
+  assert.ok(generateSize.width >= 200 && generateSize.height >= 40);
   await workspace.getByRole('button', { name: '블럭 2 위로', exact: true }).click();
   assert.equal(await blockEditor.getByLabel('코드', { exact: true }).inputValue(), 'int unrelated(){return 2;}');
   await workspace.getByRole('button', { name: '블럭 삭제', exact: true }).first().click();
@@ -205,10 +219,12 @@ try {
   await editor.locator('svg').first().waitFor();
   for (const name of ['codeWorkspace', 'codeRun', 'codeGroup', 'codeView', 'codePage', 'codeScreen'])
     assert.equal(new URL(page.url()).searchParams.get(name), selectedUrl.searchParams.get(name), `reload restores ${name}`);
-  for (const width of [1440, 800, 390]) {
+  for (const width of [1366, 1440, 1920, 800, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     assert.ok(await workspace.getByRole('tree', { name: '다이어그램 결과 트리', exact: true }).isVisible());
     await workspace.screenshot({ path: path.join(fixture, `workspace-${width}.png`) });
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'result tree with long titles has no page overflow');
+    assert.ok(await tree.getByRole('treeitem').evaluateAll(rows => rows.every(row => getComputedStyle(row).borderBottomWidth === '1px')), 'tree items retain separate dividers');
   }
   await page.setViewportSize({ width: 1440, height: 1000 });
   const navigationRequests = generationRequests;
@@ -301,6 +317,12 @@ try {
   const diagnostic = JSON.parse(await readFile(diagnosticFile, 'utf8'));
   assert.equal(diagnostic.id, fiveId); assert.equal(diagnostic.version, 2);
   assert.ok(!('checkpoints' in diagnostic) && !JSON.stringify(diagnostic).includes('class Machine'));
+  const textDownload = page.waitForEvent('download');
+  await workspace.getByRole('button', { name: '텍스트 진단 다운로드', exact: true }).click();
+  const textFile = path.join(fixture, 'downloaded-diagnostics.txt');
+  await (await textDownload).saveAs(textFile);
+  const textReport = await readFile(textFile, 'utf8');
+  assert.match(textReport, /DiagramMaker generation diagnostics/); assert.ok(!textReport.includes('class Machine'));
   for (const view of five.results[0].views) {
     assert.ok(view.pages.length, `${view.selection.diagramType} has source-backed pages`);
     await workspace.locator(`[role="treeitem"][data-row-id="${view.viewId}:${view.pages[0].id}"]`).click();
@@ -315,6 +337,20 @@ try {
     await editor.screenshot({ path: path.join(fixture, `url-${view.selection.diagramType}.png`) });
   }
   await checkSemanticProgress({ page, fixture, run: five });
+  await checkExecutionEvidence({ page, fixture, origin });
+  await page.getByRole('button', { name: 'LLM 점검', exact: true }).click();
+  await page.getByRole('button', { name: '코드 생성 검사', exact: true }).click();
+  await page.getByText('검사 미완료 — 진단 보고서를 확인하세요.', { exact: true }).waitFor();
+  const selfTestDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: '검사 보고서 다운로드', exact: true }).click();
+  const selfTestFile = path.join(fixture, 'self-test-disabled.txt');
+  await (await selfTestDownload).saveAs(selfTestFile);
+  assert.match(await readFile(selfTestFile, 'utf8'), /LLM_DISABLED/);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.locator('.llm-test-layout').screenshot({ path: path.join(fixture, `code-diagram-test-${width}.png`) });
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
+  }
   assert.deepEqual(errors, []);
   await writeFile(path.join(fixture, 'result.json'), JSON.stringify({ status: 'passed', packageRoot, runId: body.id, checked: ['draft tabs', 'block order', 'language inheritance', 'group views', 'render', 'zoom', 'reload', 'viewport captures', 'evidence', 'manual edit provenance', 'SVG/PNG downloads', 'question reload and answer', 'explicit group merge and split', 'tree keyboard navigation', 'collapsed branches and result location restoration', 'older generation and edit restoration', 'navigation without generation', 'URL/click labels in five formats without link behavior'] }, null, 2));
   console.log(`Code block UI smoke passed. Screenshots: ${path.relative(root, fixture)}`);

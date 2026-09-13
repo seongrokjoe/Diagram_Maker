@@ -26,6 +26,7 @@ public static class DiagramEvidenceBuilder
                 .Select(version => version.OwnerIdentityId).OfType<string>().ToArray());
         }
         var facts = new List<SourceFact>();
+        var executionInputs = new List<ExecutionMeaningInput>();
         var warnings = new List<string>();
         if (graph.Versions.Where(version => related.Contains(version.IdentityId)).GroupBy(version => (version.IdentityId, version.RevisionSha))
             .Any(group => group.Select(version => version.FilePath).Distinct().Count() > 1))
@@ -49,6 +50,12 @@ public static class DiagramEvidenceBuilder
                 if (ids.Length > 0) warnings.Add($"소스 본문 미확보: {version.FilePath}:{version.StartLine} ({version.RevisionSha[..Math.Min(8, version.RevisionSha.Length)]})");
                 continue;
             }
+            var execution = graph.Executions?.FirstOrDefault(m => m.IdentityId == version.IdentityId && m.RevisionSha == version.RevisionSha && m.FilePath == version.FilePath);
+            if (execution is { Events.Count: > 0 })
+                executionInputs.Add(new(version.Id, version.QualifiedName, execution.Span ?? span,
+                    execution.Span is { StartOffset: { } start, EndOffset: { } finish } && start >= 0 && finish <= content.Length
+                        ? content[start..finish] : string.Join('\n', content.Replace("\r", "", StringComparison.Ordinal)
+                            .Split('\n').Skip(version.StartLine - 1).Take(version.EndLine - version.StartLine + 1)), execution.Events));
             // Source chunks are whole lines, each with an exact revision/range. A long
             // line is retained intact; the request packer reports oversized facts.
             var lines = content.Replace("\r", "", StringComparison.Ordinal).Split('\n');
@@ -72,6 +79,14 @@ public static class DiagramEvidenceBuilder
                     new SourceSpan(flow.RevisionSha ?? comparison.TargetSha, BlobFor(flow.RevisionSha, flow.FilePath), flow.FilePath ?? "", node.StartLine, node.EndLine),
                     Context: node.Context));
         }
+        foreach (var method in (graph.Executions ?? []).Where(m => related.Contains(m.IdentityId)))
+            foreach (var item in ExecutionSequenceProjection.Flatten(method.Events))
+            {
+                var evidence = graph.Evidence.FirstOrDefault(e => (item.EvidenceIds ?? []).Contains(e.Id));
+                facts.Add(new(item.Id, "execution-" + item.Kind, item.Expression, ChangesFor(method.IdentityId), item.EvidenceIds ?? [],
+                    evidence is null ? null : new(evidence.RevisionSha, evidence.BlobOid, evidence.FilePath,
+                        evidence.StartLine, evidence.EndLine, evidence.StartOffset, evidence.EndOffset), item.Expression));
+            }
         foreach (var edge in graph.Edges.Where(edge => related.Contains(edge.FromIdentityId) && related.Contains(edge.ToIdentityId)))
             facts.Add(new SourceFact(edge.Id, edge.Type, $"{edge.FromIdentityId} → {edge.ToIdentityId}: {edge.Label}",
                 ChangesFor(edge.FromIdentityId).Concat(ChangesFor(edge.ToIdentityId)).Distinct().ToArray(), edge.EvidenceIds,
@@ -83,7 +98,7 @@ public static class DiagramEvidenceBuilder
             .DistinctBy(fact => fact.Id).OrderByDescending(fact => fact.ChangeIds.Count > 0).ThenBy(fact => fact.Id).ToArray();
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
         { comparison.BaseSha, comparison.TargetSha, changeIds = changeIds.Order().ToArray(), facts = ordered, SourceGraphAnalyzer.IndexVersion })))).ToLowerInvariant();
-        return new EvidenceBundle(hash, comparison.BaseSha, comparison.TargetSha, changeIds, ordered, warnings.Distinct().ToArray());
+        return new EvidenceBundle(hash, comparison.BaseSha, comparison.TargetSha, changeIds, ordered, warnings.Distinct().ToArray(), executionInputs);
 
         string[] ChangesFor(string identityId) => changes.Where(change => graph.Versions.Any(version => version.IdentityId == identityId &&
             (version.Id == change.BeforeSymbolVersionId || version.Id == change.AfterSymbolVersionId))).Select(change => change.Id).ToArray();

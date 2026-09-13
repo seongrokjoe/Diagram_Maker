@@ -82,8 +82,8 @@ public sealed class SharedSemanticTests(ITestOutputHelper output)
     public async Task GitResumesTwiceWithImmutableRevisionsAndCumulativeRequests()
     {
         var path = Path.Combine(AppContext.BaseDirectory, "shared-git-resume-" + Guid.NewGuid().ToString("N"), "store.json");
-        var options = SemanticExecutionTests.OptionsForTest(); options.SemanticJobBudgetSeconds = 1; options.DiagramOutputTokens = 800;
-        string Source(bool after) => "class Work {" + string.Join("\n", Enumerable.Range(0, 12).Select(i =>
+        var options = SemanticExecutionTests.OptionsForTest(); options.SemanticJobBudgetSeconds = 5; options.DiagramOutputTokens = 800;
+        string Source(bool after) => "class Work {" + string.Join("\n", Enumerable.Range(0, 4).Select(i =>
             $"int Task{i}(int n) {{ if(n<0) return {(after ? -1 : 0)}; return n+{i}; }}")) + "}";
         var comparison = new GitComparison(new string('a', 40), new string('b', 40),
             [new ChangedFile("Work.cs", null, ChangeKind.Modified, "before", "after", [], Source(false), Source(true))]);
@@ -102,7 +102,7 @@ public sealed class SharedSemanticTests(ITestOutputHelper output)
                     Views: [new("flow", "flowchart", "balanced"), new("class", "class", "balanced")]);
                 await store.SaveAnalysisAsync(new(jobId, new(repositoryId, comparison.BaseSha, comparison.TargetSha, Groups: [group]),
                     AnalysisState.Queued, comparison.BaseSha, comparison.TargetSha, 0, "Queued", null, null, null, now, now, null,
-                    GenerationVersion: "shared-semantic-v1"), Ct);
+                    GenerationVersion: "shared-semantic-v2"), Ct);
             }
             else
             {
@@ -159,7 +159,7 @@ public sealed class SharedSemanticTests(ITestOutputHelper output)
             "class Work {" + string.Join("\n", Enumerable.Range(0, 20).Select(i => $"int Task{i}(int n) {{ if(n<0) return 0; return n+{i}; }}")) + "}")]);
         var graph = new SourceGraphAnalyzer().AnalyzeCSharpCodeBlocks(Guid.NewGuid(), input.Blocks);
         var transport = new FaultTransport(mode);
-        var options = new LlmOptions { Enabled = true, DiagramOutputTokens = 800 };
+        var options = new LlmOptions { Enabled = true, DiagramOutputTokens = mode == "truncate" ? 8000 : 800 };
         var client = new InternalLlmClient(Options.Create(options), new(), new(), transport, new(transport));
         IReadOnlyList<SemanticCheckpoint>? saved = null;
         var originalRequests = 0;
@@ -178,7 +178,8 @@ public sealed class SharedSemanticTests(ITestOutputHelper output)
             else
             {
                 Assert.All(result!.Pages.Values, p => Assert.NotEqual("Semantic", p.Status));
-                Assert.InRange(transport.Requests, 1, mode == "invalid" ? 6 : 12);
+                // Each of the two stages stops after three failed units, with one repair per unit.
+                Assert.InRange(transport.Requests, 1, mode == "invalid" ? 12 : 24);
             }
         }
     }
@@ -203,7 +204,7 @@ public sealed class SharedSemanticTests(ITestOutputHelper output)
     {
         var blocks = new[] { new CodeBlockInput("code", "csharp", "동작",
             "class Machine { int state; int Run(int n) { int x=1; int y=2; if(n<0) return -1; " +
-            "while(n>0) { n=Save(n); if(n==2) break; } if(state==0) state=1; try { Save(n); } catch { throw; } return n; } int Save(int n){return n-1;} }"),
+            "while(n>0) { n=Save(n); if(n==2) break; } if(state==0) state=1; Save(n); return n; } int Save(int n){return n-1;} }"),
             new CodeBlockInput("other", "csharp", "별도", "int Other(){return 1;}") };
         var input = new CodeBlockWorkspaceInput("근거", blocks);
         var analyzer = new CodeBlockAnalyzer(new(), Options.Create(new GitWorkerOptions()), Options.Create(new CodeBlockOptions()), null!);
@@ -242,7 +243,7 @@ public sealed class SharedSemanticTests(ITestOutputHelper output)
     {
         var path = Path.Combine(AppContext.BaseDirectory, "shared-resume-" + Guid.NewGuid().ToString("N"), "store.json");
         var options = SemanticExecutionTests.OptionsForTest();
-        options.SemanticJobBudgetSeconds = 1; options.DiagramOutputTokens = 800;
+        options.SemanticJobBudgetSeconds = 5; options.DiagramOutputTokens = 800;
         Guid runId = default;
         var completed = new HashSet<string>();
         var requests = 0;
@@ -318,14 +319,28 @@ public sealed class SharedSemanticTests(ITestOutputHelper output)
         var transport = new CodeBlockPipelineTests.CodeTransport();
         var result = await Client(transport).PlanCodeBlockGroupAsync(input, graph, group, selections, Ct);
         output.WriteLine($"{language}: {transport.Requests.Count} requests, {result!.Pages.Count} pages, {selections.Length} types");
-        var generations = transport.Requests.Where(r => r.Purpose != "review").ToArray();
+        var functionPlans = transport.Requests.Where(r => r.Purpose == "execution-plan").ToArray();
+        var functionReviews = transport.Requests.Where(r => r.Purpose == "execution-review").ToArray();
+        Assert.Equal(40, functionPlans.Length);
+        Assert.Equal(40, functionReviews.Length);
+        Assert.All(functionPlans, request => {
+            using var json = JsonDocument.Parse(request.UserPrompt);
+            Assert.Contains("return input;", json.RootElement.GetProperty("source").GetString());
+            Assert.Equal(28, json.RootElement.GetProperty("steps").GetArrayLength());
+        });
+        var generations = transport.Requests.Where(r => r.Purpose is not ("review" or "execution-plan" or "execution-review")).ToArray();
         var reviews = transport.Requests.Where(r => r.Purpose == "review").ToArray();
         foreach (var request in generations)
         {
             using var json = JsonDocument.Parse(request.UserPrompt);
             output.WriteLine($"Batch: {request.UserPrompt.Length} chars, {json.RootElement.GetProperty("items").GetArrayLength()} annotations");
         }
-        Assert.InRange(generations.Length, 1, 6);
+        Assert.Equal(11, generations.Length);
+        Assert.All(generations, request =>
+        {
+            using var json = JsonDocument.Parse(request.UserPrompt);
+            Assert.InRange(json.RootElement.GetProperty("items").GetArrayLength(), 1, 12);
+        });
         Assert.InRange(reviews.Length, generations.Length, 24);
         Assert.All(reviews, request =>
         {

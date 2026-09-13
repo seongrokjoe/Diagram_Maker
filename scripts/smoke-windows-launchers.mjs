@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { cp, mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -79,6 +79,22 @@ try {
         const response = await fetch('http://127.0.0.1:5080/health', { signal: AbortSignal.timeout(5000) });
         assert.equal(response.status, 200);
         assert.equal((await response.json()).service, 'diagram-maker-api');
+        if (item === cases[0]) {
+          const test = spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/c', 'test-code-diagram.cmd'], {
+            cwd: app, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+          });
+          let testOutput = '';
+          test.stdout.on('data', data => testOutput += data); test.stderr.on('data', data => testOutput += data);
+          const [testExit] = await once(test, 'close');
+          assert.notEqual(testExit, 0, 'Disabled LLM must fail the command');
+          const reports = await readdir(path.join(app, 'diagnostics'));
+          assert.equal(reports.length, 1);
+          const report = await readFile(path.join(app, 'diagnostics', reports[0]), 'utf8');
+          assert.match(report, /LLM_DISABLED/); assert.match(report, /Thinking OFF/);
+          await writeFile(path.join(fixture, 'code-diagram-command.txt'), report);
+          await writeFile(path.join(fixture, 'code-diagram-command.log'), testOutput);
+          checks.push('code diagram command retains failure report and nonzero exit');
+        }
       } else {
         assert.notEqual(child.exitCode, null, output);
         assert.notEqual(child.exitCode, 0, output);

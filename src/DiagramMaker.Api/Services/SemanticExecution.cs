@@ -34,11 +34,16 @@ public sealed class SemanticExecution : IDisposable
     public Guid? LeaseId { get; init; }
     public CancellationToken Token => budget.Token;
     public bool BudgetExpired => budget.IsCancellationRequested && !parent.IsCancellationRequested;
+    public LlmClientException? RequestFailure { get; private set; }
+    public void StopRequests(LlmClientException error) => RequestFailure ??= error;
+    internal const string SharedPolicyVersion = "shared-requests-v5";
+    internal static string PolicyFingerprint(LlmOptions options) =>
+        Hash(JsonSerializer.Serialize(options) + InternalLlmClient.SemanticPromptVersion + InternalLlmClient.CodeBlockPromptVersion + SharedPolicyVersion);
     public IReadOnlyList<SemanticCheckpoint> Checkpoints => checkpoints.ToArray();
     public IReadOnlyList<LlmDiagnostic> Diagnostics => diagnostics.ToArray();
     // Page wrappers and their constituent completion checkpoints describe the same
     // work; do not count both as independent completed units.
-    private static bool Counted(SemanticCheckpoint value) => value.Stage is not ("code-page" or "git-page") &&
+    private static bool Counted(SemanticCheckpoint value) => value.Stage is not ("code-page" or "git-page" or "execution-meaning") &&
         !value.Stage.StartsWith("shared-", StringComparison.Ordinal);
     public SemanticProgress Progress => new(Stage, UnitId,
         checkpoints.Count(c => Counted(c) && c.State == "Completed"), reused.Count, diagnostics.Count,
@@ -68,13 +73,13 @@ public sealed class SemanticExecution : IDisposable
         checkpoints = (saved ?? []).ToList();
         protocolUpgraded = savedProgress?.ProtocolUpgraded == true ||
             checkpoints.Any(c => c.Stage.StartsWith("shared-", StringComparison.Ordinal)) &&
-            !(savedDiagnostics ?? []).Any(d => d.ProtocolVersion == "shared-requests-v3");
+            !(savedDiagnostics ?? []).Any(d => d.ProtocolVersion == SharedPolicyVersion);
         diagnostics = (savedDiagnostics ?? []).Select(d => d.State is "Running" or "Preparing"
             ? d with { State = "Interrupted", ErrorCode = "PROCESS_INTERRUPTED" } : d).ToList();
         initialRequests = diagnostics.Count;
         previousElapsed = savedProgress?.TotalElapsedSeconds is > 0 ? savedProgress.TotalElapsedSeconds : savedProgress?.ElapsedSeconds ?? 0;
         attemptNumber = savedProgress is null ? 1 : savedProgress.AttemptNumber + 1;
-        fingerprint = Hash(JsonSerializer.Serialize(options) + InternalLlmClient.SemanticPromptVersion + InternalLlmClient.CodeBlockPromptVersion);
+        fingerprint = PolicyFingerprint(options);
     }
 
     public static async Task<T?> RunAsync<T>(string stage, string key, Func<Task<T?>> work, Func<T, bool> accepted) where T : class
@@ -115,7 +120,7 @@ public sealed class SemanticExecution : IDisposable
             current.checkpoints.Add(new(unitKey, stage, "null", "Pending"));
             await current.NotifyAsync();
             var result = await work();
-            if (result is not null)
+            if (result is not null && current.RequestFailure is null)
             {
                 var success = accepted(result);
                 var wasSplit = current.checkpoints.Any(c => c.Key == unitKey && c.WasSplit);
@@ -147,7 +152,7 @@ public sealed class SemanticExecution : IDisposable
     public async Task RecordAsync(LlmDiagnostic record)
     {
         if (record.ProtocolVersion is null && requestScope is { } scope)
-            record = record with { ProtocolVersion = "shared-requests-v3", RecoveryGroupId = scope.Group,
+            record = record with { ProtocolVersion = SharedPolicyVersion, RecoveryGroupId = scope.Group,
                 ParentGroupId = scope.Parent, Attempt = scope.Attempt, AncestorGroupIds = scope.Ancestors };
         if (record.ProtocolVersion is not null && record.ErrorCode is not null && record.RecoveryState is null)
             record = record with { RecoveryState = "Retrying" };
@@ -204,6 +209,10 @@ public sealed class SemanticExecution : IDisposable
 
 internal static class LlmFailure
 {
+    public static bool StopsRequests(LlmClientException error) => error.Code.StartsWith("LLM_HTTP_", StringComparison.Ordinal) ||
+        error.Code is "LLM_DISABLED" or "LLM_REDIRECT_BLOCKED" or "LLM_OUTPUT_LIMIT" or "LLM_REQUEST_INVALID" or "LLM_TRANSPORT" or "LLM_REQUEST_TIMEOUT" or "LLM_NO_RESPONSE_TIMEOUT";
+    public static bool CanResume(IReadOnlyList<SemanticCheckpoint>? checkpoints, string? stopReason) =>
+        stopReason is "budget" or "user-cancelled" || checkpoints?.Any(c => c.State is "Pending" or "Split") == true;
     public static string Describe(Exception exception) => exception switch
     {
         LlmClientException { Code: "LLM_DISABLED" } => "LLM이 비활성화되어 있습니다. LLM 설정을 확인하세요.",
@@ -212,6 +221,10 @@ internal static class LlmFailure
         LlmClientException { Code: "LLM_INPUT_CHARACTERS" } => "요청의 문자 수 한도를 초과했습니다. 분할 가능한 근거를 나누고 완료된 결과를 보존합니다.",
         LlmClientException { Code: "LLM_REQUEST_TIMEOUT" or "LLM_NO_RESPONSE_TIMEOUT" } => "LLM 응답 시간 제한에 도달했습니다. 서버 대기 상태와 작업 진단을 확인하세요.",
         LlmClientException { Code: "LLM_SCHEMA_INVALID" } e => $"LLM 응답 계약 또는 코드 근거 검증 실패 ({e.FailureKind ?? e.Code}). 작업 진단에서 실패 단계를 확인하세요.",
+        LlmClientException { ServerErrorCategory: "schema-constraint" or "output-field" or "template" } => "서버가 요청 계약을 지원하지 않습니다. 구조화 출력·채팅 템플릿 설정을 확인하세요.",
+        LlmClientException { ServerErrorCategory: "authentication" } => "서버 접근 권한을 확인하세요.",
+        LlmClientException { ServerErrorCategory: "model" } => "설정한 모델이 서버에서 제공되는지 확인하세요.",
+        LlmClientException { ServerErrorCategory: "output-limit" } => "서버의 최대 출력 토큰 설정을 확인하세요.",
         LlmClientException e => $"LLM 요청 실패 ({e.Code}). 작업 진단에서 서버 응답과 전송 여부를 확인하세요.",
         DiagramGenerationException e => e.Message,
         _ => "의미 검증을 완료하지 못했습니다. 작업 진단을 확인하세요."

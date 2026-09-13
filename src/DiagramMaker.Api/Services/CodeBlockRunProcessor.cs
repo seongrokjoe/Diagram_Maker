@@ -34,7 +34,8 @@ public sealed class CodeBlockRunProcessor(IAppStore store, CodeBlockAnalyzer ana
         var workToken = execution.Token;
         try
         {
-            var graph = run.Graph ?? await analyzer.AnalyzeAsync(run.WorkspaceId, run.Snapshot.Blocks, workToken);
+            var graph = run.Graph?.AnalyzerVersion == CodeBlockAnalyzer.AnalyzerVersion ? run.Graph :
+                await analyzer.AnalyzeAsync(run.WorkspaceId, run.Snapshot.Blocks, workToken);
             var prepared = grouping.Prepare(run, graph);
             if (!await Save(run with { Graph = graph, Groups = prepared.Groups, Relations = prepared.Relations,
                 Questions = prepared.Questions, Warnings = graph.Warnings.Concat(prepared.Warnings).Distinct().ToArray(), Progress = 25,
@@ -184,8 +185,7 @@ public sealed class CodeBlockRunProcessor(IAppStore store, CodeBlockAnalyzer ana
             relations = relations.Where(r => group.BlockIds.Contains(r.FromBlockId) || group.BlockIds.Contains(r.ToBlockId)), run.Answers,
             groupOptionsVersion = 1, enableThinking = group.EnableThinking ?? run.Snapshot.EnableThinking,
             enableUserRelations = group.EnableUserRelations ?? true, CodeBlockAnalyzer.AnalyzerVersion, InternalLlmClient.CodeBlockPromptVersion,
-            llmOptions.Value.Model, llmOptions.Value.Endpoint, llmOptions.Value.Enabled, llmOptions.Value.NaturalDiagramTemperature,
-            llmOptions.Value.NaturalDiagramSeed, llmOptions.Value.DiagramOutputTokens, llmOptions.Value.ThinkingOutputTokens }));
+            llmPolicy = SemanticExecution.PolicyFingerprint(llmOptions.Value) }));
 
     internal static IReadOnlyList<CodeBlockGroupResult> MergeResults(IReadOnlyList<CodeBlockGroupResult> saved, IReadOnlyList<CodeBlockGroupResult> incoming) =>
         incoming.Select(group => group with { Views = group.Views.Select(view => view.State == "Generating"

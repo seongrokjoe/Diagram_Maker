@@ -59,6 +59,6 @@ export function CodeBlockResultTree({ run, active, showStatic, onSelect }: {
       aria-selected={row.branch ? undefined : Boolean(row.active)} tabIndex={row.id === tabId ? 0 : -1} data-row-id={row.id}
       style={{ paddingLeft: `${(row.level - 1) * 16 + 8}px` }} onFocus={() => setFocusId(row.id)} onKeyDown={e => key(e, row, index)}
       onClick={() => { setFocusId(row.id); if (row.branch) toggle(row.id); else if (row.location) onSelect(row.location); }}>
-      <span aria-hidden="true">{row.branch ? closed.includes(row.id) ? "▸ " : "▾ " : ""}</span>{row.label}
+      <span className="tree-marker" aria-hidden="true">{row.branch ? closed.includes(row.id) ? "▸" : "▾" : ""}</span><span className="tree-label">{row.label}</span>
     </div>)}</div>;
 }

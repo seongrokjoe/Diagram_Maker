@@ -95,7 +95,7 @@ public sealed class SharedReviewRecoveryTests
         using var handler = new Model("reject-once");
         var result = await Run(handler, count);
         Assert.Equal(count, result.Response.Items.Count);
-        Assert.Equal(2, handler.Generations);
+        Assert.Equal((count + 11) / 12 + 1, handler.Generations);
         Assert.Equal(2, handler.Counts["work0"]);
         Assert.All(handler.Counts.Where(kv => kv.Key != "work0"), kv => Assert.Equal(1, kv.Value));
         Assert.Contains(result.Diagnostics, d => d.ValidationCode == "SemanticReviewRejected" &&
@@ -122,14 +122,14 @@ public sealed class SharedReviewRecoveryTests
     {
         using var small = new Model("valid");
         var result = await Run(small, 40);
-        Assert.Equal(40, result.Response.Items.Count); Assert.Equal(1, small.Generations);
+        Assert.Equal(40, result.Response.Items.Count); Assert.Equal(4, small.Generations);
         Assert.True(small.Reviews > 1);
         Assert.All(small.ReviewSizes, count => Assert.InRange(count, 1, 16));
         Assert.DoesNotContain(result.Diagnostics, d => d.ErrorCode is not null);
         using var large = new Model("valid");
         var options = Config(); options.ReviewOutputTokens = 10000;
         Assert.Equal(40, (await Run(large, 40, options)).Response.Items.Count);
-        Assert.Equal(1, large.Reviews); Assert.All(large.ReviewLimits, limit => Assert.Equal(10000, limit));
+        Assert.Equal(4, large.Reviews); Assert.All(large.ReviewLimits, limit => Assert.Equal(10000, limit));
     }
 
     [Fact]
@@ -187,10 +187,40 @@ public sealed class SharedReviewRecoveryTests
                 progress = execution.Progress;
             }
         }
-        Assert.Equal(mode == "valid" ? 1 : 2, handler.Generations);
+        Assert.Equal(mode == "valid" ? 4 : 5, handler.Generations);
         Assert.Equal(handler.RequestKeys.Count, handler.RequestKeys.Distinct().Count());
         Assert.Equal(handler.Generations + handler.Reviews, progress!.TransportRequests);
         Assert.All(diagnostics!.Where(d => d.ErrorCode is not null), d => Assert.Equal("Recovered", d.RecoveryState));
+    }
+
+    [Fact]
+    public async Task ValidIdentityAllowsOnlyBadTextFieldsToBeRegenerated()
+    {
+        using var handler = new Model("bad-text-once");
+        var result = await Run(handler, 8);
+        Assert.Equal(8, result.Response.Items.Count);
+        Assert.Equal(2, handler.Counts["work0"]);
+        Assert.All(handler.Counts.Where(kv => kv.Key != "work0"), kv => Assert.Equal(1, kv.Value));
+        Assert.Contains(result.Diagnostics, d => d.ValidationCode == "SharedTextCodeSyntax" && d.RecoveryState == "Recovered");
+    }
+
+    [Theory]
+    [InlineData("http-generation", "generation", 1, 0)]
+    [InlineData("http-review", "semantic-review", 1, 1)]
+    public async Task ServerFailureKeepsItsPhaseAndStopsOtherBatches(string mode, string phase, int generations, int reviews)
+    {
+        using var handler = new Model(mode);
+        var options = Config();
+        using var transport = new VllmClient(options, handler: handler);
+        var client = new InternalLlmClient(Options.Create(options), new(), new(), transport, new(transport));
+        using var execution = new SemanticExecution(options, null, CancellationToken.None);
+        var result = await client.GenerateSharedAsync("code-block", "failure", Items(40), _ => new { factId = EvidenceId }, Views, false, execution.Token);
+        Assert.Empty(result.Items);
+        Assert.Equal(generations, handler.Generations); Assert.Equal(reviews, handler.Reviews);
+        Assert.Contains(result.Failures!, f => f.Stage == phase && f.Code == "LLM_HTTP_400");
+        Assert.Contains(execution.Diagnostics, d => d.HttpStatus == 400 && d.ServerErrorCategory == "unknown" && d.RecoveryState == "RequiresAction");
+        Assert.Contains(execution.Checkpoints, c => c.State == "Pending");
+        Assert.DoesNotContain("PRIVATE", LlmDiagnosticReport.Text("Partial", null, execution.Progress, execution.Diagnostics));
     }
 
     private static async Task<(SharedSemanticResponse Response, IReadOnlyList<LlmDiagnostic> Diagnostics)> Run(Model handler, int count, LlmOptions? options = null)
@@ -240,6 +270,7 @@ public sealed class SharedReviewRecoveryTests
             if (reviewing)
             {
                 Reviews++; ReviewSizes.Add(items.Length); ReviewLimits.Add(wire.GetProperty("max_tokens").GetInt32());
+                if (mode == "http-review") return new(HttpStatusCode.BadRequest) { Content = new StringContent("PRIVATE response") };
                 if ((mode == "truncate-review" || mode == "four-errors") && Reviews == 1) reason = "length";
                 result = new SharedSemanticReview(items.Select(i => new SharedItemReview(i.GetProperty("id").GetString()!,
                     (mode == "reject-once" && Counts[i.GetProperty("label").GetString()!] == 1 || mode == "four-errors") &&
@@ -250,12 +281,13 @@ public sealed class SharedReviewRecoveryTests
             else
             {
                 Generations++;
+                if (mode == "http-generation") return new(HttpStatusCode.BadRequest) { Content = new StringContent("PRIVATE response") };
                 result = new SharedSemanticResponse("원본 코드의 동작", "flowchart", items.Select((i, index) =>
                 {
                     var label = i.GetProperty("label").GetString()!; Counts[label] = Counts.GetValueOrDefault(label) + 1;
                     return new SharedSemanticAnnotation(mode == "four-errors" && Generations == 1 && index == 0
                         ? context.GetProperty("sources").GetProperty("factId").GetString()! : i.GetProperty("id").GetString()!,
-                        "값을 처리합니다", "원본 근거의 조건과 결과를 보존합니다");
+                        mode == "bad-text-once" && label == "work0" && Counts[label] == 1 ? "값 x == y 처리" : "값을 처리합니다", "원본 근거의 조건과 결과를 보존합니다");
                 }).ToArray());
             }
             return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new

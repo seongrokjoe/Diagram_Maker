@@ -18,7 +18,7 @@ internal static class SharedReviewValidation
         properties = new { items = new { type = "array", minItems = count, maxItems = count,
             items = new { type = "object", additionalProperties = false, required = new[] { "id", "issues" },
                 properties = new { id = new { type = "string" }, issues = new { type = "array", maxItems = 3,
-                    uniqueItems = true, items = new { type = "string", @enum = Codes } } } } } }
+                    items = new { type = "string", @enum = Codes } } } } } }
     });
 
     // Deserialization alone accepts omitted fields and additional properties.

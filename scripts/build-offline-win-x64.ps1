@@ -1,5 +1,5 @@
 param(
-    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$')][string]$Version = '0.1.0-internal.5',
+    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$')][string]$Version = '0.1.0-internal.6',
     [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')][string]$NodeVersion = '24.12.0',
     [switch]$SkipTests
 )
@@ -46,7 +46,12 @@ foreach ($name in @('package.json', 'package-lock.json', 'index.html', 'tsconfig
 }
 Copy-Item -LiteralPath (Join-Path $sourceWebRoot 'src') -Destination $webRoot -Recurse
 Copy-Item -LiteralPath (Join-Path $sourceWebRoot 'test') -Destination $webRoot -Recurse
-foreach ($name in @('package.json', 'package-lock.json', 'index.mjs', 'cpp-indexer.mjs', 'code-block-parser.mjs', 'local-security.mjs')) {
+$buildScriptsRoot = Join-Path $buildRoot 'scripts'
+New-Item -ItemType Directory -Path $buildScriptsRoot -Force | Out-Null
+foreach ($name in @('font-assets.mjs', 'license-policy.mjs')) {
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $buildScriptsRoot
+}
+foreach ($name in @('package.json', 'package-lock.json', 'index.mjs', 'cpp-indexer.mjs', 'execution-facts.mjs', 'code-block-parser.mjs', 'local-security.mjs')) {
     Copy-Item -LiteralPath (Join-Path $sourceWorkerRoot $name) -Destination $workerRoot
 }
 $workerTestRoot = Join-Path $workerRoot 'test'
@@ -82,11 +87,14 @@ if (-not $SkipTests) {
 & $targetNode $targetNpmCli ci --prefix $workerRoot --offline --ignore-scripts --no-audit --no-fund
 Assert-LastExitCode 'git worker npm ci'
 Push-Location $workerRoot
+$priorTestFixtureRoot = $env:DIAGRAMMAKER_TEST_FIXTURE_ROOT
 try {
+    $env:DIAGRAMMAKER_TEST_FIXTURE_ROOT = Join-Path $projectRoot 'tests/fixtures'
     & $targetNode --test
     Assert-LastExitCode 'git worker tests'
 }
 finally {
+    $env:DIAGRAMMAKER_TEST_FIXTURE_ROOT = $priorTestFixtureRoot
     Pop-Location
 }
 
@@ -132,6 +140,7 @@ $packagedWorker = Join-Path $stageRoot 'tools\git-worker'
 New-Item -ItemType Directory -Path $packagedWorker -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $workerRoot 'index.mjs') -Destination $packagedWorker
 Copy-Item -LiteralPath (Join-Path $workerRoot 'cpp-indexer.mjs') -Destination $packagedWorker
+Copy-Item -LiteralPath (Join-Path $workerRoot 'execution-facts.mjs') -Destination $packagedWorker
 Copy-Item -LiteralPath (Join-Path $workerRoot 'code-block-parser.mjs') -Destination $packagedWorker
 Copy-Item -LiteralPath (Join-Path $workerRoot 'local-security.mjs') -Destination $packagedWorker
 Copy-Item -LiteralPath (Join-Path $workerRoot 'package.json') -Destination $packagedWorker
@@ -156,6 +165,8 @@ $npmLicenseRoot = Join-Path $licenseRoot 'npm'
 New-Item -ItemType Directory -Path $licenseRoot, $npmLicenseRoot -Force | Out-Null
 & $targetNode (Join-Path $projectRoot 'scripts\collect-npm-licenses.mjs') $npmLicenseRoot (Join-Path $webRoot 'node_modules') (Join-Path $workerRoot 'node_modules')
 Assert-LastExitCode 'npm license collection'
+& $targetNode (Join-Path $projectRoot 'scripts\font-assets.mjs') $licenseRoot
+Assert-LastExitCode 'font asset and license collection'
 Copy-Item -LiteralPath (Join-Path $projectRoot 'THIRD_PARTY_NOTICES.md') -Destination $licenseRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE_POLICY.md') -Destination $licenseRoot
 Copy-Item -LiteralPath (Join-Path $nodeExtractRoot 'LICENSE') -Destination (Join-Path $licenseRoot 'NODE_LICENSE.txt')

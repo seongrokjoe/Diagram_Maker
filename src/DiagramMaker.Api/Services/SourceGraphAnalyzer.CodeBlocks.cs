@@ -87,10 +87,22 @@ public sealed partial class SourceGraphAnalyzer
             var members = (original.Version.Members ?? []).Select(m => m with
             { StartLine = Math.Max(1, m.StartLine - p.Input.Prefix.Count(c => c == '\n')),
                 EndLine = Math.Max(1, m.EndLine - p.Input.Prefix.Count(c => c == '\n')) }).ToArray();
+            var syntax = p.Input.Tree.GetRoot().FindNode(TextSpan.FromBounds(original.Evidence.StartOffset ?? 0,
+                original.Evidence.EndOffset ?? p.Input.Tree.Length), getInnermostNodeForTie: true);
+            IReadOnlyList<ExecutionFact> MapExecution(IReadOnlyList<ExecutionFact> items) => items.Select(e =>
+            {
+                var loc = p.Map.Location(e.StartOffset, e.EndOffset);
+                return e with { Id = StableIds.Create(p.Id, e.Id), StartOffset = loc.StartOffset, EndOffset = loc.EndOffset,
+                    EvidenceIds = [AddEvidence(p, loc)], Children = MapExecution(e.Children), Alternative = MapExecution(e.Alternative),
+                    Evaluation = MapExecution(e.Evaluation),
+                    TerminationTarget = e.TerminationTarget?.StartsWith("loop_", StringComparison.Ordinal) == true ? StableIds.Create(p.Id, e.TerminationTarget) : e.TerminationTarget,
+                    CallSiteId = e.Kind == "call" ? calls.FirstOrDefault(c => c.Location == loc)?.Id : null };
+            }).ToArray();
+            var execution = syntax is BaseMethodDeclarationSyntax methodSyntax ? MapExecution(CSharpExecutionFacts.Build(methodSyntax)) : [];
             symbols.Add(new CodeBlockSymbol(p.Id, p.Input.Block.Id, name, syntheticMethod ? "fragment" : original.Identity.Kind.ToLowerInvariant(),
                 syntheticMethod ? "코드 조각" : original.Version.Signature, p.Location, [AddEvidence(p, p.Location)], steps,
                 (original.ControlFlow?.Edges ?? []).Select(e => e with { SourceId = stepIds[e.SourceId], TargetId = stepIds[e.TargetId] }).ToArray(),
-                calls, members, original.BaseTypeNames, owner?.Id, syntheticMethod, p.Arity));
+                calls, members, original.BaseTypeNames, owner?.Id, syntheticMethod, p.Arity, execution));
             if (!p.Input.Tree.GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error))
                 transitions.AddRange(CSharpSnippetTransitions(p, compilation.GetSemanticModel(p.Input.Tree), loc => AddEvidence(p, loc)));
         }
@@ -147,6 +159,8 @@ public sealed partial class SourceGraphAnalyzer
             }
             if (from is null || origin is null) continue;
             var path = CSharpControlPath(assignment, method);
+            if (method.DescendantNodes().OfType<InvocationExpressionSyntax>().Any(call => call.SpanStart > origin.SpanStart && call.SpanStart < assignment.SpanStart &&
+                CSharpControlPath(call, method).All(scope => path.Any(p => p.Id == scope.Id && p.Branch == scope.Branch)))) continue;
             // Only writes after the selected state guard can invalidate it. Writes
             // in a different case/branch are not on this execution path.
             if (method.DescendantNodes().OfType<AssignmentExpressionSyntax>().Any(a => a.SpanStart > origin.SpanStart && a.SpanStart < assignment.SpanStart &&

@@ -42,12 +42,14 @@ export function CodeBlockComposer({ draft, groups, presets, limits, onChange }: 
         aria-pressed={selectedGroup.id === g.id} onClick={() => setGroupId(g.id)}>
         <span>{g.title}</span><small>블럭 {g.blockIds.length}개</small></button>)}</div>
     </aside>
-    <div className="code-block-editing">
-      <section className="panel code-block-group-header" aria-label="선택 그룹 설정">
+    <section className="code-block-editing code-block-group-container" aria-label={`선택 그룹 · ${selectedGroup.title}`}>
+      <section className="code-block-group-header" aria-label="선택 그룹 설정">
+        <div className="code-block-group-title-row">
         <label>그룹 제목<input aria-label="그룹 제목" maxLength={200} value={selectedGroup.title} onChange={e => updateGroup({ title: e.target.value })} /></label>
         <div className="code-block-group-options">
           <label><input type="checkbox" checked={selectedGroup.enableUserRelations ?? false} onChange={e => updateGroup({ enableUserRelations: e.target.checked })} />사용자 관계 추가</label>
           <label><input type="checkbox" checked={selectedGroup.enableThinking ?? false} onChange={e => updateGroup({ enableThinking: e.target.checked })} />Thinking</label>
+        </div>
         </div>
         <CodeBlockGroupRelations draft={draft} group={selectedGroup} blocks={blocks} onChange={onChange} />
         <details key={selectedGroup.id}><summary>그룹 관리</summary><div className="form-row">
@@ -59,8 +61,8 @@ export function CodeBlockComposer({ draft, groups, presets, limits, onChange }: 
           }}>빈 그룹 삭제</button></div><p className="help">블럭이 있는 그룹은 블럭을 이동한 뒤 삭제할 수 있습니다. 병합하면 대상 그룹의 옵션을 따릅니다.</p></details>
       </section>
       <div className="code-block-cards" aria-label="그룹 블럭 목록">
-        {!blocks.length && <div className="panel empty-state">아직 블럭이 없습니다. 왼쪽의 ‘+ 블럭 추가’로 코드를 추가하세요. 빈 그룹은 생성에서 제외됩니다.</div>}
-        {blocks.map((block, index) => <section className="panel code-block-card" key={block.id}>
+        {!blocks.length && <div className="empty-state">아직 블럭이 없습니다. 왼쪽의 ‘+ 블럭 추가’로 코드를 추가하세요. 빈 그룹은 생성에서 제외됩니다.</div>}
+        {blocks.map((block, index) => <section className="code-block-card" key={block.id}>
           <div className="code-block-card-heading"><h3><button type="button" className="code-block-card-toggle" id={`block-tab-${block.id}`} aria-expanded={blockId === block.id} aria-controls={`block-panel-${block.id}`}
             onClick={() => setOpened(current => ({ ...current, [selectedGroup.id]: blockId === block.id ? null : block.id }))}>
             <span aria-hidden="true">{blockId === block.id ? "▾" : "▸"}</span> {block.title || `블럭 ${index + 1}`} <small>{block.language === "cpp" ? "C/C++" : "C#"}</small></button></h3>
@@ -80,7 +82,7 @@ export function CodeBlockComposer({ draft, groups, presets, limits, onChange }: 
           </div>
         </section>)}
       </div>
-      <section className="panel" aria-label="그룹 출력 설정">
+      <section className="code-block-output-settings" aria-label="그룹 출력 설정">
         <h3>그룹 출력 설정</h3>
         <p className="code-block-scope">이 그룹의 블럭 {selectedGroup.blockIds.length}개에 적용</p>
         <div className="form-row"><label>종류 추가<select aria-label="종류 추가" value="" disabled={(selectedGroup.views?.length ?? 0) >= 5} onChange={e => {
@@ -97,7 +99,7 @@ export function CodeBlockComposer({ draft, groups, presets, limits, onChange }: 
             ? { ...v, overrides: { ...v.overrides, detailLevel: e.target.value as "compact" | "balanced" | "detailed" } } : v) })}><option value="compact">간결하게</option><option value="balanced">균형 있게</option><option value="detailed">자세하게</option></select></label>
           <label>보완 요청<input maxLength={2000} value={selectedView.refinementInstruction ?? ""} onChange={e => updateGroup({ views: selectedGroup.views?.map(v => v.id === selectedView.id ? { ...v, refinementInstruction: e.target.value } : v) })} /></label></div>}
       </section>
-    </div>
+    </section>
   </div>;
 }
 

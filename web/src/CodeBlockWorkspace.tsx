@@ -168,7 +168,7 @@ export function CodeBlockWorkspace() {
   return <section className="code-block-workspace" data-screen={screen}>
     <section className="panel code-block-toolbar"><h2>코드 블럭 다이어그램</h2>
       <p>코드를 그룹으로 구성하고, 동작의 의미와 원본 근거를 살펴보세요.</p>
-      <div className="form-row"><label>저장한 작업<select aria-label="저장한 코드 작업" value={workspace?.id ?? "new"} disabled={busy} onChange={e => dirty ? setPendingOpen(e.target.value) : void open(e.target.value)}>
+      <div className="form-row code-block-workspace-actions"><label className="saved-workspace-picker">저장한 작업<select aria-label="저장한 코드 작업" title={workspace?.input.title ?? "새 작업"} value={workspace?.id ?? "new"} disabled={busy} onChange={e => dirty ? setPendingOpen(e.target.value) : void open(e.target.value)}>
         <option value="new">새 작업</option>{workspaces.map(w => <option key={w.id} value={w.id}>{w.title} · {w.blockCount}개</option>)}</select></label>
         <button disabled={busy} onClick={() => dirty ? setPendingOpen("new") : void open("new")}>새 작업</button>
         <button disabled={busy || Boolean(inputError)} onClick={() => void action(async () => { await save(); })}>초안 저장</button>
@@ -205,6 +205,13 @@ export function CodeBlockWorkspace() {
         const resumed = await request<CodeBlockRun>(`/api/v1/code-block-runs/${run.id}/resume`, { method: "POST", body: json({ expectedRevision: run.revision }) });
         selectRun(resumed); await refreshRuns(resumed.workspaceId);
       })}>완료 단위부터 이어서 생성</button>}
+      <button disabled={busy} onClick={() => void action(async () => {
+        const response = await fetch(`/api/v1/code-block-runs/${run.id}/diagnostics?format=text`);
+        if (!response.ok) throw new Error("진단 텍스트를 다운로드하지 못했습니다.");
+        const url = URL.createObjectURL(new Blob([await response.text()], { type: "text/plain;charset=utf-8" }));
+        const link = document.createElement("a"); link.href = url; link.download = `code-block-${run.id}-diagnostics.txt`; link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      })}>텍스트 진단 다운로드</button>
       <button disabled={busy} onClick={() => void action(async () => {
         const report = await request(`/api/v1/code-block-runs/${run.id}/diagnostics`);
         const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));

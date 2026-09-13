@@ -28,6 +28,7 @@ const diagramTypes: Array<{ value: DiagramType; label: string }> = [
   { value: "flowchart", label: "흐름 / 영향도" },
   { value: "sequence", label: "호출 시퀀스" },
   { value: "class", label: "클래스 관계" },
+  { value: "state", label: "상태 전이" },
   { value: "code-relation", label: "변경 구현 맵" },
 ];
 
@@ -195,7 +196,7 @@ export function AnalysisWorkspace({ repositories, reportError }: {
       if (group.id !== groupId) return group;
       const views = effectiveGroupViews(group);
       const type = diagramTypes.find((item) => !views.some((view) => view.diagramType === item.value))?.value;
-      if (!type || views.length >= 4) return group;
+      if (!type || views.length >= 5) return group;
       return { ...group, views: [...views, createView(type, presets)] };
     }));
   }
@@ -472,7 +473,7 @@ export function AnalysisWorkspace({ repositories, reportError }: {
               return <article className="panel group-card" key={group.id}>
                 <div className="group-heading"><label className="checkbox"><input type="checkbox" checked={mergeIds.includes(group.id)} onChange={(event) => setMergeIds((current) => event.target.checked ? [...current, group.id] : current.filter((id) => id !== group.id))} /> 병합 선택</label><button type="button" className="text-button" onClick={() => setGroups((current) => current.filter((item) => item.id !== group.id))}>그룹 삭제</button></div>
                 <label>그룹 이름<input value={group.title} maxLength={120} onChange={(event) => updateGroup(group.id, { title: event.target.value })} /></label>
-                <div className="view-editor-heading"><span className="count-chip">변경점 {group.changeIds.length}개 · 출력 {views.length}개</span><button type="button" className="secondary" disabled={views.length >= 4 || views.length >= diagramTypes.length} onClick={() => addGroupView(group.id)}>다이어그램 형식 추가</button></div>
+                <div className="view-editor-heading"><span className="count-chip">변경점 {group.changeIds.length}개 · 출력 {views.length}개</span><button type="button" className="secondary" disabled={views.length >= 5 || views.length >= diagramTypes.length} onClick={() => addGroupView(group.id)}>다이어그램 형식 추가</button></div>
                 {views.map((view, index) => <GroupViewEditor key={view.id} group={group} view={view} index={index} presets={presets} siblingViews={views} onChange={(patch) => updateGroupView(group.id, view.id, patch)} onRemove={() => removeGroupView(group.id, view.id)} />)}
               </article>;
             })}
@@ -494,6 +495,7 @@ export function AnalysisWorkspace({ repositories, reportError }: {
         {resultsVisible && analysis.result && <AnalysisResultView analysis={analysis} activeGroup={activeResultGroup} setActiveGroup={setActiveResultGroup} activeView={activeResultView} setActiveView={setActiveResultView} reportError={reportError} presets={presets}
           regeneratingViewId={busyAction.startsWith("view-regenerate-") ? busyAction.slice("view-regenerate-".length) : ""} onRegenerateView={regenerateView} />}
         {analysis.execution && <SemanticProgressView value={analysis.execution} running={analysisRunning} />}
+        <div className="analysis-run-actions">
         {(analysis.canResume || analysisRunning) && <button type="button" onClick={() => void request<AnalysisResponse>(`/api/v1/analyses/${analysis.id}/${analysisRunning ? "cancel" : "resume"}`, {
           method: "POST", body: JSON.stringify({ expectedRevision: analysis.revision })
         }).then(setAnalysis).catch(error => reportError(error instanceof Error ? error.message : "실행 상태 변경 실패"))}>{analysisRunning ? "생성 취소" : "완료 단위부터 이어서 생성"}</button>}
@@ -502,7 +504,15 @@ export function AnalysisWorkspace({ repositories, reportError }: {
           const link = document.createElement("a"); link.href = url; link.download = `analysis-${analysis.id}-diagnostics.json`; link.click();
           setTimeout(() => URL.revokeObjectURL(url), 1000);
         }).catch(error => reportError(error instanceof Error ? error.message : "진단 다운로드 실패"))}>작업 진단 다운로드</button>
+        <button type="button" onClick={() => void (async () => {
+          const response = await fetch(`/api/v1/analyses/${analysis.id}/diagnostics?format=text`);
+          if (!response.ok) throw new Error("진단 다운로드 실패");
+          const url = URL.createObjectURL(await response.blob());
+          const link = document.createElement("a"); link.href = url; link.download = `analysis-${analysis.id}-diagnostics.txt`; link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        })().catch(error => reportError(error instanceof Error ? error.message : "진단 다운로드 실패"))}>텍스트 진단 다운로드</button>
         {terminalStates.has(analysis.state) && <button type="button" className="secondary" onClick={() => { if (analysis.result) setSourceAnalysis(analysis); if (plan) setGroups(plan.selections.map(normalizeGroup)); setCurrentStep(2); }}>선택 단계로 돌아가기</button>}
+        </div>
         </>}
       </section>}
     </section>
@@ -741,9 +751,7 @@ function effectiveGroupViews(group: AnalysisGroupSelection): DiagramViewSelectio
   return group.views?.length ? group.views : [{ id: `${group.id}-view`, diagramType: group.diagramType, presetId: group.presetId, overrides: group.overrides }];
 }
 function normalizeGroup(group: AnalysisGroupSelection): AnalysisGroupSelection {
-  const migrated = effectiveGroupViews(group).map((view) => view.diagramType === "state"
-    ? { ...view, diagramType: "flowchart" as DiagramType, presetId: "balanced" }
-    : view);
+  const migrated = effectiveGroupViews(group);
   const views = migrated.filter((view, index) => migrated.findIndex((item) => item.diagramType === view.diagramType) === index);
   return { ...group, views, diagramType: views[0].diagramType, presetId: views[0].presetId, overrides: views[0].overrides };
 }

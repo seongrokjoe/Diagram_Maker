@@ -10,6 +10,22 @@ public static class DiagramDocumentBuilder
         var pages = new List<DiagramPage>();
         if (ir.Type == "sequence" && ir.SequenceBlocks is { Count: > 0 })
         {
+            if (ir.Provenance.Contains("execution-facts-v1"))
+            {
+                foreach (var scenario in ir.SequenceBlocks.Skip(1))
+                {
+                    var ids = MessageIds([scenario]).ToHashSet();
+                    var edges = ir.Edges.Where(e => ids.Contains(e.Id)).ToArray();
+                    pages.Add(Page(StableIds.Create("page", scenario.Id), scenario.Label,
+                        ir with { Nodes = NodesFor(edges, ir.Nodes), Edges = edges, SequenceBlocks = [scenario] }));
+                }
+                var first = ir.SequenceBlocks[0];
+                var firstIds = MessageIds([first]).ToHashSet();
+                var firstEdges = ir.Edges.Where(e => firstIds.Contains(e.Id)).ToArray();
+                ir = ir with { Nodes = NodesFor(firstEdges, ir.Nodes), Edges = firstEdges, SequenceBlocks = [first] };
+            }
+            else
+            {
             var overviewEdges = new List<DiagramEdge>();
             var overviewBlocks = new List<SequenceBlock>();
             foreach (var scenario in ir.SequenceBlocks)
@@ -29,6 +45,19 @@ public static class DiagramDocumentBuilder
             }
             ir = ir with { Nodes = NodesFor(overviewEdges, ir.Nodes), Edges = overviewEdges, SequenceBlocks = overviewBlocks,
                 Notes = ir.Notes.Append("요약에는 각 시나리오의 첫 호출을 표시합니다. 전체 호출과 분기는 상세 페이지에서 확인하세요.").ToArray() };
+            }
+        }
+        else if (ir.Type == "state" && ir.Nodes.Select(n => n.Group).Distinct().Count() > 1)
+        {
+            var groups = ir.Nodes.GroupBy(n => n.Group).ToArray();
+            foreach (var group in groups.Skip(1))
+            {
+                var ids = group.Select(n => n.Id).ToHashSet();
+                pages.Add(Page(StableIds.Create("state-page", group.Key), group.Key ?? ir.Title,
+                    ir with { Nodes = group.ToArray(), Edges = ir.Edges.Where(e => ids.Contains(e.SourceId) && ids.Contains(e.TargetId)).ToArray() }));
+            }
+            var firstIds = groups[0].Select(n => n.Id).ToHashSet();
+            ir = ir with { Nodes = groups[0].ToArray(), Edges = ir.Edges.Where(e => firstIds.Contains(e.SourceId) && firstIds.Contains(e.TargetId)).ToArray() };
         }
         else if (ir.Type == "flowchart" && (ir.Nodes.Count > 20 || ir.Nodes.Select(node => node.Group).Distinct().Count() > 1))
         {

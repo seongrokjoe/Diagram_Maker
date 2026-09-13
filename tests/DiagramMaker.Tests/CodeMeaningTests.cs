@@ -98,8 +98,9 @@ public sealed class CodeMeaningTests
         var diagram = Assert.Single(new DiagramProjectionService().Build("test", graph, comparison, ["sequence"], 1, 1, false).Artifacts).Ir;
         Assert.Contains(diagram.Nodes, node => node.Label == "AlarmCsvLine" && node.QualifiedName == "SCTC_CONFIG.AlarmCsvLine");
         Assert.Contains(diagram.Nodes, node => node.Label == "AlarmStopModeDiffExportService");
-        Assert.Equal(new[] { "runValue", "defaultValue", "alarmId", "kName" }, diagram.Edges.Select(edge => edge.Context!.AssignedTo));
-        Assert.All(diagram.Edges, edge => Assert.Contains(edge.Context!.AssignedTo!, edge.Label));
+        var fieldReads = diagram.Edges.Where(edge => edge.Type == "message" && edge.Context?.Target == "GetField").ToArray();
+        Assert.Equal(new[] { "runValue", "defaultValue", "alarmId", "kName" }, fieldReads.Select(edge => edge.Context!.AssignedTo));
+        Assert.Equal(4, diagram.Edges.Count(edge => edge.Type == "message" && edge.OriginalExpression!.EndsWith(".Trim()", StringComparison.Ordinal)));
         Assert.Equal(diagram.Edges.Select(edge => edge.Id), SequenceStructure.MessageIds(diagram.SequenceBlocks!));
         var dsl = new MermaidCompiler(new DiagramValidator()).Compile(diagram);
         Assert.Contains("runValue == defaultValue", dsl);

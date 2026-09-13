@@ -7,7 +7,7 @@ if (!root || !output) throw new Error("Usage: create-sbom.mjs <licenses-root> <o
 const items = readLicenseBundle(root);
 const components = items.map(item => {
   const name = item.ecosystem === "nuget" ? item.name.toLowerCase() : item.name;
-  const purl = `pkg:${item.ecosystem}/${name.startsWith("@") ? "%40" + name.slice(1) : name}@${item.version}`;
+  const purl = `pkg:${item.ecosystem === "assets" ? "generic" : item.ecosystem}/${name.startsWith("@") ? "%40" + name.slice(1) : name}@${item.version}`;
   const properties = [{ name: "diagram-maker:declared-license", value: item.declared },
     { name: "diagram-maker:scope", value: item.scope ?? (item.dev ? "build" : "application") }];
   if (item.integrity) properties.push({ name: "diagram-maker:archive-integrity", value: item.integrity });
@@ -15,7 +15,7 @@ const components = items.map(item => {
   if (item.evidence) properties.push({ name: "diagram-maker:license-evidence", value: JSON.stringify(item.evidence) });
   if (item.licenseSource) properties.push({ name: "diagram-maker:license-source", value: item.licenseSource });
   if (item.locked !== undefined) properties.push({ name: "diagram-maker:locked", value: String(item.locked) });
-  return { type: "library", "bom-ref": purl, name: item.name, version: item.version, purl,
+  return { type: item.ecosystem === "assets" ? "file" : "library", "bom-ref": purl, name: item.name, version: item.version, purl,
     licenses: [{ expression: item.selected }], properties,
     ...(item.archiveSha256 ? { hashes: [{ alg: "SHA-256", content: item.archiveSha256 }] } : {}) };
 });

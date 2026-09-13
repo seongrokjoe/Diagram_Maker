@@ -11,7 +11,7 @@ public sealed class CodeBlockAnalyzer(SourceGraphAnalyzer csharp, IOptions<GitWo
     IOptions<CodeBlockOptions> options, IWebHostEnvironment environment,
     DiagramMaker.Security.ApprovedNetworkPolicy? networkPolicy = null)
 {
-    public const string AnalyzerVersion = "code-block-v2";
+    public const string AnalyzerVersion = "code-block-v4";
     public async Task<CodeBlockGraph> AnalyzeAsync(Guid workspaceId, IReadOnlyList<CodeBlockInput> blocks, CancellationToken cancellationToken)
     {
         var graphs = new List<CodeBlockGraph>();

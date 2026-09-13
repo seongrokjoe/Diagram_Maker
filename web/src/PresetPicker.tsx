@@ -5,13 +5,15 @@ export function PresetPicker({
   presets,
   selectedId,
   onSelect,
+  layout = "grid",
 }: {
   presets: DiagramPreset[];
   selectedId: string;
   onSelect: (preset: DiagramPreset) => void;
+  layout?: "grid" | "list";
 }) {
   return (
-    <div className="preset-grid" role="radiogroup" aria-label="다이어그램 샘플">
+    <div className={`preset-grid preset-${layout}`} role="radiogroup" aria-label="다이어그램 샘플">
       {presets.map((preset) => (
         <button
           type="button"
@@ -22,9 +24,11 @@ export function PresetPicker({
           onClick={() => onSelect(preset)}
         >
           <MermaidPreview source={preset.thumbnailDsl} compact />
-          <strong>{preset.name}</strong>
-          <span>{preset.description}</span>
-          <small>{preset.direction} · {preset.detailLevel} · 최대 {preset.maximumNodes}개 노드</small>
+          <span className="preset-description">
+            <strong>{preset.name}</strong>
+            <span>{preset.description}</span>
+            <small>{preset.direction} · {preset.detailLevel} · 최대 {preset.maximumNodes}개 노드</small>
+          </span>
         </button>
       ))}
     </div>

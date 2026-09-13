@@ -1,7 +1,90 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { analyzeCodeBlocks } from "../code-block-parser.mjs";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 const block = (id, code) => ({ id, title: id, code, language: "cpp" });
+
+test("if decisions have distinct IDs from short circuit and ternary evaluation", async () => {
+  const flatten = events => events.flatMap(e => [e, ...flatten(e.evaluation), ...flatten(e.children), ...flatten(e.alternative)]);
+  for (const condition of ["First() && Second()", "First() || Second()", "Ready() ? First() : Second()"]) {
+    const code = `// 한글 😀\r\nbool Run(){if(${condition})return false;Save();return true;}`;
+    const graph = await analyzeCodeBlocks([block("a", code)]);
+    const events = graph.symbols[0].execution;
+    const facts = flatten(events);
+    assert.equal(new Set(facts.map(e => e.id)).size, facts.length);
+    assert.equal(events[0].expression, condition);
+    assert.equal(code.slice(events[0].startOffset, events[0].endOffset), condition);
+    assert.ok(events[0].evaluation.some(e => e.kind === "branch" && e.id !== events[0].id));
+    assert.deepEqual(facts.filter(e => e.kind === "return").map(e => e.value), ["false", "true"]);
+  }
+});
+
+test("nested argument regions retain their actual spans and loop transfers reference the mapped loop", async () => {
+  const code = "void Run(){ Outer(0, First(), Second()); while(Check()){ if(Skip())continue; break; } }";
+  const graph = await analyzeCodeBlocks([block("a", code)]);
+  const all = events => events.flatMap(e => [e, ...all(e.evaluation), ...all(e.children), ...all(e.alternative)]);
+  const facts = all(graph.symbols[0].execution);
+  const unordered = facts.find(e => e.kind === "unordered");
+  assert.deepEqual(unordered.children.map(e => code.slice(e.startOffset, e.endOffset)), ["First()", "Second()"]);
+  const loop = facts.find(e => e.kind === "loop");
+  for (const transfer of facts.filter(e => ["break", "continue"].includes(e.kind))) assert.equal(transfer.terminationTarget, loop.id);
+  assert.equal(new Set(facts.map(e => e.id)).size, facts.length);
+});
+
+test("state observations cannot cross a call that can change the observed variable", async () => {
+  const graph = await analyzeCodeBlocks([block("a", "void Tick(){ if(state==0){Mutate();state=1;} }")]);
+  assert.equal(graph.transitions.length, 0);
+});
+
+test("short circuit calls stay conditional and unsupported control retains observed calls", async () => {
+  const graph = await analyzeCodeBlocks([block("a", "void Run(){if(First() && Second())Save(); try{Work();}catch(...){Recover();}}")]);
+  const branch = graph.symbols[0].execution[0];
+  assert.equal(branch.evaluation[0].expression, "First()");
+  assert.equal(branch.evaluation[1].children[0].expression, "Second()");
+  assert.deepEqual(branch.evaluation[1].alternative, []);
+  const unknown = graph.symbols[0].execution.find(e => e.kind === "unsupported");
+  assert.deepEqual(unknown.children.filter(e => e.kind === "call").map(e => e.expression), ["Work()", "Recover()"]);
+});
+
+test("successive failure guards have seven call sites and six complete exit paths", async () => {
+  const code = await readFile(process.env.DIAGRAMMAKER_TEST_FIXTURE_ROOT
+    ? path.join(process.env.DIAGRAMMAKER_TEST_FIXTURE_ROOT, "SendInitDataRequest.cpp")
+    : new URL("../../../tests/fixtures/SendInitDataRequest.cpp", import.meta.url), "utf8");
+  const graph = await analyzeCodeBlocks([block("guards", code)]);
+  const symbol = graph.symbols[0];
+  const expected = ["IsInitDataRequestStatus()", "Sleep(10)", "SendUnitIntervalTime()", "SetUnitMode()",
+    "RequestUpdateVersion()", "Sleep(100)", "RequestUpdateFirmwareVersion()"];
+  assert.deepEqual(symbol.calls.map(c => c.statement), expected);
+  assert.equal(symbol.calls[0].controlPath.length, 0);
+  assert.equal(symbol.calls[4].controlPath.length, 3);
+  const guards = symbol.execution.filter(e => e.kind === "branch");
+  assert.equal(guards.length, 5);
+  assert.ok(guards[4].expression.includes("enumFunctionResunt::Success"));
+  assert.ok(guards.every(g => g.evaluation.length === 1 && g.evaluation[0].kind === "call" && g.children[0].kind === "return"));
+  for (let failure = 0; failure < 6; failure++) {
+    let condition = 0, value, returned;
+    const calls = [];
+    function run(events) {
+      for (const event of events) {
+        if (event.kind === "call") calls.push(event.expression);
+        else if (event.kind === "declare" || event.kind === "assign") value = event.value;
+        else if (event.kind === "branch") {
+          run(event.evaluation);
+          if (condition++ === failure && run(event.children)) return true;
+        } else if (event.kind === "return") { returned = value; return true; }
+      }
+      return false;
+    }
+    run(symbol.execution);
+    assert.deepEqual(calls, expected.slice(0, [1, 3, 4, 5, 7, 7][failure]));
+    assert.equal(returned, failure === 5 ? "true" : "false");
+  }
+  const visit = events => events.flatMap(e => [e, ...visit(e.evaluation), ...visit(e.children), ...visit(e.alternative)]);
+  const all = visit(symbol.execution);
+  assert.equal(new Set(all.map(e => e.id)).size, all.length);
+  for (const e of all) assert.ok(graph.evidence.some(ref => e.evidenceIds.includes(ref.id) && ref.location.startOffset === e.startOffset));
+});
 
 test("pasted C functions retain cross-block calls and UTF-16 evidence", async () => {
   const code = '// 한글 😀\r\nint foo(int x) { if(x > 0) return bar(x); return 0; }';

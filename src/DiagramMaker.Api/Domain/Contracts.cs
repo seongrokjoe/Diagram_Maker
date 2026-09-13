@@ -251,7 +251,7 @@ public sealed record CppSymbolFact(
     IReadOnlyList<CppControlEdgeFact>? ControlEdges = null,
     IReadOnlyList<ClassMemberFact>? Members = null,
     string? OwnerSemanticKey = null,
-    string? OwnerKind = null);
+    string? OwnerKind = null, IReadOnlyList<ExecutionFact>? Execution = null);
 
 public sealed record CppEdgeFact(
     string SourceSemanticKey,
@@ -407,7 +407,8 @@ public sealed record VersionedGraph(
     IReadOnlyList<GraphEdge> Edges,
     IReadOnlyList<EvidenceRef> Evidence,
     IReadOnlyList<SymbolChange> Changes,
-    IReadOnlyList<MethodControlFlow>? ControlFlows = null);
+    IReadOnlyList<MethodControlFlow>? ControlFlows = null,
+    IReadOnlyList<MethodExecution>? Executions = null);
 
 public sealed record DiagramNode(
     string Id,
@@ -442,7 +443,8 @@ public sealed record DiagramEdge(
     DiagramChangeMarker? ChangeMarker = null,
     IReadOnlyList<string>? SourceFactIds = null,
     CodeContext? Context = null,
-    string? RelationOrigin = null);
+    string? RelationOrigin = null, string? OriginalExpression = null, string? ReturnValue = null,
+    string? TerminationTarget = null);
 
 public sealed record DiagramChangeMarker(
     DiagramChangeKind Kind,
@@ -464,7 +466,9 @@ public sealed record DiagramIr(
 
 public sealed record SequenceBlock(string Id, string Kind, string Label,
     IReadOnlyList<SequenceBlock> Children, string? EdgeId = null,
-    IReadOnlyList<string>? ParticipantIds = null, string? DetailPageId = null);
+    IReadOnlyList<string>? ParticipantIds = null, string? DetailPageId = null,
+    IReadOnlyList<string>? EvidenceIds = null, IReadOnlyList<string>? SourceFactIds = null,
+    string? OriginalExpression = null, string? TerminationTarget = null);
 
 public sealed record DiagramPage(string Id, string Title, DiagramArtifact Diagram,
     string? Level = null, IReadOnlyList<string>? BlockIds = null, IReadOnlyList<string>? SymbolIds = null,
@@ -479,7 +483,8 @@ public sealed record SourceFact(string Id, string Kind, string Label, IReadOnlyL
     IReadOnlyList<string> EvidenceIds, SourceSpan? Span, string? Content = null,
     CodeContext? Context = null);
 public sealed record EvidenceBundle(string Hash, string BaseSha, string TargetSha,
-    IReadOnlyList<string> ChangeIds, IReadOnlyList<SourceFact> Facts, IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> ChangeIds, IReadOnlyList<SourceFact> Facts, IReadOnlyList<string> Warnings,
+    IReadOnlyList<ExecutionMeaningInput>? ExecutionInputs = null);
 public sealed record ChangeUnderstanding(string Summary, IReadOnlyList<ChangeExplanation> Changes);
 public sealed record ChangeExplanation(string ChangeId, string Summary, IReadOnlyList<string> FactIds);
 public sealed record SemanticElement(string Id, string Summary, IReadOnlyList<string> NodeIds);

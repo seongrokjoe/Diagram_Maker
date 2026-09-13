@@ -9,16 +9,18 @@ internal sealed record SharedPreparedDiagram(SharedDiagramInput Input, DiagramIr
 
 internal sealed class SharedSemanticProjection
 {
-    public const string Version = "shared-semantic-v1";
+    public const string Version = "shared-semantic-v2";
     public Dictionary<string, SharedSemanticItem> Items { get; } = new(StringComparer.Ordinal);
     public List<SharedPreparedDiagram> Diagrams { get; } = [];
     private readonly bool codeBlocks;
     private readonly IReadOnlyDictionary<string, SourceFact> facts;
+    private readonly IReadOnlyList<ExecutionMeaningResult>? meanings;
 
-    public SharedSemanticProjection(bool codeBlocks, IReadOnlyList<SourceFact> facts)
+    public SharedSemanticProjection(bool codeBlocks, IReadOnlyList<SourceFact> facts, IReadOnlyList<ExecutionMeaningResult>? meanings = null)
     {
         this.codeBlocks = codeBlocks;
         this.facts = facts.ToDictionary(f => f.Id);
+        this.meanings = meanings;
     }
 
     public void Add(SharedDiagramInput input)
@@ -41,7 +43,8 @@ internal sealed class SharedSemanticProjection
             return key;
         }
         var nodeItems = new Dictionary<string, string>();
-        foreach (var node in candidate.Nodes.Where(n => n.Kind is not ("entry" or "exit")))
+        foreach (var node in candidate.Nodes.Where(n => n.Kind is not ("entry" or "exit") &&
+            !(n.Kind == "participant" && (n.SourceFactIds is null || n.SourceFactIds.Count == 0))))
         {
             var contexts = (node.SourceFactIds ?? []).Where(facts.ContainsKey).Select(id => facts[id].Context)
                 .Append(node.Context).Where(c => c is not null).Cast<CodeContext>().Distinct().ToArray();
@@ -52,15 +55,16 @@ internal sealed class SharedSemanticProjection
         var edgeItems = new Dictionary<string, string>();
         foreach (var edge in candidate.Edges.Where(e => e.RelationOrigin != "user" &&
             (candidate.Type is "sequence" or "state" || e.Type is "calls" or "dependency")))
-            edgeItems[edge.Id] = Item("message", edge.Label, edge.SourceFactIds ?? [], edge.Context is null ? [] : [edge.Context]);
+            if (edge.Type is not ("response" or "return" or "throw"))
+                edgeItems[edge.Id] = Item("message", edge.Label, edge.SourceFactIds ?? [], edge.Context is null ? [] : [edge.Context]);
         var controlItems = new Dictionary<string, string>();
         foreach (var block in CodeBlockPlanValidation.ControlBlocks(candidate.SequenceBlocks ?? []))
         {
             // Branch polarity belongs to the annotation identity as well as the
             // immutable sequence tree. Equal-looking branches must not collide.
             var edgeIds = ControlEdges(block).ToHashSet();
-            controlItems[block.Id] = Item("control", block.Label, candidate.Edges.Where(e => edgeIds.Contains(e.Id))
-                .SelectMany(e => e.SourceFactIds ?? []), details: [block.Kind]);
+            controlItems[block.Id] = Item("control", block.Label, block.SourceFactIds ?? candidate.Edges.Where(e => edgeIds.Contains(e.Id))
+                .SelectMany(e => e.SourceFactIds ?? []).ToArray(), details: [block.Kind, block.OriginalExpression ?? block.Label]);
         }
         Diagrams.Add(new(input, candidate, nodeItems, edgeItems, controlItems));
     }
@@ -96,7 +100,13 @@ internal sealed class SharedSemanticProjection
             missing |= !codeBlocks && changes.Any(id => !annotations.ContainsKey("change-" + id));
             if (missing)
             {
-                results[prepared.Input.Key] = new(candidate, "Incomplete", ["일부 코드 묶음의 의미 검토를 완료하지 못했습니다."], [], 0, FailureStage: "semantic-review");
+                var needed = prepared.NodeItems.Values.Concat(prepared.EdgeItems.Values).Concat(prepared.ControlItems.Values)
+                    .Concat(changes.Select(id => "change-" + id)).Where(id => !annotations.ContainsKey(id)).ToHashSet();
+                var failure = semantics.Failures?.FirstOrDefault(f => f.ItemIds.Any(needed.Contains));
+                var warning = failure is null ? "일부 코드 묶음의 의미 검토를 완료하지 못했습니다." :
+                    (failure.Stage == "generation" ? "의미 생성 단계: " : failure.Stage == "plan-validation" ? "생성 응답 검증 단계: " : "의미 검토 단계: ") +
+                    LlmFailure.Describe(new LlmClientException(failure.Code, "Shared annotation incomplete.", serverErrorCategory: failure.Category));
+                results[prepared.Input.Key] = new(candidate, "Incomplete", [warning], [], 0, FailureStage: failure?.Stage ?? "semantic-review");
                 continue;
             }
             var elements = candidate.Nodes.Select(n => new SemanticElement(n.Id,
@@ -155,6 +165,19 @@ internal sealed class SharedSemanticProjection
         var consumed = new HashSet<string>();
         var groups = new List<string[]>();
         var nodes = candidate.Nodes.ToDictionary(n => n.Id);
+        string? Unit(DiagramNode node)
+        {
+            if (node.Context?.Span is not { StartOffset: { } start, EndOffset: { } end } span) return null;
+            foreach (var meaning in meanings ?? [])
+            {
+                if (meaning.Plan is null || meaning.Input.Span.FilePath != span.FilePath || meaning.Input.Span.RevisionSha != span.RevisionSha) continue;
+                var events = ExecutionSequenceProjection.Flatten(meaning.Input.Events).ToDictionary(e => e.Id);
+                foreach (var unit in meaning.Plan.Units)
+                    if (unit.EventIds.Any(id => events[id].StartOffset >= start && events[id].EndOffset <= end))
+                        return meaning.Input.Id + "/" + unit.EventIds[0];
+            }
+            return null;
+        }
         bool Eligible(DiagramNode node) => node.Kind == "operation" && node.Context is not null &&
             node.Context.Purpose is not ("call" or "assertion") && node.Group is not null;
         foreach (var node in candidate.Nodes)
@@ -169,7 +192,8 @@ internal sealed class SharedSemanticProjection
                     consumed.Contains(next.Id) || !Eligible(next) || next.Group != current.Group || next.DetailPageId != current.DetailPageId ||
                     candidate.Edges.Count(e => e.TargetId == next.Id) != 1 ||
                     JsonSerializer.Serialize(current.Context!.ControlPath) != JsonSerializer.Serialize(next.Context!.ControlPath) ||
-                    current.Context.Span.FilePath != next.Context.Span.FilePath || current.Context.Span.RevisionSha != next.Context.Span.RevisionSha) break;
+                    current.Context.Span.FilePath != next.Context.Span.FilePath || current.Context.Span.RevisionSha != next.Context.Span.RevisionSha ||
+                    meanings is not null && (Unit(current) is not { } unit || Unit(next) != unit)) break;
                 chain.Add(next.Id); consumed.Add(next.Id); current = next;
             }
             groups.Add(chain.ToArray());

@@ -49,8 +49,12 @@ Code, repositories, data, policy and build/runtime directories must be outside c
 
 Verification and Windows packaging use pre-provisioned locked caches only, disable npm lifecycle scripts, public audit, update notifications and CLI telemetry, and fail on missing cache content. Direct SDK/tool invocation must follow the same host policy. Synthetic regressions use isolated stores and loopback fixtures, not corporate endpoints. Browser request guards cover page requests; they do not certify browser/OS background traffic.
 
+The current-source UI test launcher may read the explicitly selected Diagram Maker development project from OneDrive to take a byte-verified source snapshot. This is a developer build of the application itself. It excludes generated output, user data and local secret configuration, rejects linked source paths, and builds and runs only in the approved, non-synchronized LocalAppData test root. Registered repositories and pasted code remain parse-only inputs under the controls above. UI tests force LLM off, restore from local locked caches, retain their separate data across rebuilds, and preserve the existing server if a new build fails.
+
 Release checks reject removed inference types in DLLs and UI assets, actual policy/data payloads, missing SBOMs and unreviewed license expressions. Exact dependency declarations, selected SPDX branches, integrity and shipped notices are collected. Supplemental standard terms are distinguished from shipped upstream evidence. Vulnerability feeds, real corporate LLM/DB tests, host egress capture and container OS review require separate internal evidence.
 
 ## Incident handling
+
+The code diagram self-test accepts no source input and uses fixed synthetic C#/C++ with Thinking disabled. It requires the existing Admin role and does not create workspaces. JSON and text diagnostic exports retain the existing owner checks. They exclude source, prompts, response bodies, endpoints, model names and authentication values. Server error bodies are bounded and classified in memory into fixed categories; unknown HTTP failures stop further generation requests instead of triggering blind compatibility retries. Compatible shared schemas keep types, required fields, enums and local ID/text/meaning validation.
 
 Disable the affected repository, revoke its read credential, block the worker, preserve metadata-only audit logs, and rotate LLM/database credentials if exposure is suspected. Never upload source, prompts, dumps, or diagrams to public issue trackers.

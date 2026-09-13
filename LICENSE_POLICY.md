@@ -14,6 +14,12 @@ Automatically allowed software licenses:
 
 `CC-BY-4.0` is allowed only for non-code reference data and requires attribution. `caniuse-lite` is the current reviewed instance. For dual-licensed packages, the build records the permitted branch; DOMPurify is consumed under Apache-2.0.
 
+`OFL-1.1` is accepted only for the unmodified, pinned Pretendard Variable 1.3.9
+font asset introduced by the approved UI design plan. It is not a general software
+dependency exception. The upstream copyright/license, source URLs and SHA-256
+hashes accompany the font; the offline build validates local bytes, and the
+release asset inventory and SBOM include the font and its notice evidence.
+
 The following are blocked unless the company open-source review owner grants a written exception:
 
 - GPL, LGPL, AGPL and SSPL

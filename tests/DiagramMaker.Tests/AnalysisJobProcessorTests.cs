@@ -442,14 +442,7 @@ public sealed class AnalysisJobProcessorTests
             bool enableThinking,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
-        public Task<DiagramIr?> RefineAnalysisDiagramAsync(
-            DiagramIr candidate,
-            VersionedGraph graph,
-            GitComparison comparison,
-            IReadOnlyList<string> changeIds,
-            DiagramViewSelection selection,
-            bool enableThinking,
-            CancellationToken cancellationToken) => throw new NotSupportedException();
+
 
         public Task<IReadOnlyList<AnalysisGroupDraft>?> RegroupChangesAsync(
             IReadOnlyList<ChangeCandidate> candidates,

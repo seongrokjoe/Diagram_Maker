@@ -89,6 +89,7 @@ builder.Services.AddSingleton<IGitWorkerClient>(services => services.GetRequired
 builder.Services.AddScoped<NaturalDiagramService>();
 builder.Services.AddScoped<CodeBlockWorkspaceService>();
 builder.Services.AddSingleton<CodeBlockAnalyzer>();
+builder.Services.AddSingleton<CodeDiagramSelfTest>();
 builder.Services.AddSingleton<CodeBlockGroupingService>();
 builder.Services.AddSingleton<CodeBlockProjectionService>();
 builder.Services.AddScoped<CodeBlockRunProcessor>();
@@ -537,7 +538,7 @@ api.MapPost("/analysis-plans/{id:guid}/generate", async (
         request.SourceAnalysisId,
         request.RequestedViewIds);
     var job = new AnalysisJob(Guid.NewGuid(), analyzeRequest, AnalysisState.Queued, plan.BaseSha, plan.TargetSha, 0, "Queued", null, null, null, now, now, null,
-        GenerationVersion: "shared-semantic-v1");
+        GenerationVersion: SharedSemanticProjection.Version);
     await store.SaveAnalysisAsync(job, cancellationToken);
     await store.SaveAuditAsync(new AuditEvent(Guid.NewGuid(), context.GetInternalIdentity().UserId, "analysis-plan.generate", plan.Request.RepositoryId, "allowed", now), cancellationToken);
     return Results.Accepted($"/api/v1/analyses/{job.Id}", ToAnalysisResponse(job));
@@ -563,12 +564,12 @@ api.MapPost("/analyses", async (
     }
     if (request.DiagramTypes?.Any(type => !IsSupportedGitDiagramType(type)) == true)
     {
-        return Results.BadRequest(new { error = "DiagramTypes must contain only flowchart, class, sequence, or code-relation." });
+        return Results.BadRequest(new { error = "DiagramTypes must contain only flowchart, class, sequence, state, or code-relation." });
     }
 
     var now = DateTimeOffset.UtcNow;
     var job = new AnalysisJob(Guid.NewGuid(), request, AnalysisState.Queued, null, null, 0, "Queued", null, null, null, now, now, null,
-        GenerationVersion: "shared-semantic-v1");
+        GenerationVersion: SharedSemanticProjection.Version);
     await store.SaveAnalysisAsync(job, cancellationToken);
     await store.SaveAuditAsync(new AuditEvent(Guid.NewGuid(), identity.UserId, "analysis.create", repository.Id, "allowed", now), cancellationToken);
     return Results.Accepted($"/api/v1/analyses/{job.Id}", ToAnalysisResponse(job));
@@ -595,6 +596,8 @@ api.MapGet("/analyses/{id:guid}/groups/{groupId}/views/{viewId}/pages/{pageId}",
 api.MapGet("/analyses/{id:guid}/diagnostics", async (Guid id, HttpContext context, IAppStore store, CancellationToken ct) =>
 {
     var job = await AuthorizedJob(id, context, store, ct);
+    if (job is not null && context.Request.Query["format"] == "text")
+        return Results.Text(LlmDiagnosticReport.Text(job.State.ToString(), job.StopReason, job.Execution, job.Diagnostics), "text/plain; charset=utf-8");
     return job is null ? Results.NotFound() : Results.Ok(new { version = 2, job.Id, job.State, job.StopReason, job.Execution, job.GenerationVersion,
         diagnostics = job.Diagnostics ?? [], checkpointCount = job.Checkpoints?.Count ?? 0 });
 });
@@ -612,6 +615,16 @@ api.MapPost("/analyses/{id:guid}/resume", async (Guid id, ResumeSemanticRequest 
     var job = await AuthorizedJob(id, context, store, ct);
     if (job is null) return Results.NotFound();
     if (!CanResumeAnalysis(job) || job.Revision != request.ExpectedRevision) return Results.Conflict(new { error = "이어갈 실행 상태가 변경되었습니다." });
+    if (job.GenerationVersion != SharedSemanticProjection.Version)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var fresh = new AnalysisJob(Guid.NewGuid(), job.Request with { BaseRevision = job.BaseSha ?? job.Request.BaseRevision,
+            TargetRevision = job.TargetSha ?? job.Request.TargetRevision, SourceAnalysisId = job.Id, RequestedViewIds = null },
+            AnalysisState.Queued, job.BaseSha, job.TargetSha, 0, "저장된 리비전으로 새 분석을 생성합니다.", null, null, null, now, now, null,
+            GenerationVersion: SharedSemanticProjection.Version);
+        await store.SaveAnalysisAsync(fresh, ct);
+        return Results.Accepted($"/api/v1/analyses/{fresh.Id}", ToAnalysisResponse(fresh));
+    }
     var resumed = job with { State = AnalysisState.Queued, Revision = job.Revision + 1, StopReason = null, ErrorCode = null, ErrorMessage = null,
         StageMessage = "완료 단위를 재사용하여 이어서 생성합니다.", LeaseUntil = null, UpdatedAt = DateTimeOffset.UtcNow };
     return await store.UpdateAnalysisAsync(resumed, job.Revision, ct) ? Results.Accepted($"/api/v1/analyses/{id}", ToAnalysisResponse(resumed)) : Results.Conflict();
@@ -724,6 +737,18 @@ api.MapPost("/natural-diagrams", async (
     {
         return LlmFailure(exception);
     }
+});
+
+api.MapGet("/llm/tests/code-diagram-settings", (HttpContext context, IOptions<LlmOptions> options) =>
+    context.GetInternalIdentity().Roles.Contains("Admin") ? Results.Ok(LlmDiagnosticReport.Settings(options.Value)) : Results.Forbid());
+
+api.MapPost("/llm/tests/code-diagram-contract", async (HttpContext context, CodeDiagramSelfTest test, CancellationToken ct) =>
+{
+    if (!context.GetInternalIdentity().Roles.Contains("Admin")) return Results.Forbid();
+    var result = await test.RunAsync(ct);
+    return context.Request.Query["format"] == "text"
+        ? Results.Text(result.Report, "text/plain; charset=utf-8", statusCode: result.Success ? 200 : 503)
+        : Results.Ok(result);
 });
 
 api.MapPost("/llm/tests/connection", async (
@@ -1124,7 +1149,7 @@ static object ToAnalysisResponse(AnalysisJob job, bool includeGraph = true) => n
 };
 
 static bool CanResumeAnalysis(AnalysisJob job) => job.State is AnalysisState.Partial or AnalysisState.Failed or AnalysisState.Cancelled &&
-    (job.Checkpoints is { Count: > 0 } || job.StopReason is "budget" or "user-cancelled");
+    DiagramMaker.Services.LlmFailure.CanResume(job.Checkpoints, job.StopReason);
 
 static AnalysisHistorySummary ToAnalysisHistorySummary(AnalysisJob job)
 {
@@ -1226,7 +1251,7 @@ static string? ValidatePlanSelections(
         if (string.IsNullOrWhiteSpace(group.Title) || group.Title.Trim().Length > 120) return "Group titles must contain 1-120 characters.";
         if (group.ChangeIds is null || group.ChangeIds.Count == 0) return "Every group must contain at least one change.";
         var views = group.EffectiveViews();
-        if (views.Count is < 1 or > 4) return "Every group must contain one to four diagram views.";
+        if (views.Count is < 1 or > 5) return "Every group must contain one to five diagram views.";
         if (views.Select(static view => view.Id).Distinct(StringComparer.Ordinal).Count() != views.Count)
             return "Every diagram view in a group must have a unique ID.";
         if (views.Select(static view => view.DiagramType).Distinct(StringComparer.OrdinalIgnoreCase).Count() != views.Count)
@@ -1253,7 +1278,7 @@ static string? ValidatePlanSelections(
 }
 
 static bool IsSupportedGitDiagramType(string type) => type.Trim().ToLowerInvariant() is
-    "flowchart" or "class" or "sequence" or "code-relation";
+    "flowchart" or "class" or "sequence" or "state" or "code-relation";
 
 static IResult LlmFailure(LlmClientException exception) => Results.Json(new
 {

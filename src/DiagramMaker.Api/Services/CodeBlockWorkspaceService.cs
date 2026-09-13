@@ -66,7 +66,7 @@ public sealed partial class CodeBlockWorkspaceService(IAppStore store, IOptions<
         var now = DateTimeOffset.UtcNow;
         var run = new CodeBlockRun(Guid.NewGuid(), id, owner, workspace.Revision, 1, input,
             CodeBlockRunState.Queued, 0, "코드 분석 대기", now, now, RegenerateViewIds: request.RegenerateViewIds,
-            GenerationVersion: "shared-semantic-v1");
+            GenerationVersion: SharedSemanticProjection.Version);
         if (request.RegenerateViewIds is { Count: > 0 })
         {
             var previous = (await store.ListCodeBlockRunsAsync(id, 100, cancellationToken)).FirstOrDefault(r => r.IsTerminal && r.InputRevision == workspace.Revision && r.Results is { Count: > 0 });
@@ -76,7 +76,8 @@ public sealed partial class CodeBlockWorkspaceService(IAppStore store, IOptions<
                 (previous.Groups?.FirstOrDefault(p => p.Id == g.GroupId) ??
                     input.Groups?.FirstOrDefault(p => p.Id == g.GroupId) ?? new CodeBlockGroupSelection(g.GroupId, g.Title, g.BlockIds))
                 with { Views = g.Views.Select(v => v.Selection).ToArray() }).ToArray(),
-                Graph = previous.Graph, Questions = previous.Questions, Answers = previous.Answers, QuestionsResolved = previous.QuestionsResolved };
+                Graph = previous.Graph?.AnalyzerVersion == CodeBlockAnalyzer.AnalyzerVersion ? previous.Graph : null,
+                Questions = previous.Questions, Answers = previous.Answers, QuestionsResolved = previous.QuestionsResolved };
         }
         if (!await store.CreateCodeBlockRunAsync(run, cancellationToken))
             throw new CodeBlockConflictException("이미 진행 중이거나 질문 대기 중인 실행이 있습니다. 기존 실행을 완료하거나 취소하세요.");
@@ -124,13 +125,17 @@ public sealed partial class CodeBlockWorkspaceService(IAppStore store, IOptions<
             StageMessage = "완료 단위를 재사용하여 이어서 생성합니다.", CreatedAt = now, UpdatedAt = now,
             LeaseId = null, LeaseUntil = null, ErrorCode = null, ErrorMessage = null, StopReason = null,
             SourceRunId = source.Id };
+        if (source.GenerationVersion != SharedSemanticProjection.Version || source.Graph?.AnalyzerVersion != CodeBlockAnalyzer.AnalyzerVersion)
+            resumed = resumed with { GenerationVersion = SharedSemanticProjection.Version, Graph = null, Checkpoints = null,
+                Diagnostics = null, Execution = null, Results = null, RegenerateViewIds = null, Progress = 0,
+                StageMessage = "저장된 입력으로 새 분석·의미 계획을 생성합니다. 이전 결과는 생성 이력에 보존됩니다." };
         if (!await store.CreateCodeBlockRunAsync(resumed, cancellationToken))
             throw new CodeBlockConflictException("이미 진행 중인 실행이 있거나 입력이 변경되었습니다.");
         return resumed;
     }
 
     private static bool CanResume(CodeBlockRun run) => run.IsTerminal && run.State != CodeBlockRunState.Completed &&
-        (run.Checkpoints is { Count: > 0 } || run.StopReason is "budget" or "user-cancelled");
+        LlmFailure.CanResume(run.Checkpoints, run.StopReason);
 
     public CodeBlockWorkspaceInput ValidateInput(CodeBlockWorkspaceInput input, bool forGeneration = false)
     {

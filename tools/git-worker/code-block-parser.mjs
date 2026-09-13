@@ -61,13 +61,13 @@ export async function analyzeCodeBlocks(blocks, limits = { maximumBlocks: 20, ma
       const result = [];
       for (let p = node.parent; p && p.type !== "function_definition"; p = p.parent) {
         if (p.type === "compound_statement") {
-          for (const guard of p.namedChildren.filter(n => n.type === "if_statement" && n.endIndex <= node.startIndex)) {
+          for (const guard of p.namedChildren.filter(n => n.type === "if_statement" && n.endIndex <= node.startIndex).reverse()) {
             const thenExits = transfers(field(guard, "consequence")); const elseExits = transfers(field(guard, "alternative"));
             if (thenExits !== elseExits) result.unshift({ id: hash(block.id, contentHash, guard.startIndex), kind: "alt",
               label: field(guard, "condition")?.text ?? "조건", branch: thenExits ? "else" : "then" });
           }
         }
-        if (p.type === "if_statement") result.unshift({ id: hash(block.id, contentHash, p.startIndex), kind: "alt",
+        if (p.type === "if_statement" && !(field(p, "condition")?.startIndex <= node.startIndex && field(p, "condition")?.endIndex >= node.endIndex)) result.unshift({ id: hash(block.id, contentHash, p.startIndex), kind: "alt",
           label: field(p, "condition")?.text ?? "조건", branch: field(p, "consequence")?.endIndex >= node.endIndex && field(p, "consequence")?.startIndex <= node.startIndex ? "then" : "else" });
         if (["while_statement", "for_statement", "do_statement", "for_range_loop"].includes(p.type))
           result.unshift({ id: hash(block.id, contentHash, p.startIndex), kind: "loop", label: field(p, "condition")?.text ?? p.text.split("{")[0], branch: "body" });
@@ -115,6 +115,14 @@ export async function analyzeCodeBlocks(blocks, limits = { maximumBlocks: 20, ma
           statement: block.code.slice(loc.startOffset, loc.endOffset), receiver: c.expression.includes("->") || c.expression.includes(".") ? c.expression : null,
           controlPath, orderUncertain: c.controlPath.some(s => s.kind === "unordered") };
       });
+      const mapExecution = items => items.map(e => {
+        const loc = location(e.startOffset, e.endOffset);
+        return { ...e, id: hash(symbol.id, e.id), startOffset: loc.startOffset, endOffset: loc.endOffset,
+          evidenceIds: [cite(loc)], children: mapExecution(e.children), alternative: mapExecution(e.alternative),
+          evaluation: mapExecution(e.evaluation), terminationTarget: e.terminationTarget?.startsWith("loop_") ? hash(symbol.id, e.terminationTarget) : e.terminationTarget,
+          callSiteId: e.kind === "call" ? symbol.calls.find(c => c.location.startOffset === loc.startOffset && c.location.endOffset === loc.endOffset)?.id : null };
+      });
+      symbol.execution = mapExecution(symbol.execution ?? []);
       if (declaration?.type === "function_definition" && !tree.rootNode.hasError) {
         for (const a of nodes.filter(n => n.type === "assignment_expression" && n.startIndex > declaration.startIndex && n.endIndex < declaration.endIndex)) {
           const left = field(a, "left")?.text; const right = field(a, "right")?.text;
@@ -139,8 +147,8 @@ export async function analyzeCodeBlocks(blocks, limits = { maximumBlocks: 20, ma
             }
             if (from) break;
           }
-          const invalidated = origin && nodes.some(n => n.type === "assignment_expression" && n.startIndex > origin.startIndex && n.endIndex < a.startIndex &&
-            field(n, "left")?.text === left && scopes(n).every(scope => scopes(a).some(s => s.id === scope.id && s.branch === scope.branch)));
+          const invalidated = origin && nodes.some(n => (n.type === "call_expression" || n.type === "assignment_expression" && field(n, "left")?.text === left) &&
+            n.startIndex > origin.startIndex && n.endIndex < a.startIndex && scopes(n).every(scope => scopes(a).some(s => s.id === scope.id && s.branch === scope.branch)));
           if (from && origin && !invalidated) transitions.push({ id: hash(symbol.id, "state", a.startIndex), symbolId: symbol.id, variable: left, from, to: right,
             condition: scopes(a).map(s => s.branch === "else" ? `!(${s.label})` : s.label).join(" && "),
             evidenceIds: [cite(location(a.startIndex, a.endIndex)), cite(location(origin.startIndex, origin.endIndex))] });
@@ -168,7 +176,7 @@ export async function analyzeCodeBlocks(blocks, limits = { maximumBlocks: 20, ma
   }
   return { symbols: symbols.map(s => ({ id: s.id, blockId: s.blockId, name: s.isFragment ? blocks.find(b => b.id === s.blockId).title : s.qualifiedName,
     kind: s.isFragment ? "fragment" : s.kind, signature: s.isFragment ? "코드 조각" : s.signature, location: s.location, evidenceIds: s.evidenceIds,
-    steps: s.steps, flowEdges: s.flowEdges, calls: s.calls, members: s.members ?? [], baseTypes: s.bases, parameterCount: s.parameterCount,
+    steps: s.steps, flowEdges: s.flowEdges, calls: s.calls, execution: s.execution, members: s.members ?? [], baseTypes: s.bases, parameterCount: s.parameterCount,
     isFragment: s.isFragment, ownerId: symbols.find(t => t.semanticKey === s.ownerSemanticKey)?.id ?? null })),
     relations: [], evidence: [...evidence.values()], transitions, warnings, analyzerVersion: "code-block-v1" };
 }
