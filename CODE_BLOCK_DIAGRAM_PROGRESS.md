@@ -6,6 +6,13 @@
 
 ## 현재 상태
 
+- 2026-09-14 사내 ZIP Git 전달 완료: 소스 `a8a3ec9`와 배포 `d4b5a66`을
+  `origin/main`에 push했고 원격 HEAD가 `d4b5a661d4d5e2a21689a6a589759dde6fc28124`임을
+  읽기 전용 조회로 확인했다. ZIP/SHA는 `artifacts/release/`에 있으며 로컬 해시도 일치한다.
+  GitHub는 50MB 권장 크기 초과를 경고했으나 파일과 push를 수락했다.
+  다음: 사내 PC의 비동기화 폴더에 압축 해제하고 승인된 LLM 정책을 설정해
+  `start.cmd`, `health-check.cmd`, `test-llm.cmd` 및 실제 모델 품질·PostgreSQL 연결을 확인한다.
+
 - 2026-09-14 `0.1.0-internal.6` 오프라인 Windows x64 ZIP 생성·검증 완료.
   검증된 소스 커밋 `a8a3ec94ca7edb0931aeba9297acbff865c94b9d`와 일치하는 비동기화
   작업본에서 `build-offline-win-x64.ps1 -SkipTests` exit 0(작업자 37/web 46, x64 게시,
