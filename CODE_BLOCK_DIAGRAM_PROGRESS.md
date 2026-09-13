@@ -6,6 +6,18 @@
 
 ## 현재 상태
 
+- 2026-09-14 `0.1.0-internal.6` 오프라인 Windows x64 ZIP 생성·검증 완료.
+  검증된 소스 커밋 `a8a3ec94ca7edb0931aeba9297acbff865c94b9d`와 일치하는 비동기화
+  작업본에서 `build-offline-win-x64.ps1 -SkipTests` exit 0(작업자 37/web 46, x64 게시,
+  라이선스·폰트·281개 SBOM·사내 전용 검사). 배포 EXE의 코드 블럭 C#/C++ 5종/API,
+  Mermaid 4종 × 4개 폭, 코드 블럭 UI, 합성 LLM 연결 제한/기본 각 5개,
+  Windows CMD 7개가 통과했다. ZIP 1,858개 항목/96,346,558바이트이며
+  실제 압축 해제와 EXE/Node/JS/manifest 파일 해시 대조가 통과했다.
+  SHA-256: `38b68443a6acb10077107cec74bb90a40d48530d01c24420f6750e33d65770bc`.
+  manifest의 `sourceCommit`은 소스 커밋을 가리키고 `sourceTreeDirty=true`로 기록됐다.
+  빌드 직전 작업본은 clean, 빌드 후 생성 ZIP을 제외한 작업본도 clean으로 확인했다.
+  다음: ZIP/SHA를 저장소에 복사해 해시 재확인 → 전달 커밋 → origin/main push 확인.
+
 - 2026-09-14 비동기화 Temp 작업본 전체 `verify.ps1` exit 0: .NET 279, Node 작업자 37,
   web 46, 정책·폰트·실행기 단위 13개, API 2모드, 공유 의미 2설정, SVG 6개,
   코드 블럭·디자인 UI 및 Windows 실행기 14개가 통과했다. 최초 일반 권한 실행은
