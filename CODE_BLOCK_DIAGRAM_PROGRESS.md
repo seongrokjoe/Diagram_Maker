@@ -6,6 +6,32 @@
 
 ## 현재 상태
 
+- 2026-09-14 internal.7 로컬 전달 완료, 원격 게시 승인 대기: 검증된 ZIP/SHA를
+  `artifacts/release/`로 복사하고 SHA-256을 재확인했다. 이전 5개 ZIP/SHA 쌍은
+  승인 계획에 따라 로컬에서 정리했으며 Git 이력과 의존성 캐시는 보존했다.
+  자동 승인 검토가 배포 커밋+origin/main push 명령을 실행 전에 거절했다.
+  사유: 현재 재개 요청만으로 정확한 원격 main 게시/이전 배포 교체까지 승인됐다고
+  인정할 수 없다는 판단이다. 원격 main은 읽기 전용 확인 기준 `a009634`이며 푸시는 하지 않았다.
+  다음: 배포 결과를 로컬 커밋으로 보존 → 정확한 origin/main 게시 승인을 받은 뒤 정상 push →
+  원격 HEAD 확인. 로컬 구현·패키지·회귀에 미해결 실패는 없다(빌드 로그 수집기 문제는 위 기록 참조).
+
+- 2026-09-14 internal.7 패키지 검증 완료: API·C#/C++ 5종·Mermaid 4종×4폭·UI,
+  합성 LLM 2모드·공유 의미 2설정·Windows CMD 7개가 모두 실제 exit 0.
+  패키지에서도 1,212줄 요청 10/14/30회와 41/43/51페이지를 보존했다.
+  ZIP 1,831개 항목/96,352,927바이트, 모든 압축 항목과 staging 파일 해시 대조 통과.
+  SHA-256: `314e5062764043954922771e3c25d17539dee2bca1470c85a2c1eba43c4fa32d`.
+  검증 기록은 `CODE_DIAGRAM_RELIABILITY_REPORT.md`, `artifacts/internal7/`에 보존한다.
+  다음: 검증 ZIP 복사·이전 5쌍 정리 확인 → 배포 커밋 및 origin/main push/원격 HEAD 확인.
+  실제 사내 LLM 의미 품질·300초 목표·PostgreSQL 연결은 사내 측정 키트로 별도 검증해야 한다.
+
+- 2026-09-14 internal.7 소스 `cfe855e` 고정 후 Windows x64 ZIP 생성 완료.
+  x64 worker 42/web 46, 게시·라이선스·281개 SBOM·사내 전용 검사가 모두 끝나고 ZIP/SHA가 생성됐다.
+  패키징 로그 수집기의 `Start-Process` 핸들 지연으로 ExitCode가 null이 되어 래퍼는 exit 1이다.
+  제품 실패로 간주하지 않으며 핸들을 시작 직후 확보하도록 래퍼를 수정했다.
+  실제 소스 288개는 원본과 패키징 작업본의 SHA-256이 일치한다. manifest는 `cfe855e`와
+  sourceTreeDirty=true(이전 검증 증적의 작업본 차이)를 기록한다.
+  다음: 생성 ZIP 전체 항목/해시 감사 → 빌드를 반복하지 않고 패키지 실행 검사 → 배포 정리/푸시.
+
 - 2026-09-14 internal.7 전체 검증 완료: `verify.ps1` 실제 exit 0을
   `artifacts/internal7/verify-result.json`으로 확인했다. .NET 284, worker 42, web 46,
   정책·폰트·실행기 단위 13, API 2모드, 공유 의미 기본/60,000자, SVG 6개,

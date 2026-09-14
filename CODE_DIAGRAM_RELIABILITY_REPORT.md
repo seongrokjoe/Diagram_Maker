@@ -47,4 +47,26 @@ API 2모드, 공유 의미 기본/60,000자, SVG 6개, 코드 블럭·디자인 
 합성 입력 증적: `shared-semantics-Cc3JOa`, `shared-semantics-KQsYAr`.
 최종 줄 번호/UI: `code-block-ui-Dfl7Or`; 전체 디자인: `design-ui-Ye5Ane`.
 
-Windows x64 패키지 검증은 소스 커밋 이후 수행하고 아래에 기록한다.
+Windows x64 ZIP은 소스 커밋 `cfe855e332d7fe85c7a7cac97ff38fd22809b811`에서 생성했다.
+실제 소스·설정·문서 288개의 SHA-256을 저장소와 패키징 작업본 사이에서 대조했다.
+이전 검증 증적의 작업본 차이 때문에 manifest에는 `sourceTreeDirty=true`가 남아 있다.
+패키지의 1,831개 파일 전체가 검사한 staging 파일과 일치하고 런타임 데이터·실제 정책은 없다.
+
+- 파일: `artifacts/release/DiagramMaker-0.1.0-internal.7-win-x64.zip` (96,352,927바이트)
+- SHA-256: `314e5062764043954922771e3c25d17539dee2bca1470c85a2c1eba43c4fa32d`
+- 감사: `artifacts/internal7/package-audit.json`, `source-manifest.json`
+- 패키징은 x64 worker 42/web 46, 게시·라이선스·281개 SBOM·사내 전용 검사 후 ZIP/SHA를 생성했다.
+  초기 로그 수집기는 프로세스 핸들을 늦게 열어 종료 코드를 null로 수집했다. 이를 exit 0으로
+  기록하지 않았고 수집기를 보정해 후속 실행 검사별 실제 종료 코드를 별도로 기록한다.
+
+패키지의 API·5종 코드 블럭, Mermaid 4종 × 4개 폭, UI, 합성 LLM 기본/제한 모드,
+공유 의미 기본/60,000자와 Windows CMD 7개 검사 모두 실제 exit 0.
+배포 EXE와 동봉 Node에서도 위 요청 수·페이지 수를 동일하게 재현했다.
+증적은 `artifacts/internal7/package-*-result.json`과 각 stdout/stderr 로그에 있다.
+
+[줄 번호 화면](artifacts/internal7/package-source-line-numbers.png),
+[진행 상태 화면](artifacts/internal7/package-semantic-progress-1440.png),
+[모바일 진행 상태](artifacts/internal7/package-semantic-progress-390.png).
+
+승인된 릴리스 정리 범위에 따라 새 ZIP/SHA만 배포 폴더에 남기며 이전 5개 ZIP/SHA 쌍을 정리한다.
+이전 소스·릴리스는 Git 이력에 남고 의존성 캐시는 보존한다. 실제 사내 모델과 DB 검증은 미실시다.

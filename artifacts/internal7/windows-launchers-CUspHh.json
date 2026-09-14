@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "checks": [
+    "code diagram command retains failure report and nonzero exit",
+    "start ignores malformed leftover default policy",
+    "optional launcher loads default policy",
+    "start honors explicit policy",
+    "optional launcher rejects malformed policy",
+    "start rejects missing explicit policy",
+    "optional launcher rejects missing explicit policy"
+  ],
+  "syntheticOnly": true
+}

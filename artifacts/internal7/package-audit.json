@@ -1,0 +1,15 @@
+﻿{
+    "sourceTreeDirty":  true,
+    "version":  "0.1.0-internal.7",
+    "files":  1831,
+    "corporateLlmTested":  false,
+    "sourceWorkersAndGuidesMatch":  true,
+    "allZipBytesMatchStage":  true,
+    "status":  "passed",
+    "noRuntimeDataOrActualPolicies":  true,
+    "sourceCommit":  "cfe855e332d7fe85c7a7cac97ff38fd22809b811",
+    "bytes":  96352927,
+    "syntheticOnsiteKitIncluded":  true,
+    "livePostgresTested":  false,
+    "sha256":  "314e5062764043954922771e3c25d17539dee2bca1470c85a2c1eba43c4fa32d"
+}
