@@ -30,6 +30,48 @@ public sealed class ExecutionSequenceTests
         return service.Build(graph, [], group, new("s", "sequence", "balanced")).First().Diagram;
     }
     [Fact]
+    public void CallReturnAndReferenceArgumentsKeepTheirSourceEvidenceWithoutDuplicateAssignments()
+    {
+        var graph = new SourceGraphAnalyzer().AnalyzeCSharpCodeBlocks(Guid.NewGuid(), [new("a", "csharp", "a",
+            "class Work { int Run(){int buffer=0; int result=Read(ref buffer); return result;} int Read(ref int output){output=2; return 1;} }")]);
+        var owner = graph.Symbols.Single(s => s.Name.Split('.').Last() == "Run");
+        var diagram = ExecutionSequenceProjection.Build(owner, graph, "TB");
+        var call = Assert.Single(diagram.Edges, e => e.Type == "message");
+        Assert.Equal("Read", call.Call!.Target);
+        Assert.Equal(new[] { "ref buffer" }, call.Call.Arguments);
+        Assert.Equal("result", call.Call.AssignedTo);
+        Assert.Equal("int", call.Call.ReturnType);
+        var output = Assert.Single(call.Call.Outputs);
+        Assert.Equal("code", output.Basis);
+        Assert.NotEmpty(output.EvidenceIds);
+        var response = Assert.Single(diagram.Edges, e => e.Type == "response");
+        Assert.Contains("result ← 반환값", response.Label);
+        Assert.True(response.SourceFactIds!.Count > call.SourceFactIds!.Count);
+        Assert.DoesNotContain(CodeBlockPlanValidation.ControlBlocks(diagram.SequenceBlocks!), b => b.Label.Contains("result=Read"));
+    }
+
+    [Fact]
+    public void BundledOutputContractIsExplicitAndCannotOverrideAnInputDefinition()
+    {
+        var graph = new SourceGraphAnalyzer().AnalyzeCSharpCodeBlocks(Guid.NewGuid(), [new("a", "csharp", "a",
+            "void Run(){bool result=GetCommState(device, config);}")]) with { ApiContractBlockIds = ["a"] };
+        var owner = graph.Symbols.Single(s => s.Name == "Run");
+        var diagram = ExecutionSequenceProjection.Build(owner, graph, "TB");
+        var edge = Assert.Single(diagram.Edges, e => e.Type == "message");
+        Assert.Equal("api-contract", edge.Call!.Basis);
+        Assert.StartsWith("성공 시", Assert.Single(edge.Call.Outputs).Description);
+        Assert.Empty(edge.Call.Outputs[0].EvidenceIds);
+        Assert.Contains("nf-winbase-getcommstate", edge.Call.ContractUrl!);
+        var shared = new SharedSemanticProjection(true, []);
+        shared.Add(new("s", diagram, new("s", "sequence", "balanced")));
+        Assert.Contains(shared.Items.Values.Where(i => i.Kind == "message").SelectMany(i => i.Details), d => d.Contains("api-contract"));
+        var noHeader = ExecutionSequenceProjection.Build(owner, graph with { ApiContractBlockIds = [] }, "TB");
+        Assert.Equal("unresolved", noHeader.Edges.Single(e => e.Type == "message").Call!.Basis);
+        var ownDefinition = owner with { Id = "own-api", Name = "GetCommState" };
+        var shadowed = ExecutionSequenceProjection.Build(owner, graph with { Symbols = [owner, ownDefinition] }, "TB");
+        Assert.Equal("unresolved", shadowed.Edges.Single(e => e.Type == "message").Call!.Basis);
+    }
+    [Fact]
     public void EachGuardCallIsEvaluatedOnceAndEachExitHasTheCorrectValue()
     {
         var diagram = Diagram(Source);

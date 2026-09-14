@@ -36,7 +36,7 @@ public sealed class SemanticExecution : IDisposable
     public bool BudgetExpired => budget.IsCancellationRequested && !parent.IsCancellationRequested;
     public LlmClientException? RequestFailure { get; private set; }
     public void StopRequests(LlmClientException error) => RequestFailure ??= error;
-    internal const string SharedPolicyVersion = "shared-requests-v6";
+    internal const string SharedPolicyVersion = "shared-requests-v7";
     private DateTimeOffset lastProgressAt = DateTimeOffset.UtcNow;
     private readonly Dictionary<string, SemanticCoverage> coverage = new();
     private Func<SharedDiagramGroup, Task>? sharedProgress;

@@ -33,7 +33,11 @@ export function executionFacts(declaration) {
         children: active.map(({ events, node }) => fact(node, "region", node.text, { children: events })),
       }));
       else before.push(...active.flatMap(a => a.events));
-      return [...before, fact(n, "call", n.text, { value: n.parent?.type === "expression_statement" ? "discarded" : "unknown" }),
+      const owner = n.parent;
+      const assignedTo = owner?.type === "assignment_expression" && field(owner, "right")?.id === n.id
+        ? field(owner, "left")?.text : owner?.type === "init_declarator" ? field(owner, "declarator")?.text : null;
+      return [...before, fact(n, "call", n.text, { value: owner?.type === "expression_statement" ? "discarded" : "unknown",
+        callTarget: field(n, "function")?.text, arguments: args.map(a => a.text), assignedTo }),
         ...args.filter(a => a.type === "identifier").map(a => fact(a, "invalidate", a.text, { variable: a.text, value: "escaped" }))];
     }
     if (n.type === "assignment_expression") return [...expression(left), ...expression(right), fact(n, "assign", n.text, {
@@ -74,11 +78,11 @@ export function executionFacts(declaration) {
         children: statement(field(n, "body"), id), alternative: expression(field(n, "update")),
       })];
     }
-    if (n.type === "declaration") return children(n).flatMap(d => d.type === "init_declarator"
+    if (n.type === "declaration") return children(n).filter(d => d.id !== field(n, "type")?.id).flatMap(d => d.type === "init_declarator"
       ? [...expression(field(d, "value")), fact(d, "declare", d.text, {
         variable: field(d, "declarator")?.type === "identifier" ? field(d, "declarator").text : null,
-        value: field(d, "value")?.text ?? null,
-      })] : []);
+        value: field(d, "value")?.text ?? null, valueType: field(n, "type")?.text,
+      })] : d.type === "identifier" ? [fact(d, "declare", d.text, { variable: d.text, valueType: field(n, "type")?.text })] : []);
     if (["switch_statement", "try_statement", "for_range_loop", "goto_statement"].includes(n.type))
       return [fact(n, "unsupported", `${n.type}: 제어 경로 미확인. 아래 관측 호출의 순서·실행 조건은 원문을 확인하세요.`, { children: expression(n) })];
     return expression(n);

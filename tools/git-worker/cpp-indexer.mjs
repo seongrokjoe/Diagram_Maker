@@ -840,6 +840,15 @@ export function resolveCppCalls(files, indirectCallRules = []) {
         ...(byQualified.get(`${exactName}/${call.argumentCount}`) ?? []),
         ...(call.receiver || call.expression.includes("::") || exactName === ownerCandidate ? [] : (byQualified.get(`${ownerCandidate}/${call.argumentCount}`) ?? [])),
       ].filter((candidate, index, all) => all.indexOf(candidate) === index && (!candidate.fileLocal || candidate.filePath === source.filePath));
+      // Unqualified lookup stops at the nearest enclosing scope containing the name.
+      // A global overload must not compete with a member of the current class.
+      if (!call.receiver && !call.expression.includes("::")) {
+        const scopeParts = ownerName(source.qualifiedName).split("::").filter(Boolean);
+        for (let count = scopeParts.length; count > 0; count--) {
+          const scoped = byQualified.get(`${scopeParts.slice(0, count).join("::")}::${call.name}/${call.argumentCount}`) ?? [];
+          if (scoped.length) { qualifiedCandidates = scoped.filter(c => !c.fileLocal || c.filePath === source.filePath); break; }
+        }
+      }
       if (qualifiedCandidates.length > 1 && call.argumentTypes?.every(Boolean)) {
         const typed = qualifiedCandidates.filter(candidate => candidate.parameterTypes?.every((type, i) => canonicalType(type) === canonicalType(call.argumentTypes[i])));
         if (typed.length === 1) qualifiedCandidates = typed;

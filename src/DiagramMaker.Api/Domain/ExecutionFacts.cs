@@ -5,7 +5,8 @@ namespace DiagramMaker.Domain;
 public sealed record ExecutionFact(string Id, string Kind, string Expression, int StartOffset, int EndOffset,
     IReadOnlyList<ExecutionFact> Children, IReadOnlyList<ExecutionFact> Alternative,
     IReadOnlyList<ExecutionFact> Evaluation, string? Variable = null, string? Value = null,
-    string? TerminationTarget = null, string? CallSiteId = null, IReadOnlyList<string>? EvidenceIds = null);
+    string? TerminationTarget = null, string? CallSiteId = null, IReadOnlyList<string>? EvidenceIds = null,
+    string? CallTarget = null, IReadOnlyList<string>? Arguments = null, string? AssignedTo = null, string? ValueType = null);
 
 public sealed record MethodExecution(string IdentityId, string RevisionSha, string FilePath,
     IReadOnlyList<ExecutionFact> Events, SourceSpan? Span = null);

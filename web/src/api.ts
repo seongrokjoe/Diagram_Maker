@@ -118,8 +118,8 @@ export const api = {
       body: JSON.stringify({ expectedRevision, sourceAnalysisId, requestedViewIds }),
     }),
   getAnalysis: (id: string) => request<AnalysisResponse>(`/api/v1/analyses/${id}?includeGraph=false&summary=true`),
-  getAnalysisPage: (id: string, groupId: string, viewId: string, pageId: string, signal?: AbortSignal) =>
-    request<DiagramArtifact>(`/api/v1/analyses/${id}/groups/${encodeURIComponent(groupId)}/views/${encodeURIComponent(viewId)}/pages/${encodeURIComponent(pageId)}`, { signal }),
+  getAnalysisPage: (id: string, groupId: string, viewId: string, pageId: string, signal?: AbortSignal, variant?: string) =>
+    request<DiagramArtifact>(`/api/v1/analyses/${id}/groups/${encodeURIComponent(groupId)}/views/${encodeURIComponent(viewId)}/pages/${encodeURIComponent(pageId)}${variant ? `?variant=${variant}` : ""}`, { signal }),
   getAnalysisEvidence: (id: string, evidenceId: string) => request<EvidenceSnippet>(`/api/v1/analyses/${id}/evidence/${encodeURIComponent(evidenceId)}/snippet`),
 
   listDiagramRevisions: (rootArtifactId: string) =>
@@ -136,12 +136,12 @@ export const api = {
   }),
   saveAnalysisDiagramEdit: (analysisId: string, groupId: string, viewId: string, input: {
     rootArtifactId: string; parentRevisionId?: string; expectedVersion: number; document: DiagramEditDocument;
-  }, pageId = "overview") => request<DiagramRevisionRecord>(`/api/v1/analyses/${analysisId}/groups/${encodeURIComponent(groupId)}/views/${encodeURIComponent(viewId)}/edits?pageId=${encodeURIComponent(pageId)}`, {
+  }, pageId = "overview", variant?: string) => request<DiagramRevisionRecord>(`/api/v1/analyses/${analysisId}/groups/${encodeURIComponent(groupId)}/views/${encodeURIComponent(viewId)}/edits?pageId=${encodeURIComponent(pageId)}${variant ? `&variant=${variant}` : ""}`, {
     method: "POST", body: JSON.stringify(input),
   }),
   previewAnalysisDiagramEdit: (analysisId: string, groupId: string, viewId: string, input: {
     rootArtifactId: string; parentRevisionId?: string; expectedVersion: number; document: DiagramEditDocument;
-  }, signal?: AbortSignal, pageId = "overview") => request<DiagramEditPreview>(`/api/v1/analyses/${analysisId}/groups/${encodeURIComponent(groupId)}/views/${encodeURIComponent(viewId)}/edit-preview?pageId=${encodeURIComponent(pageId)}`, {
+  }, signal?: AbortSignal, pageId = "overview", variant?: string) => request<DiagramEditPreview>(`/api/v1/analyses/${analysisId}/groups/${encodeURIComponent(groupId)}/views/${encodeURIComponent(viewId)}/edit-preview?pageId=${encodeURIComponent(pageId)}${variant ? `&variant=${variant}` : ""}`, {
     method: "POST", body: JSON.stringify(input), signal,
   }),
 

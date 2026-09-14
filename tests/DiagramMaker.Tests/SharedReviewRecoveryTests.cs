@@ -95,7 +95,7 @@ public sealed class SharedReviewRecoveryTests
         using var handler = new Model("reject-once");
         var result = await Run(handler, count);
         Assert.Equal(count, result.Response.Items.Count);
-        Assert.Equal((count + 15) / 16 + 1, handler.Generations);
+        Assert.Equal((count + 19) / 20 + 1, handler.Generations);
         Assert.Equal(2, handler.Counts["work0"]);
         Assert.All(handler.Counts.Where(kv => kv.Key != "work0"), kv => Assert.Equal(1, kv.Value));
         Assert.Contains(result.Diagnostics, d => d.ValidationCode == "SemanticReviewRejected" &&
@@ -122,7 +122,7 @@ public sealed class SharedReviewRecoveryTests
     {
         using var small = new Model("valid");
         var result = await Run(small, 40);
-        Assert.Equal(40, result.Response.Items.Count); Assert.Equal(3, small.Generations);
+        Assert.Equal(40, result.Response.Items.Count); Assert.Equal(2, small.Generations);
         Assert.True(small.Reviews > 1);
         Assert.All(small.ReviewSizes, count => Assert.InRange(count, 1, 20));
         Assert.DoesNotContain(result.Diagnostics, d => d.ErrorCode is not null);
@@ -187,7 +187,7 @@ public sealed class SharedReviewRecoveryTests
                 progress = execution.Progress;
             }
         }
-        Assert.Equal(mode == "valid" ? 3 : 4, handler.Generations);
+        Assert.Equal(mode == "valid" ? 2 : 3, handler.Generations);
         Assert.Equal(handler.RequestKeys.Count, handler.RequestKeys.Distinct().Count());
         Assert.Equal(handler.Generations + handler.Reviews, progress!.TransportRequests);
         Assert.All(diagnostics!.Where(d => d.ErrorCode is not null), d => Assert.Equal("Recovered", d.RecoveryState));
@@ -287,7 +287,7 @@ public sealed class SharedReviewRecoveryTests
                     var label = i.GetProperty("label").GetString()!; Counts[label] = Counts.GetValueOrDefault(label) + 1;
                     return new SharedSemanticAnnotation(mode == "four-errors" && Generations == 1 && index == 0
                         ? context.GetProperty("sources").GetProperty("factId").GetString()! : i.GetProperty("id").GetString()!,
-                        mode == "bad-text-once" && label == "work0" && Counts[label] == 1 ? "값 x == y 처리" : "값을 처리합니다", "원본 근거의 조건과 결과를 보존합니다");
+                        mode == "bad-text-once" && label == "work0" && Counts[label] == 1 ? "값 <script>처리</script>" : "값을 처리합니다", "원본 근거의 조건과 결과를 보존합니다");
                 }).ToArray());
             }
             return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new

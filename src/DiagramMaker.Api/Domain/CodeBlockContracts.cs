@@ -41,7 +41,7 @@ public sealed record CodeBlockStateTransition(string Id, string SymbolId, string
     string Condition, IReadOnlyList<string> EvidenceIds);
 public sealed record CodeBlockGraph(IReadOnlyList<CodeBlockSymbol> Symbols, IReadOnlyList<CodeBlockRelation> Relations,
     IReadOnlyList<CodeBlockEvidence> Evidence, IReadOnlyList<CodeBlockStateTransition> Transitions,
-    IReadOnlyList<string> Warnings, string AnalyzerVersion);
+    IReadOnlyList<string> Warnings, string AnalyzerVersion, IReadOnlyList<string>? ApiContractBlockIds = null);
 public sealed record CodeBlockQuestionOption(string Id, string Label, string? TargetSymbolId = null);
 public sealed record CodeBlockQuestion(string Id, string Prompt, string FromBlockId, string FromSymbolId,
     string CallSiteId, IReadOnlyList<string> EvidenceIds, IReadOnlyList<CodeBlockQuestionOption> Options);
@@ -84,10 +84,10 @@ public sealed record CodeBlockRunSummary(Guid Id, Guid WorkspaceId, int InputRev
     DateTimeOffset UpdatedAt, IReadOnlyList<CodeBlockGroupSelection> Groups,
     IReadOnlyList<CodeBlockQuestion> Questions, IReadOnlyList<CodeBlockGroupSummary> Results,
     IReadOnlyList<string> Warnings, string? ErrorCode, string? ErrorMessage,
-    SemanticProgress? Execution = null, string? StopReason = null, bool CanResume = false);
+    SemanticProgress? Execution = null, string? StopReason = null, bool CanResume = false, DiagramResultCounts? ResultCounts = null);
 public sealed record CodeBlockPageSummary(string Id, string Title, Guid ArtifactId,
     string? Level = null, IReadOnlyList<string>? BlockIds = null, IReadOnlyList<string>? SymbolIds = null,
-    string? ResultKind = null);
+    string? ResultKind = null, Guid? CodeArtifactId = null, string? AiState = null);
 public sealed record CodeBlockViewSummary(string ViewId, DiagramViewSelection Selection, string State,
     IReadOnlyList<CodeBlockPageSummary> Pages, IReadOnlyList<string> Warnings, string? ErrorMessage,
     bool Reused, string LlmStatus, string? FailureStage = null);

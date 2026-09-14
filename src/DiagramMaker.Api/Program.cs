@@ -589,7 +589,7 @@ api.MapGet("/analyses/{id:guid}/groups/{groupId}/views/{viewId}/pages/{pageId}",
 {
     var job = await AuthorizedJob(id, context, store, cancellationToken);
     if (job is null) return Results.NotFound();
-    var artifact = FindAnalysisDiagramArtifact(job, groupId, viewId, pageId);
+    var artifact = FindAnalysisDiagramArtifact(job, groupId, viewId, pageId, context.Request.Query["variant"]);
     return artifact is null ? Results.NotFound() : Results.Ok(artifact);
 });
 
@@ -987,7 +987,7 @@ api.MapPost("/analyses/{id:guid}/groups/{groupId}/views/{viewId}/edit-preview", 
 {
     var job = await AuthorizedJob(id, context, store, cancellationToken);
     if (job is null) return Results.NotFound();
-    var artifact = FindAnalysisDiagramArtifact(job, groupId, viewId, context.Request.Query["pageId"].FirstOrDefault());
+    var artifact = FindAnalysisDiagramArtifact(job, groupId, viewId, context.Request.Query["pageId"].FirstOrDefault(), context.Request.Query["variant"]);
     if (artifact is null) return Results.NotFound(new { error = "The diagram view does not exist." });
     var identity = context.GetInternalIdentity();
     try
@@ -1047,7 +1047,7 @@ api.MapPost("/analyses/{id:guid}/groups/{groupId}/views/{viewId}/edits", async (
 {
     var job = await AuthorizedJob(id, context, store, cancellationToken);
     if (job is null) return Results.NotFound();
-    var artifact = FindAnalysisDiagramArtifact(job, groupId, viewId, context.Request.Query["pageId"].FirstOrDefault());
+    var artifact = FindAnalysisDiagramArtifact(job, groupId, viewId, context.Request.Query["pageId"].FirstOrDefault(), context.Request.Query["variant"]);
     if (artifact is null) return Results.NotFound(new { error = "The diagram view does not exist." });
     var identity = context.GetInternalIdentity();
     try
@@ -1081,18 +1081,20 @@ static DiagramArtifact? FindNaturalDiagramArtifact(NaturalDiagramRecord record, 
     return record.Request.EffectiveViews()[0].Id == viewId ? record.Diagram : null;
 }
 
-static DiagramArtifact? FindAnalysisDiagramArtifact(AnalysisJob job, string groupId, string viewId, string? pageId = null)
+static DiagramArtifact? FindAnalysisDiagramArtifact(AnalysisJob job, string groupId, string viewId, string? pageId = null, string? variant = null)
 {
+    DiagramArtifact? Legacy(DiagramArtifact? artifact) => artifact is null ? null :
+        DiagramVariants.Select(new DiagramPage("overview", artifact.Ir.Title, artifact), variant);
     var group = job.Result?.DiagramGroups?.FirstOrDefault(item => item.GroupId == groupId);
     if (group is null) return null;
     if (group.Views is { Count: > 0 })
     {
         var view = group.Views.FirstOrDefault(item => item.ViewId == viewId);
         if (view?.Document is { } document)
-            return document.Pages.FirstOrDefault(page => page.Id == (pageId ?? document.OverviewPageId))?.Diagram;
-        return pageId is null or "overview" ? view?.Diagram : null;
+            return document.Pages.FirstOrDefault(page => page.Id == (pageId ?? document.OverviewPageId)) is { } page ? DiagramVariants.Select(page, variant) : null;
+        return pageId is null or "overview" ? Legacy(view?.Diagram) : null;
     }
-    return $"{group.GroupId}-view" == viewId && pageId is null or "overview" ? group.Diagram : null;
+    return $"{group.GroupId}-view" == viewId && pageId is null or "overview" ? Legacy(group.Diagram) : null;
 }
 
 static AnalysisJob CompactAnalysis(AnalysisJob job)
@@ -1111,7 +1113,9 @@ static AnalysisJob CompactAnalysis(AnalysisJob job)
             {
                 Diagram = Summary(view.Diagram),
                 Document = view.Document is null ? null : view.Document with
-                { Pages = view.Document.Pages.Select(page => page with { Diagram = Summary(page.Diagram)! }).ToArray() }
+                { Pages = view.Document.Pages.Select(page => page with {
+                    ResultKind = page.ResultKind ?? (DiagramVariants.IsAi(page.Diagram) ? "semantic" : "static"),
+                    Diagram = Summary(page.Diagram)!, CodeDiagram = Summary(page.CodeDiagram) }).ToArray() }
             }).ToArray()
         }).ToArray()
     } };
@@ -1130,6 +1134,7 @@ static object ToAnalysisResponse(AnalysisJob job, bool includeGraph = true) => n
     job.Execution,
     job.StopReason,
     CanResume = CanResumeAnalysis(job),
+    ResultCounts = DiagramVariants.CountAnalysis(job.Result?.DiagramGroups ?? [], InMemoryAppStore.IsAnalysisTerminal(job.State)),
     Result = job.Result is null
         ? null
         : includeGraph

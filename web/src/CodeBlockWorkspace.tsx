@@ -5,6 +5,7 @@ import { SemanticProgressView } from "./SemanticProgressView";
 import { CodeBlockComposer } from "./CodeBlockComposer";
 import { codeInputError, defaultCodeBlockLimits, type CodeBlockLimits } from "./codeBlockLimits";
 import { CodeBlockResultTree } from "./CodeBlockResultTree";
+import { diagramName, resultCountsText } from "./diagramOrigin";
 import { initialDraft, normalizeDraft, isSemanticPage, typeLabels, type CodeBlockLocationSelection } from "./codeBlockWorkspaceState";
 import type { DiagramArtifact, DiagramEditPreview, DiagramPreset, DiagramRevisionRecord } from "./types";
 import type { CodeBlockDraft, CodeBlockEvidence, CodeBlockRun, CodeBlockWorkspaceRecord, CodeBlockWorkspaceSummary } from "./codeBlockTypes";
@@ -37,6 +38,9 @@ export function CodeBlockWorkspace() {
   const [merges, setMerges] = useState<Record<string, boolean>>({});
   const [active, setActive] = useState<CodeBlockLocationSelection | null>(null);
   const [artifact, setArtifact] = useState<DiagramArtifact | null>(null);
+  const [pairedArtifact, setPairedArtifact] = useState<DiagramArtifact | null>(null);
+  const [compare, setCompare] = useState(false);
+  const [query, setQuery] = useState("");
   const [evidence, setEvidence] = useState<CodeBlockEvidence | null>(null);
   const [screen, setScreen] = useState<"compose" | "results">("compose");
   const [showStatic, setShowStatic] = useState(false);
@@ -78,15 +82,27 @@ export function CodeBlockWorkspace() {
   useEffect(() => {
     setArtifact(null); setEvidence(null); if (!resultsVisible || !run || !active?.page) return;
     const controller = new AbortController();
-    void request<DiagramArtifact>(pagePath(run.id, active), { signal: controller.signal }).then(setArtifact)
+    void request<DiagramArtifact>(pagePath(run.id, active), { signal: controller.signal }).then(value => { if (!controller.signal.aborted) setArtifact(value); })
       .catch(e => { if (!controller.signal.aborted) setError(errorOf(e)); });
     return () => controller.abort();
-  }, [run?.id, active?.group, active?.view, active?.page, resultsVisible]);
+  }, [run?.id, active?.group, active?.view, active?.page, active?.variant, resultsVisible]);
+  useEffect(() => {
+    setPairedArtifact(null);
+    if (!compare || !resultsVisible || !run || !active?.page) return;
+    const view = run.results.find(g => g.groupId === active.group)?.views.find(v => v.viewId === active.view);
+    const page = view?.pages.find(p => p.id === active.page);
+    if (!view || !page || !isSemanticPage(view, page) || !page.codeArtifactId) return;
+    const controller = new AbortController();
+    const variant = active.variant === "code" ? "ai" : "code";
+    void request<DiagramArtifact>(pagePath(run.id, { ...active, variant }), { signal: controller.signal })
+      .then(value => { if (!controller.signal.aborted) setPairedArtifact(value); }).catch(e => { if (!controller.signal.aborted) setError(errorOf(e)); });
+    return () => controller.abort();
+  }, [compare, run?.id, active?.group, active?.view, active?.page, active?.variant, resultsVisible]);
   useEffect(() => {
     if (!ready || busy) return;
     const url = new URL(window.location.href);
     const values = { codeWorkspace: workspace?.id, codeRun: run?.id, codeScreen: screen,
-      codeGroup: active?.group, codeView: active?.view, codePage: active?.page };
+      codeGroup: active?.group, codeView: active?.view, codePage: active?.page, codeVariant: active?.variant };
     for (const [key, value] of Object.entries(values)) { if (value) url.searchParams.set(key, value); else url.searchParams.delete(key); }
     window.history.replaceState(null, "", url);
   }, [ready, busy, workspace?.id, run?.id, screen, active]);
@@ -105,9 +121,9 @@ export function CodeBlockWorkspace() {
   }, [run, dirty, workspace?.revision]);
   function change(value: CodeBlockDraft) { setDraft(value); setDirty(true); }
   function selectRun(value: CodeBlockRun | null, location: CodeBlockLocationSelection | null = null) {
-    setRun(value); setAnswers({}); setMerges({}); setActive(location); setArtifact(null); setEvidence(null); setShowStatic(false);
+    setRun(value); setAnswers({}); setMerges({}); setActive(location); setArtifact(null); setPairedArtifact(null); setEvidence(null); setShowStatic(false); setQuery("");
     if (location?.page) { const v = value?.results.find(g => g.groupId === location.group)?.views.find(v => v.viewId === location.view);
-      const p = v?.pages.find(p => p.id === location.page); if (v && p) setShowStatic(!isSemanticPage(v, p)); }
+      const p = v?.pages.find(p => p.id === location.page); if (v && p) setShowStatic(location.variant === "code" || !isSemanticPage(v, p)); }
   }
   async function action(work: () => Promise<void>) { setBusy(true); setError(""); try { await work(); } catch (e) { setError(errorOf(e)); } finally { setBusy(false); } }
   async function open(id: string, restore = false) {
@@ -128,7 +144,8 @@ export function CodeBlockWorkspace() {
       const p = v?.pages.find(p => p.id === params.get("codePage"));
       setWorkspace(record); setDraft(normalizeDraft(record.input, history.find(r => r.inputRevision === record.revision && r.groups.length > 0)));
       setDraftKey(key => key + 1); setTitleInvalid(false); mergeRun.current = null;
-      setRuns(history); selectRun(selected ?? null, restore && g && v ? { group: g.groupId, view: v.viewId, page: p?.id ?? "" } : null);
+      setRuns(history); selectRun(selected ?? null, restore && g && v ? { group: g.groupId, view: v.viewId, page: p?.id ?? "",
+        variant: params.get("codeVariant") === "code" || p && !isSemanticPage(v, p) ? "code" : "ai" } : null);
       setDirty(false); setPendingOpen(null); setScreen(restore && params.get("codeScreen") === "results" ? "results" : "compose"); setReady(true);
     });
   }
@@ -162,8 +179,8 @@ export function CodeBlockWorkspace() {
   const selectedView = selectedGroup?.views.find(v => v.viewId === active?.view);
   const selectedPage = selectedView?.pages.find(p => p.id === active?.page);
   function openStatic() {
-    setShowStatic(true); const p = selectedView?.pages.find(p => !isSemanticPage(selectedView, p));
-    if (p && active) setActive({ ...active, page: p.id });
+    setShowStatic(true); const p = selectedView?.pages.find(p => p.codeArtifactId || !isSemanticPage(selectedView, p));
+    if (p && active) setActive({ ...active, page: p.id, variant: "code" });
   }
   return <section className="code-block-workspace" data-screen={screen}>
     <section className="panel code-block-toolbar"><h2>코드 블럭 다이어그램</h2>
@@ -200,7 +217,8 @@ export function CodeBlockWorkspace() {
     {run && <section className="panel code-block-run-status" aria-label="생성 상태"><strong>{run.stageMessage}</strong>
       {!terminal(run.state) && <><progress max={100} value={run.progress} /><span> {run.progress}%</span><button disabled={busy} onClick={() => void action(async () => setRun(await request<CodeBlockRun>(`/api/v1/code-block-runs/${run.id}/cancel`, { method: "POST" })))}>생성 취소</button></>}
       {run.errorMessage && <p className="error">{run.errorMessage}</p>}
-      {run.execution && <SemanticProgressView value={run.execution} running={Boolean(running)} />}
+      {run.resultCounts && <p>{resultCountsText(run.resultCounts)}</p>}
+      {run.execution && <SemanticProgressView value={run.execution} running={Boolean(running)} diagnosticsUrl={`/api/v1/code-block-runs/${run.id}/diagnostics`} />}
       {run.canResume && <button disabled={busy || dirty || Boolean(running) || run.inputRevision !== workspace?.revision} onClick={() => void action(async () => {
         const resumed = await request<CodeBlockRun>(`/api/v1/code-block-runs/${run.id}/resume`, { method: "POST", body: json({ expectedRevision: run.revision }) });
         selectRun(resumed); await refreshRuns(resumed.workspaceId);
@@ -234,8 +252,10 @@ export function CodeBlockWorkspace() {
       <aside className="panel code-block-result-sidebar">
         <label>생성 이력<select aria-label="생성 이력" disabled={busy} value={run?.id ?? ""} onChange={e => selectRun(runs.find(r => r.id === e.target.value) ?? null)}><option value="" disabled>생성 이력 선택</option>
           {runs.map(r => <option key={r.id} value={r.id}>{new Date(r.createdAt).toLocaleString()} · 입력 {r.inputRevision} · {r.state}</option>)}</select></label>
-        <label><input type="checkbox" checked={showStatic} onChange={e => { setShowStatic(e.target.checked); if (!e.target.checked && selectedPage && selectedView && !isSemanticPage(selectedView, selectedPage) && active) setActive({ ...active, page: "" }); }} />정적 구조 보기</label>
-        {run ? <CodeBlockResultTree key={run.id} run={run} active={active} showStatic={showStatic} onSelect={setActive} /> : <p>코드를 입력하고 ‘다이어그램 생성’을 실행하세요.</p>}
+        <label><input type="checkbox" checked={showStatic} onChange={e => { setShowStatic(e.target.checked); if (!e.target.checked && active && (active.variant === "code" || selectedPage && selectedView && !isSemanticPage(selectedView, selectedPage))) setActive({ ...active, page: "" }); }} />Code 다이어그램 보기 (정적 구조)</label>
+        <label>선택 실행 내 이름 검색<input type="search" aria-label="다이어그램 이름 검색" value={query} onChange={e => setQuery(e.target.value)} /></label>
+        <label><input type="checkbox" checked={compare} onChange={e => setCompare(e.target.checked)} />AI/Code 함께 보기</label>
+        {run ? <CodeBlockResultTree key={run.id} run={run} active={active} showStatic={showStatic} query={query} onSelect={setActive} /> : <p>코드를 입력하고 ‘다이어그램 생성’을 실행하세요.</p>}
       </aside>
       <div className="code-block-result-content">
         {selectedView && <section className="panel code-block-view-status"><div className="form-row"><h3>{typeLabels.find(([t]) => t === selectedView.selection.diagramType)?.[1]} · {selectedGroup?.title}</h3>
@@ -243,17 +263,25 @@ export function CodeBlockWorkspace() {
           {selectedView.reused && <p className="help">{selectedView.state === "Completed" ? "이전 결과를 재사용했습니다." : "이전 성공 그림을 유지하고 최신 실패 사유를 표시합니다."}</p>}
           {selectedView.errorMessage && <p role="alert" className="error">{selectedView.errorMessage}</p>}
           {selectedView.failureStage && <p className="help">실패 단계: {failureLabel(selectedView.failureStage)}</p>}
-          {selectedPage && !isSemanticPage(selectedView, selectedPage) && <p className="warning">정적 구조 · 의미 검토를 완료한 다이어그램이 아닙니다.</p>}
+          {selectedPage && (active?.variant === "code" || !isSemanticPage(selectedView, selectedPage)) && <p className="warning">정적 구조 · 의미 검토를 완료한 다이어그램이 아닙니다.</p>}
           {artifact?.explanation?.coverage && <p>의미 설명 검토 {artifact.explanation.coverage.verifiedUnits} / {artifact.explanation.coverage.totalUnits}개
             {artifact.explanation.coverage.pendingUnits > 0 && " · 검토된 설명과 원본 구조를 함께 표시합니다."}</p>}
           {!active?.page && <><p>의미 다이어그램을 완성하지 못했습니다. 분석된 코드 구조를 별도로 살펴볼 수 있습니다.</p>
-            {selectedView.pages.some(p => !isSemanticPage(selectedView, p)) && <button onClick={openStatic}>정적 구조 열기</button>}</>}
+            {selectedView.pages.some(p => p.codeArtifactId || !isSemanticPage(selectedView, p)) && <button onClick={openStatic}>정적 구조 열기</button>}</>}
           <details><summary>생성 안내와 종류별 가능 여부</summary>{selectedView.warnings.map((w, i) => <p key={i}>{w}</p>)}<ul>{selectedGroup?.availability.map(a => <li key={a.type}>{typeLabels.find(([t]) => t === a.type)?.[1]}: {a.available ? "가능" : a.reason}</li>)}</ul></details>
         </section>}
-        {run && active?.page && artifact && <DiagramEditor artifact={artifact} downloadName={`code-block-${run.id}`} zoomable showExplanation collapsibleExplanation canvasToolbar reportError={reportError} onEvidence={id => void showEvidence(id)}
-          onOpenDetail={page => { if (selectedView?.pages.some(p => p.id === page)) setActive({ ...active, page }); }}
-          onPreview={(input, signal) => request<DiagramEditPreview>(pagePath(run.id, active) + "/edit-preview", { method: "POST", body: json(input), signal })}
-          onSave={input => request<DiagramRevisionRecord>(pagePath(run.id, active) + "/edits", { method: "POST", body: json(input) })} />}
+        {run && active?.page && artifact && <div className={compare ? "diagram-comparison" : ""}>
+          {[{ value: artifact, location: active }, ...(pairedArtifact ? [{ value: pairedArtifact,
+            location: { ...active, variant: active.variant === "code" ? "ai" as const : "code" as const } }] : [])].map(({ value, location }) =>
+            <section key={value.id} className="diagram-variant-pane">
+              <DiagramEditor artifact={value} downloadName={diagramName(selectedPage?.title ?? value.ir.title, location.variant ?? (selectedView && selectedPage && isSemanticPage(selectedView, selectedPage) ? "ai" : "code"))}
+                variant={location.variant} zoomable showExplanation collapsibleExplanation canvasToolbar reportError={reportError} onEvidence={id => void showEvidence(id)}
+                onOpenDetail={page => { if (selectedView?.pages.some(p => p.id === page)) setActive({ ...location, page }); }}
+                onPreview={(input, signal) => request<DiagramEditPreview>(pagePath(run.id, location, "/edit-preview"), { method: "POST", body: json(input), signal })}
+                onSave={input => request<DiagramRevisionRecord>(pagePath(run.id, location, "/edits"), { method: "POST", body: json(input) })} />
+            </section>)}
+          {compare && !pairedArtifact && <p className="help">대응하는 AI/Code 그림이 모두 완료되면 함께 표시됩니다.</p>}
+        </div>}
         {!selectedView && <div className="panel empty-state">왼쪽 트리에서 결과를 선택하세요.</div>}
       </div>
       </>}
@@ -262,5 +290,5 @@ export function CodeBlockWorkspace() {
       <button onClick={() => setEvidence(null)}>근거 닫기</button><pre>{evidence.content}</pre><small>코드 해시 {evidence.contentHash}</small></section>}
   </section>;
 }
-function pagePath(runId: string, active: CodeBlockLocationSelection) { return `/api/v1/code-block-runs/${runId}/groups/${encodeURIComponent(active.group)}/views/${encodeURIComponent(active.view)}/pages/${encodeURIComponent(active.page)}`; }
+function pagePath(runId: string, active: CodeBlockLocationSelection, action = "") { return `/api/v1/code-block-runs/${runId}/groups/${encodeURIComponent(active.group)}/views/${encodeURIComponent(active.view)}/pages/${encodeURIComponent(active.page)}${action}${active.variant ? `?variant=${active.variant}` : ""}`; }
 function failureLabel(stage: string) { return ({ "llm-configuration": "LLM 미설정", "llm-request": "LLM 요청", understanding: "코드 의미 이해", "plan-validation": "구조와 근거 검증", "semantic-review": "원본 의미 검토", "input-limit": "입력 한도", availability: "종류별 생성 가능 여부", projection: "그림 생성" } as Record<string, string>)[stage] ?? "생성 검증"; }

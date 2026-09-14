@@ -53,7 +53,7 @@ public sealed class CodeBlockPipelineTests
         Assert.True(projection.Availability(graph, merged.Groups[0]).Single(a => a.Type == "sequence").Available);
         var sequence = projection.Build(graph, merged.Relations, merged.Groups[0], new("sequence", "sequence", "balanced"))[0].Diagram;
         Assert.DoesNotContain(sequence.Edges, edge => edge.RelationOrigin == "user");
-        Assert.Contains(sequence.Nodes, node => node.Label.Contains("구현 미확인"));
+        Assert.Contains(sequence.Nodes, node => node.Label == "Save" && node.Details!.Contains("호출 대상 · 구현 미확인"));
         var map = projection.Build(graph, merged.Relations, merged.Groups[0], new("v", "code-relation", "balanced"));
         Assert.StartsWith("사용자 제공:", Assert.Single(map[0].Diagram.Edges).Label);
     }
@@ -151,6 +151,10 @@ public sealed class CodeBlockPipelineTests
         Assert.All(updated.Results![0].Views, v => Assert.Equal(original.Results![0].Views.Single(o => o.ViewId == v.ViewId).Pages[0].Diagram.Id, v.Pages[0].Diagram.Id));
         Assert.Equal("Completed", updated.Results[0].Views.Single(v => v.ViewId == "map").State);
         Assert.Contains("이전 성공", updated.Results[0].Views.Single(v => v.ViewId == "flow").ErrorMessage!);
+        var failedPages = updated.Results[0].Views.Single(v => v.ViewId == "flow").Pages;
+        Assert.All(failedPages, p => Assert.Equal("Failed", p.AiState));
+        Assert.All(updated.Results[0].Views.Single(v => v.ViewId == "map").Pages, p => Assert.Equal("Completed", p.AiState));
+        Assert.Equal(failedPages.Count, CodeBlockWorkspaceService.Summary(updated).ResultCounts!.AiFailed);
     }
     [Fact]
     public void DefaultGroupDoesNotSplitUnrelatedBlocksAndManualRelationsFollowGroupOptions()

@@ -11,7 +11,7 @@ public sealed class CodeBlockAnalyzer(SourceGraphAnalyzer csharp, IOptions<GitWo
     IOptions<CodeBlockOptions> options, IWebHostEnvironment environment,
     DiagramMaker.Security.ApprovedNetworkPolicy? networkPolicy = null)
 {
-    public const string AnalyzerVersion = "code-block-v5";
+    public const string AnalyzerVersion = "code-block-v6";
     public async Task<CodeBlockGraph> AnalyzeAsync(Guid workspaceId, IReadOnlyList<CodeBlockInput> blocks, CancellationToken cancellationToken)
     {
         var graphs = new List<CodeBlockGraph>();
@@ -65,6 +65,7 @@ public sealed class CodeBlockAnalyzer(SourceGraphAnalyzer csharp, IOptions<GitWo
             }
         }
         return new CodeBlockGraph(symbols, relations, evidence, graphs.SelectMany(g => g.Transitions).ToArray(),
-            graphs.SelectMany(g => g.Warnings).ToArray(), AnalyzerVersion);
+            graphs.SelectMany(g => g.Warnings).ToArray(), AnalyzerVersion,
+            cpp.Where(b => CallPresentationBuilder.HasWindowsContract(b.Code)).Select(b => b.Id).ToArray());
     }
 }

@@ -19,8 +19,8 @@ test("zoom keeps the same diagram point under the cursor after centering/layout 
   assert.deepEqual(delta, { x: 150, y: 200 });
   assert.equal(50 - delta.x + 200 * 2, 300);
   assert.equal(60 - delta.y + 200 * 2, 260);
-  assert.equal(clampZoom(3.5), 3);
-  assert.equal(clampZoom(0.1), 0.5);
+  assert.equal(clampZoom(20), 16);
+  assert.equal(clampZoom(0), 0.01);
 });
 
 test("render map uses block emission order for repeated equal-label calls", () => {

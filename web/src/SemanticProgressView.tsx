@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
-type FailureDiagnostic = {
+export type FailureDiagnostic = {
+  startedAt?: string; elapsedMilliseconds?: number;
   id: string; stage: string; errorCode?: string; validationCode?: string; purpose?: string; sent: boolean;
   inputCharacters?: number; inputCharacterLimit?: number; inputTokens?: number; inputTokenLimit?: number;
   outputLimit?: number; completionTokens?: number; finishReason?: string; outputMode?: string;
@@ -24,55 +25,84 @@ export type SemanticProgress = {
   lastProgressAt?: string; coverage?: { totalUnits: number; verifiedUnits: number; pendingUnits: number; failedUnits: number };
 };
 
-export function SemanticProgressView({ value, running }: { value: SemanticProgress; running: boolean }) {
+export function SemanticProgressView({ value, running, diagnosticsUrl }: { value: SemanticProgress; running: boolean; diagnosticsUrl?: string }) {
   const [now, setNow] = useState(Date.now);
+  const [records, setRecords] = useState<FailureDiagnostic[]>([]);
+  const [loadError, setLoadError] = useState(false);
   useEffect(() => {
     if (!running) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [running]);
-  const elapsed = running && value.startedAt
-    ? Math.max(value.elapsedSeconds, Math.floor((now - Date.parse(value.startedAt)) / 1000)) : value.elapsedSeconds;
-  const total = (value.totalElapsedSeconds ?? value.elapsedSeconds) + elapsed - value.elapsedSeconds;
-  const waiting = running && value.waitingSince ? Math.max(0, now - Date.parse(value.waitingSince)) : 0;
-  const failures = value.recentFailures ?? [];
-  const renderFailures = (records: FailureDiagnostic[]) => records.map(failure => <div key={failure.id}>
-    <p>{failures[0]?.id === failure.id ? "최초 기록" : "후속 기록"} · {purpose(failure)} · {failure.sent ? "전송 후" : "전송 전"}: {failureDescription(failure.validationCode, failure.errorCode)}</p>
-    <p style={{ overflowWrap: "anywhere" }}>{failure.errorCode}{failure.validationCode && ` / ${failure.validationCode}`}</p>
-    {failure.recoveryGroupId && <p style={{ overflowWrap: "anywhere" }}>묶음 {failure.recoveryGroupId}{failure.parentGroupId && ` · 상위 ${failure.parentGroupId}`} · 시도 {failure.attempt ?? 1}
-      {failure.recoveryState === "Retrying" ? (running ? " · 복구 중" : " · 복구 대기") : failure.recoveryState === "Exhausted" ? " · 복구 한도 소진" : failure.recoveryState === "RequiresAction" ? " · 서버·설정 확인 필요" : failure.recoveryState === "Recovered" ? " · 복구 완료" : " · 상태 미확인"}</p>}
-    <OutputDiagnostic value={failure} />
-    {failure.inputCharacters != null && <p>요청 문자 수 {failure.inputCharacters.toLocaleString()}{failure.inputCharacterLimit != null && ` / 허용 ${failure.inputCharacterLimit.toLocaleString()}자`}</p>}
-    {failure.inputTokens != null && <p>입력 토큰 {failure.inputTokens.toLocaleString()}{failure.estimatedInputTokens ? " (추정·예약 포함)" : ""}{failure.inputTokenLimit != null && ` / 허용 ${failure.inputTokenLimit.toLocaleString()}`}</p>}
-    {failure.httpStatus != null && <p>서버 응답 HTTP {failure.httpStatus} · {serverFailure(failure.serverErrorCategory)}</p>}
-    {failure.validationDetails && <>
-      <p>항목: 필요 {failure.validationDetails.expectedItems}개 · 응답 {failure.validationDetails.receivedItems}개 · 누락 {failure.validationDetails.missingItems}개 · 중복 {failure.validationDetails.duplicateItems}개 · 알 수 없는 ID {failure.validationDetails.unknownItems}개</p>
-      {failure.validationDetails.nonTargetItems != null && <p>다른 근거의 ID {failure.validationDetails.nonTargetItems}개 · 알 수 없는 별칭 {failure.validationDetails.unknownAliases ?? 0}개</p>}
-      {failure.validationDetails.field && <p>검사 필드: {failure.validationDetails.field}{failure.validationDetails.itemIndex != null && ` · 항목 ${failure.validationDetails.itemIndex + 1}`}
-        {failure.validationDetails.actualLength != null && ` · 길이 ${failure.validationDetails.actualLength} / ${failure.validationDetails.allowedLength}자`}</p>}
-      {!!failure.validationDetails.issueCodes?.length && <p>검토 사유: {failure.validationDetails.issueCodes.map(issueDescription).join(", ")}</p>}
-    </>}
-  </div>);
+  useEffect(() => {
+    setRecords([]); setLoadError(false);
+    if (!diagnosticsUrl) return;
+    const controller = new AbortController(); let pending = false;
+    async function load() {
+      if (pending) return; pending = true;
+      try {
+        const response = await fetch(diagnosticsUrl!, { signal: controller.signal });
+        if (!response.ok) throw new Error("diagnostics");
+        const report = await response.json() as { diagnostics: FailureDiagnostic[] };
+        if (!controller.signal.aborted) { setRecords(report.diagnostics.filter(d => d.errorCode)); setLoadError(false); }
+      } catch { if (!controller.signal.aborted) setLoadError(true); }
+      finally { pending = false; }
+    }
+    void load(); const timer = running ? window.setInterval(() => void load(), 2000) : undefined;
+    return () => { controller.abort(); if (timer) window.clearInterval(timer); };
+  }, [diagnosticsUrl, running]);
+  const elapsed = running && value.startedAt ? Math.max(value.elapsedSeconds, Math.floor((now - Date.parse(value.startedAt)) / 1000)) : value.elapsedSeconds;
+  const failures = diagnosticsUrl ? records : value.recentFailures ?? [];
   return <div className="help semantic-progress" aria-label="전체 및 이번 실행 진척">
     <div className="semantic-progress-current"><p role="status">{running ? "생성 중" : "실행 종료"} · {value.lastRequest ? purpose(value.lastRequest) : "코드 구조 준비"}
-      {value.coverage && ` · 의미 설명 검토 ${value.coverage.verifiedUnits} / ${value.coverage.totalUnits}개`}</p>
+      {value.coverage && " · 의미 설명 검토 " + value.coverage.verifiedUnits + " / " + value.coverage.totalUnits + "개"}</p>
       <p>경과 {Math.floor(elapsed / 60)}분 {elapsed % 60}초</p></div>
-    {value.lastProgressAt && <p>최근 진행 <time dateTime={value.lastProgressAt}>{new Date(value.lastProgressAt).toLocaleTimeString()}</time>
-      {value.coverage && ` · 남은 설명 ${value.coverage.pendingUnits}개 · 미완료 ${value.coverage.failedUnits}개`}</p>}
-    <p>전체: 완료 {value.completedUnits}단위 · 요청 {value.requests}회 · 실제 전송 {value.transportRequests ?? value.requests}회 · 누적 {total}초</p>
-    <p>이번 실행 {value.attemptNumber ?? 1}: 새 완료 {value.attemptCompletedUnits ?? value.completedUnits}단위 · 재사용 {value.reusedUnits}단위 · 요청 {value.attemptRequests ?? value.requests}회 · 실제 전송 {value.attemptTransportRequests ?? value.requests}회 · {elapsed} / {value.budgetSeconds}초</p>
-    <p>LLM 대기: 전체 {Math.floor(((value.waitMilliseconds ?? 0) + waiting) / 1000)}초 · 이번 실행 {Math.floor(((value.attemptWaitMilliseconds ?? 0) + waiting) / 1000)}초
-      {(value.failedUnits ?? 0) > 0 && ` · 실패 ${value.failedUnits}단위`}</p>
+    {value.coverage && <p>검토 통과 {value.coverage.verifiedUnits}개 · 대기 {Math.max(0, value.coverage.totalUnits - value.coverage.verifiedUnits - value.coverage.failedUnits)}개 · 실패 {value.coverage.failedUnits}개</p>}
+    <p>LLM 실제 전송 {value.transportRequests ?? value.requests}회 · 이번 실행 {value.attemptTransportRequests ?? value.attemptRequests ?? value.requests}회</p>
+    {value.lastProgressAt && <p>최근 진행 <time dateTime={value.lastProgressAt}>{new Date(value.lastProgressAt).toLocaleTimeString()}</time></p>}
     {running && elapsed >= 300 && <p>5분이 지났습니다. 완료된 작업을 저장하면서 실행 한도까지 계속 생성합니다.</p>}
-    {value.protocolUpgraded && <p>생성·검토 정책이 갱신되어 이전 실행의 일부 요청을 다시 수행합니다. 저장된 결과와 근거는 유지됩니다.</p>}
-    {value.lastRequest && <div aria-label="최근 요청 출력 설정"><p>최근 요청 · {purpose(value.lastRequest)}</p><OutputDiagnostic value={value.lastRequest} /></div>}
-    {!!failures.length && <details open aria-label="요청 오류 진단"><summary>요청 오류 진단 · 최초 및 최근 기록</summary>
-      {!!failures.some(f => f.recoveryState && f.recoveryState !== "Recovered") && <div aria-label="미해결 기록"><p>미해결 기록</p>{renderFailures(failures.filter(f => f.recoveryState && f.recoveryState !== "Recovered"))}</div>}
-      {!!failures.some(f => f.recoveryState === "Recovered") && <details aria-label="복구 완료 기록"><summary>복구 완료 기록</summary>{renderFailures(failures.filter(f => f.recoveryState === "Recovered"))}</details>}
-      {!!failures.some(f => !f.recoveryState) && <div aria-label="과거 기록"><p>과거 기록 · 복구 상태 미확인</p>{renderFailures(failures.filter(f => !f.recoveryState))}</div>}
-      <p>서로 다른 묶음의 기록이 포함될 수 있습니다. 표시된 기록은 일부이며, 최종 성공 여부는 작업 상태에서 확인하세요.</p>
-    </details>}
+    {value.protocolUpgraded && <p>생성 정책이 갱신되어 필요한 요청을 다시 수행합니다. 이전 결과는 이력에 보존됩니다.</p>}
+    <details><summary>실행 기술 정보</summary>
+      <p>전체 내부 처리 완료 {value.completedUnits}단위 · 이번 실행 새 완료 {value.attemptCompletedUnits ?? value.completedUnits}단위 · 재사용 {value.reusedUnits}단위</p>
+      <p>내부 처리 단위는 다이어그램 수나 요청 제한이 아닙니다. 실행 한도 {value.budgetSeconds}초 · 누적 {value.totalElapsedSeconds ?? elapsed}초</p>
+      {value.lastRequest && <OutputDiagnostic value={value.lastRequest} />}
+    </details>
+    {loadError && <p>전체 오류 기록을 불러오지 못했습니다. 진단 다운로드로 확인할 수 있습니다.</p>}
+    {!!failures.length && <DiagnosticGrid records={failures} running={running} />}
   </div>;
+}
+
+function recoveryLabel(failure: FailureDiagnostic, running: boolean) {
+  return ({ Recovered: "복구 완료", PartiallyRecovered: "일부 복구", Exhausted: "복구 실패 · Code 확인",
+    RequiresAction: "설정 확인 필요", Retrying: running ? "복구 중" : "재개 대기", Interrupted: "재개 대기" } as Record<string, string>)[failure.recoveryState ?? ""] ?? "복구 상태 미확인";
+}
+
+function DiagnosticGrid({ records, running }: { records: FailureDiagnostic[]; running: boolean }) {
+  const [selectedId, setSelectedId] = useState("");
+  const selected = records.find(d => d.id === selectedId) ?? records[0];
+  return <section aria-label="요청 오류 진단" className="diagnostic-panel">
+    <strong>요청 오류 진단 · {records.length}건</strong>
+    <div className="diagnostic-layout"><div className="diagnostic-table-scroll" tabIndex={0} aria-label="오류 목록 스크롤">
+      <table className="diagnostic-table"><thead><tr><th>시각</th><th>단계</th><th>오류 요약</th><th>복구 상태</th></tr></thead>
+        <tbody>{records.map(record => <tr key={record.id} className={selected.id === record.id ? "selected" : ""} aria-selected={selected.id === record.id}>
+          <td>{record.startedAt ? new Date(record.startedAt).toLocaleTimeString() : "—"}</td><td>{purpose(record)}</td>
+          <td><button type="button" onClick={() => setSelectedId(record.id)}>{failureDescription(record.validationCode, record.errorCode)}</button></td>
+          <td><span className={record.recoveryState === "Recovered" ? "recovery-ok" : ""}>{recoveryLabel(record, running)}</span></td>
+        </tr>)}</tbody></table></div>
+      <div className="diagnostic-detail" aria-label="선택 오류 상세">
+        <strong>{failureDescription(selected.validationCode, selected.errorCode)}</strong>
+        <p>{purpose(selected)} · {selected.sent ? "응답 수신·검증 단계" : "전송 전 검사"}</p>
+        <p>복구 결과: {recoveryLabel(selected, running)} · 시도 {selected.attempt ?? 1}</p>
+        {!!selected.validationDetails?.issueCodes?.length && <p>{selected.validationDetails.issueCodes.map(issueDescription).join(" · ")}</p>}
+        {selected.recoveryState === "Recovered" ? <p>후속 보정이 완료되었습니다. 최초 오류 기록은 보존됩니다.</p> : selected.recoveryState === "RequiresAction" ? <p>{serverFailure(selected.serverErrorCategory)}</p> : <p>완료된 AI/Code 다이어그램은 계속 확인할 수 있습니다. 재개 대기는 이어서 생성으로, 복구 실패는 해당 결과 재생성으로 다시 시도합니다.</p>}
+        <details><summary>기술 상세</summary><p>{selected.errorCode} / {selected.validationCode}</p><OutputDiagnostic value={selected} />
+          {selected.httpStatus && <p>HTTP {selected.httpStatus}</p>}
+          <p>내부 묶음 {selected.recoveryGroupId ?? "미기록"} · 요청 {selected.id}</p>
+          {selected.inputCharacters != null && <p>입력 {selected.inputCharacters.toLocaleString()}자 / {selected.inputCharacterLimit?.toLocaleString() ?? "미기록"}</p>}
+          {selected.validationDetails && <p>필요 {selected.validationDetails.expectedItems} · 응답 {selected.validationDetails.receivedItems} · 누락 {selected.validationDetails.missingItems} · 중복 {selected.validationDetails.duplicateItems}{selected.validationDetails.field && " · 필드 " + selected.validationDetails.field}</p>}
+        </details>
+      </div></div>
+  </section>;
 }
 
 function purpose(value: FailureDiagnostic) { return value.purpose === "execution-plan" ? "함수 실행 의미 계획" :
@@ -106,7 +136,7 @@ function failureDescription(validation?: string, error?: string) {
     SharedDuplicateIds: "같은 ID가 응답에 반복됐습니다.", SharedMissingIds: "요청한 항목 일부가 응답에서 빠졌습니다.",
     SharedItemCountMismatch: "요청과 응답의 항목 수가 다릅니다.", SharedTextEmpty: "요약 또는 설명이 비어 있습니다.",
     SharedTextTooLong: "요약 또는 설명이 길이 제한을 넘었습니다.", SharedTextNotKorean: "요약 또는 설명에 한국어가 없습니다.",
-    SharedTextCodeSyntax: "요약 또는 설명에 코드 연산자나 마크업이 포함됐습니다.", SharedSemanticCoverage: "이전 버전의 응답 항목·표현 검증에 실패했습니다.",
+    SharedTextCodeSyntax: "설명에 허용되지 않는 마크업이 포함됐습니다.", SharedSemanticCoverage: "이전 버전의 응답 항목·표현 검증에 실패했습니다.",
     LLM_INPUT_CHARACTERS: "요청의 문자 수 제한을 넘었습니다.", LLM_INPUT_LIMIT: "입력 토큰 또는 전체 문맥 한도를 넘었습니다.",
     LLM_CONTEXT_LIMIT: "서버에서 전체 문맥 한도를 초과했다고 응답했습니다.", LLM_RESPONSE_TRUNCATED: "출력 토큰 한도에서 응답이 잘렸습니다.",
     LLM_OUTPUT_BUDGET: "한 항목의 검토에도 출력 예산이 부족합니다. 검토 출력 설정을 확인하세요.",

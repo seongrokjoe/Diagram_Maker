@@ -41,7 +41,8 @@ internal static class SharedSemanticValidation
             if (string.IsNullOrWhiteSpace(text)) return new("SharedTextEmpty", metadata);
             if (text.Length > maximum) return new("SharedTextTooLong", metadata);
             if (!Regex.IsMatch(text, "[가-힣]")) return new("SharedTextNotKorean", metadata);
-            if (Regex.IsMatch(text, @"[<>`;{}]|&&|\|\||==|!=")) return new("SharedTextCodeSyntax", metadata);
+            if (Regex.IsMatch(text, @"```|<\s*/?\s*[a-zA-Z][^>]*>|%%\{|\b(?:javascript|data)\s*:", RegexOptions.IgnoreCase))
+                return new("SharedTextCodeSyntax", metadata);
             return null;
         }
     }
@@ -66,7 +67,7 @@ internal static class SharedSemanticValidation
         "SharedSummaryInvalid" => "Return a nonempty summary of at most 500 characters.",
         "SharedRecommendedTypeInvalid" => "Copy one exact value from available into recommendedType.",
         "SharedTextEmpty" or "SharedTextTooLong" or "SharedTextNotKorean" or "SharedTextCodeSyntax" =>
-            "Rewrite the indicated field as nonempty concise Korean prose: summary at most 80 characters, description at most 500. Express predicates in words; keep code operators and markup in source evidence only.",
+            "Rewrite the indicated field as nonempty concise Korean prose: summary at most 80 characters, description at most 500. Identifiers and predicates are plain text; never include markup or code fences.",
         _ => "Return exactly one item for every supplied items.id. Copy those IDs exactly, with no missing, invented or repeated ID. Keep id, summary and description on each item."
     };
 }

@@ -77,7 +77,7 @@ public sealed class StructuredLlmCompletion(ILlmCompletionTransport client)
             if (firstAttempt.Value is DiagramMaker.Domain.DiagramPlanReview { Accepted: false }) await RecordValidationAsync("SemanticReviewRejected");
             if (firstAttempt.Value is SharedSemanticReview review && review.Items.Any(i => i.Issues.Count > 0))
                 await RecordValidationAsync("SemanticReviewRejected", new(review.Items.Count, review.Items.Count,
-                    IssueCodes: review.Items.SelectMany(i => i.Issues).Distinct().Order().ToArray()));
+                    IssueCodes: review.Items.SelectMany(i => i.Issues).Select(SharedReviewValidation.Expand).Distinct().Order().ToArray()));
             return new StructuredCompletionResult<T>(firstAttempt.Value, first, RepairUsed: false);
         }
         await RecordValidationAsync(firstAttempt.FailureKind, firstAttempt.ValidationDetails);

@@ -525,3 +525,34 @@ body:has(main > div:not([hidden]) > .code-block-workspace, main > .llm-test-layo
 .execution-evidence .node-evidence-row { align-items: flex-start; flex-direction: column; }
 .execution-evidence .node-evidence-row > strong { max-width: 100%; overflow-wrap: anywhere; }
 .execution-evidence .evidence-browser { flex-basis: auto; width: 100%; min-width: 0; }
+/* AI and source diagrams share controls while keeping independent revisions. */
+.diagram-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.diagram-heading h3 { margin: 0; overflow-wrap: anywhere; }
+.diagram-origin-badge { flex: 0 0 40px; color: #536579; }
+.diagram-origin-badge.ai { color: #5b42a7; }
+.diagram-origin-badge.code { color: #256369; }
+.code-block-result-tree [role="treeitem"] { display: flex; align-items: center; gap: 6px; }
+.code-block-result-tree .tree-marker { flex: 0 0 12px; }
+.code-block-result-tree .tree-label { min-width: 0; flex: 1; }
+.diagram-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.diagram-comparison .diagram-actions { flex-wrap: wrap; }
+.diagram-comparison .diagram-actions > * { flex-shrink: 0; white-space: nowrap; }
+.diagram-variant-pane { min-width: 0; }
+.structure-editor-section { margin: 12px 0; }
+.structure-editor-section > summary { cursor: pointer; padding: 10px 0; font-weight: 600; }
+.structure-editor-section .edit-row { grid-template-columns: minmax(120px, 1fr) auto auto auto; }
+.structure-editor-section .edge-edit-row { grid-template-columns: minmax(100px, 1fr) auto minmax(100px, 1fr) minmax(120px, 1fr) auto auto auto; }
+.diagnostic-layout { display: grid; grid-template-columns: minmax(0, 3fr) minmax(240px, 2fr); gap: 16px; margin-top: 10px; }
+.diagnostic-table-scroll { overflow: auto; max-height: 410px; border: 1px solid #cbd5e1; border-radius: 8px; }
+.diagnostic-table { width: 100%; min-width: 640px; border-collapse: collapse; font-size: 13px; }
+.diagnostic-table th { position: sticky; top: 0; background: #edf2f7; text-align: left; }
+.diagnostic-table th, .diagnostic-table td { padding: 9px; border-bottom: 1px solid #d8e0eb; }
+.diagnostic-table th, .diagnostic-table td:first-child, .diagnostic-table td:nth-child(2), .diagnostic-table td:last-child { white-space: nowrap; }
+.diagnostic-table tr.selected { background: #eaf0ff; }
+.diagnostic-table button { text-align: left; white-space: normal; }
+.diagnostic-detail { border: 1px solid #cbd5e1; border-radius: 8px; padding: 14px; overflow-wrap: anywhere; }
+.recovery-ok { color: #216337; }
+@media (max-width: 1000px) {
+  .diagram-comparison, .diagnostic-layout { grid-template-columns: minmax(0, 1fr); }
+  .structure-editor-section .edge-edit-row { display: flex; flex-wrap: wrap; }
+}

@@ -1,9 +1,10 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import type { DiagramArtifact } from "./types";
 import { clampZoom, renderAlias as alias, renderElementMap, zoomScrollDelta } from "./diagramInteraction";
-import { mermaidSafetyError } from "./mermaidSafety";
+import { maximumMermaidCharacters, mermaidSafetyError } from "./mermaidSafety";
 import { prepareMermaidDisplay } from "./mermaidDisplay";
 import { sanitizeSvg } from "./svgSafety";
+import { fitZoom } from "./diagramViewSettings";
 
 export type DiagramSelection = { kind: "node" | "edge"; id: string };
 export type DiagramInlineEdit = DiagramSelection & { value: string };
@@ -27,7 +28,7 @@ function loadMermaid(): Promise<MermaidApi> {
     script.onload = () => {
       const mermaid = (window as Window & { mermaid?: MermaidApi }).mermaid;
       if (!mermaid) { reject(new Error("Mermaid runtime did not initialize.")); return; }
-      mermaid.initialize({ startOnLoad: false, securityLevel: "strict", htmlLabels: false, maxEdges: 500, maxTextSize: 50_000, theme: "base", themeVariables: { primaryColor: "#e7f0ff", primaryTextColor: "#10213a", primaryBorderColor: "#4b72a9", lineColor: "#52709a", fontFamily: "Arial, sans-serif" } });
+      mermaid.initialize({ startOnLoad: false, securityLevel: "strict", htmlLabels: false, maxEdges: 500, maxTextSize: maximumMermaidCharacters, theme: "base", themeVariables: { primaryColor: "#e7f0ff", primaryTextColor: "#10213a", primaryBorderColor: "#4b72a9", lineColor: "#52709a", fontFamily: '"Pretendard Variable", "Malgun Gothic", sans-serif' } });
       resolve(mermaid);
     };
     script.onerror = () => reject(new Error("Mermaid runtime could not be loaded."));
@@ -39,6 +40,7 @@ function loadMermaid(): Promise<MermaidApi> {
 function renderMermaid(mermaid: MermaidApi, id: string, source: string): Promise<{ svg: string }> {
   const run = renderQueue.then(async () => {
     try {
+      await document.fonts.ready;
       const parsed = await mermaid.parse(source, { suppressErrors: true });
       if (parsed === false) throw new Error("Invalid Mermaid syntax.");
       return await mermaid.render(id, source);
@@ -74,7 +76,7 @@ type MermaidPreviewProps = {
 
 export function MermaidPreview({ source, artifact, downloadName = "diagram", editable = false, compact = false,
   zoomable = false, interactive = false, selected = emptySelections, inlineEdit, onSelect, onEditRequest, onInlineEditChange,
-  onInlineEditCommit, onInlineEditCancel, onInteractionReady, onSaveRevision, toolbarContent, fitLabel = "100%로 초기화" }: MermaidPreviewProps) {
+  onInlineEditCommit, onInlineEditCancel, onInteractionReady, onSaveRevision, toolbarContent, fitLabel = "맞춤 보기" }: MermaidPreviewProps) {
   const id = useId().replace(/[^A-Za-z0-9_-]/g, character => `_${character.codePointAt(0)!.toString(16)}_`);
   const canvasRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState(source);
@@ -83,6 +85,7 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
   const [rendering, setRendering] = useState(true);
   const [saving, setSaving] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [fitting, setFitting] = useState(true);
   const [baseSize, setBaseSize] = useState({ width: 800, height: 500 });
   const [editAnchor, setEditAnchor] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const interactionReady = useRef(onInteractionReady);
@@ -96,7 +99,7 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
     canvas.addEventListener("wheel", handle, { passive: false });
     return () => canvas.removeEventListener("wheel", handle);
   }, [zoom, zoomable, compact, svg]);
-  useEffect(() => { setZoom(1); setEditAnchor(null); }, [artifact?.id]);
+  useEffect(() => { setZoom(1); setFitting(true); setEditAnchor(null); }, [artifact?.id]);
   useEffect(() => {
     canvasRef.current?.querySelectorAll("[data-ir-id]").forEach(element => {
       element.classList.toggle("ir-selected", selected.some(item => item.id === element.getAttribute("data-ir-id") && item.kind === element.getAttribute("data-ir-kind")));
@@ -105,10 +108,16 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !svg) return;
-    const observer = new ResizeObserver(() => setBaseSize(fittedSvgSize(svg, canvas, compact)));
+    const resize = () => {
+      const size = fittedSvgSize(svg, canvas, compact);
+      setBaseSize(size);
+      if (!compact && fitting) setZoom(fitZoom(size.width, size.height, canvas.clientWidth - 40, Math.max(320, window.innerHeight - 300)));
+    };
+    resize();
+    const observer = new ResizeObserver(resize);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [svg, compact]);
+  }, [svg, compact, fitting]);
 
   useEffect(() => {
     let active = true;
@@ -178,16 +187,16 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
     event.preventDefault();
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const next = clampZoom(zoom + (event.deltaY < 0 ? 0.1 : -0.1));
-    if (next === zoom) return;
+    const next = clampZoom(Math.max(1, zoom + (event.deltaY < 0 ? 0.1 : -0.1)));
+    if (next === zoom && !fitting) return;
     zoomAt(next, event.clientX, event.clientY);
   }
 
   function zoomFromCenter(delta: number) {
     if (!canvasRef.current) return;
     const canvas = canvasRef.current;
-    const next = clampZoom(zoom + delta);
-    if (next === zoom) return;
+    const next = clampZoom(Math.max(1, zoom + delta));
+    if (next === zoom && !fitting) return;
     const bounds = canvas.getBoundingClientRect();
     zoomAt(next, bounds.left + canvas.clientWidth / 2, bounds.top + canvas.clientHeight / 2);
   }
@@ -197,6 +206,7 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
     const layer = canvas?.querySelector(".diagram-transform-layer");
     if (!canvas || !layer) return;
     const before = layer.getBoundingClientRect();
+    setFitting(false);
     setZoom(next);
     window.requestAnimationFrame(() => {
       const after = layer.getBoundingClientRect();
@@ -221,7 +231,11 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
   return <>
     {!compact && <div className="diagram-actions">
       {toolbarContent}
-      {zoomable && <><button type="button" className="secondary zoom-button" disabled={zoom <= 0.5} onClick={() => zoomFromCenter(-0.1)} aria-label="축소">−</button><span className="zoom-status">{Math.round(zoom * 100)}%</span><button type="button" className="secondary zoom-button" disabled={zoom >= 3} onClick={() => zoomFromCenter(0.1)} aria-label="확대">＋</button><button type="button" className="secondary" onClick={() => { setZoom(1); canvasRef.current?.scrollTo(0, 0); }}>{fitLabel}</button></>}
+      {zoomable && <><button type="button" className="secondary zoom-button" disabled={zoom <= 1} onClick={() => zoomFromCenter(-0.1)} aria-label="축소">−</button><span className="zoom-status">{fitting ? "맞춤 · " : ""}{Math.round(zoom * 100)}%</span><button type="button" className="secondary zoom-button" disabled={zoom >= 16} onClick={() => zoomFromCenter(0.1)} aria-label="확대">＋</button>
+        <label className="inline-select">원본 기준 확대<select aria-label="원본 기준 확대" value={fitting ? "fit" : String(zoom)} onChange={e => zoomFromCenter(Number(e.target.value) - zoom)}>
+          {fitting && <option value="fit">맞춤</option>}{![1, 2, 4, 8, 16].includes(zoom) && !fitting && <option value={zoom}>{Math.round(zoom * 100)}%</option>}
+          {[1, 2, 4, 8, 16].map(value => <option key={value} value={value}>{value * 100}%</option>)}</select></label>
+        <button type="button" className="secondary" onClick={() => { setFitting(true); setZoom(fitZoom(baseSize.width, baseSize.height, (canvasRef.current?.clientWidth ?? baseSize.width) - 40, Math.max(320, window.innerHeight - 300))); canvasRef.current?.scrollTo(0, 0); }}>{fitLabel}</button></>}
       <button type="button" className="secondary" disabled={!svg} onClick={() => downloadSvg(svg, `${downloadName}.svg`)}>SVG 다운로드</button>
       <button type="button" className="secondary" disabled={!svg} onClick={() => void downloadPng(svg, `${downloadName}.png`)}>PNG 다운로드</button>
       {editable && <button type="button" className="secondary" disabled={draft === source || saving} onClick={() => setDraft(source)}>편집 취소</button>}
@@ -353,7 +367,7 @@ function fittedSvgSize(svg: string, canvas: HTMLDivElement | null, compact: bool
   const availableWidth = Math.max(1, (canvas?.clientWidth ?? naturalWidth) - (compact ? 10 : 40));
   const availableHeight = compact ? 98 : canvas?.closest(".code-block-result-content") ? Math.max(320, window.innerHeight - 300) : Number.POSITIVE_INFINITY;
   const fit = Math.min(1, availableWidth / naturalWidth, availableHeight / naturalHeight);
-  return { width: Math.round(naturalWidth * fit), height: Math.round(naturalHeight * fit) };
+  return { width: naturalWidth * (compact ? fit : 1), height: naturalHeight * (compact ? fit : 1) };
 }
 
 function tag(element: Element, kind: "node" | "edge", id: string, selected: DiagramSelection[], marker?: DiagramArtifact["ir"]["nodes"][number]["changeMarker"]) {
@@ -405,12 +419,13 @@ function appendLegend(document: Document, root: Element) {
   const viewBox = (root.getAttribute("viewBox") ?? "0 0 1200 800").split(/\s+/).map(Number);
   if (viewBox.length !== 4 || viewBox.some((value) => !Number.isFinite(value))) return;
   const [x, y, width, height] = viewBox;
-  root.setAttribute("viewBox", `${x} ${y} ${width} ${height + 56}`);
+  const legendWidth = Math.min(Math.max(width - 16, 360), 640);
+  root.setAttribute("viewBox", `${x} ${y} ${Math.max(width, legendWidth + 16)} ${height + 56}`);
   const group = document.createElementNS(ns, "g");
   group.setAttribute("data-diagram-legend", "git-changes");
   group.setAttribute("transform", `translate(${x + 8} ${y + height + 12})`);
   const background = document.createElementNS(ns, "rect");
-  background.setAttribute("width", String(Math.min(Math.max(width - 16, 360), 640)));
+  background.setAttribute("width", String(legendWidth));
   background.setAttribute("height", "36");
   background.setAttribute("rx", "6");
   background.setAttribute("style", "fill:#f8fafc;stroke:#cbd5e1");

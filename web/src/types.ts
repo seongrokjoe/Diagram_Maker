@@ -100,6 +100,8 @@ export type DiagramChangeMarker = {
 };
 
 export type DiagramEdge = {
+  call?: { target: string; arguments: string[]; assignedTo?: string; returnType?: string; basis: string; contractUrl?: string;
+    outputs: Array<{ expression: string; mode: string; description: string; basis: string; evidenceIds: string[] }> };
   relationOrigin?: string; originalExpression?: string; returnValue?: string; terminationTarget?: string;
   context?: CodeContext;
   id: string;
@@ -124,7 +126,7 @@ export type DiagramArtifact = {
   type: string;
   version: number;
   mermaidDsl: string;
-  ir: { type: string; title: string; notes: string[]; direction?: string; nodes: DiagramNode[]; edges: DiagramEdge[]; sequenceBlocks?: SequenceBlock[] };
+  ir: { type: string; title: string; notes: string[]; provenance?: string[]; direction?: string; nodes: DiagramNode[]; edges: DiagramEdge[]; sequenceBlocks?: SequenceBlock[] };
   createdAt: string;
 };
 
@@ -329,7 +331,7 @@ export type AnalysisDiagramGroup = {
 };
 
 export type AnalysisDiagramView = {
-  document?: { overviewPageId: string; pages: Array<{ id: string; title: string; diagram: DiagramArtifact }>;
+  document?: { overviewPageId: string; pages: Array<{ id: string; title: string; diagram: DiagramArtifact; codeDiagram?: DiagramArtifact; aiState?: string; resultKind?: string }>;
     coverage: Array<{ changeId: string; state: string; pageIds: string[]; reason?: string }> };
   viewId: string;
   selection: DiagramViewSelection;
@@ -397,6 +399,7 @@ export type AnalysisHistorySummary = {
 };
 
 export type AnalysisResponse = {
+  resultCounts?: import("./diagramOrigin").DiagramResultCounts;
   id: string;
   state: string;
   revision?: number;

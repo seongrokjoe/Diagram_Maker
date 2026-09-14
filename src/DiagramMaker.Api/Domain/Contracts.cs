@@ -444,7 +444,7 @@ public sealed record DiagramEdge(
     IReadOnlyList<string>? SourceFactIds = null,
     CodeContext? Context = null,
     string? RelationOrigin = null, string? OriginalExpression = null, string? ReturnValue = null,
-    string? TerminationTarget = null);
+    string? TerminationTarget = null, CallPresentation? Call = null);
 
 public sealed record DiagramChangeMarker(
     DiagramChangeKind Kind,
@@ -472,7 +472,7 @@ public sealed record SequenceBlock(string Id, string Kind, string Label,
 
 public sealed record DiagramPage(string Id, string Title, DiagramArtifact Diagram,
     string? Level = null, IReadOnlyList<string>? BlockIds = null, IReadOnlyList<string>? SymbolIds = null,
-    string? ResultKind = null);
+    string? ResultKind = null, DiagramArtifact? CodeDiagram = null, string? AiState = null);
 public sealed record DiagramViewDocument(string OverviewPageId, IReadOnlyList<DiagramPage> Pages,
     IReadOnlyList<ChangeCoverage> Coverage);
 public sealed record ChangeCoverage(string ChangeId, string State, IReadOnlyList<string> PageIds, string? Reason = null,

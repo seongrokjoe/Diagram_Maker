@@ -57,7 +57,7 @@ public sealed class SharedRequestBudgetTests
             "duplicate" => response with { Items = [annotation, annotation] },
             "unknown" => response with { Items = [annotation, annotation with { Id = "secret-source-id" }] },
             _ => response with { Items = [annotation with { Summary = mode switch
-                { "empty" => "", "length" => new string('가', 81), "language" => "Handle input", _ => "값 != 결과" } }, response.Items[1]] }
+                { "empty" => "", "length" => new string('가', 81), "language" => "Handle input", _ => "값 ```code```" } }, response.Items[1]] }
         };
         var problem = SharedSemanticValidation.Check(response, new HashSet<string> { "a", "b" }, ["flowchart"]);
         Assert.Equal(code, problem!.Code);

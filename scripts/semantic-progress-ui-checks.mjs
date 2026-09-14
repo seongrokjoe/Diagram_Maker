@@ -37,12 +37,16 @@ export async function checkSemanticProgress({ page, fixture, run }) {
         { id: 'http-error', stage: 'llm-SharedSemanticReview', state: 'Failed', sent: true, purpose: 'review',
           errorCode: 'LLM_HTTP_400', httpStatus: 400, serverErrorCategory: 'schema-constraint', outputMode: 'structured_outputs',
           recoveryGroupId: 'review-server', parentGroupId: 'generation-batch', recoveryState: 'RequiresAction', attempt: 1 },
+        ...Array.from({ length: 8 }, (_, i) => ({ id: 'older-error-' + i, stage: 'llm-SharedSemanticReview',
+          sent: true, purpose: 'review', errorCode: 'LLM_RESPONSE_TRUNCATED', recoveryState: 'Recovered',
+          startedAt: '2026-09-14T00:00:00Z', outputLimit: 2000 })),
       ],
     } });
   const pattern = /\/api\/v1\/(code-block-runs|code-block-workspaces)\//;
   const routeHandler = async route => {
     const url = new URL(route.request().url());
     if (url.pathname === runPath) return route.fulfill({ json: snapshot() });
+    if (url.pathname === runPath + '/diagnostics') return route.fulfill({ json: { diagnostics: snapshot().execution.recentFailures } });
     if (url.pathname === historyPath && route.request().method() === 'GET') {
       const response = await route.fetch();
       const history = await response.json();
@@ -58,8 +62,7 @@ export async function checkSemanticProgress({ page, fixture, run }) {
     const workspace = page.locator('.code-block-workspace');
     await workspace.getByText('모든 상세 페이지를 완성한 뒤 결과를 표시합니다. 완료된 작업은 계속 저장됩니다.', { exact: true }).waitFor();
     const progress = workspace.getByLabel('전체 및 이번 실행 진척', { exact: true });
-    assert.match(await progress.innerText(), /전체: 완료 12단위.*실제 전송 17회/);
-    assert.match(await progress.innerText(), /이번 실행 3: 새 완료 4단위.*실제 전송 6회/);
+    assert.match(await progress.innerText(), /LLM 실제 전송 17회 · 이번 실행 6회/);
     await progress.getByText('5분이 지났습니다.', { exact: false }).waitFor();
     assert.match(await progress.innerText(), /의미 설명 검토 12 \/ 24개/);
     assert.equal(await progress.locator('time').getAttribute('datetime'), '2026-09-14T00:00:00Z');
@@ -67,24 +70,38 @@ export async function checkSemanticProgress({ page, fixture, run }) {
     await page.waitForTimeout(1100);
     assert.equal(await progress.getByRole('status').innerText(), announcement, 'Clock ticks must not update the live announcement');
     const failures = progress.getByLabel('요청 오류 진단', { exact: true });
-    await failures.getByLabel('복구 완료 기록', { exact: true }).locator('summary').click();
-    assert.match(await failures.innerText(), /최초 기록.*의미 생성.*전송 후/);
-    assert.match(await failures.innerText(), /후속 기록.*응답 수정.*전송 전/);
-    assert.match(await failures.innerText(), /60,700 \/ 허용 56,500자/);
-    assert.match(await failures.innerText(), /SharedUnknownIds/);
-    assert.match(await failures.innerText(), /다른 근거의 ID 1개/);
-    assert.match(await failures.getByLabel('미해결 기록').innerText(), /조건 반전/);
-    assert.match(await failures.getByLabel('미해결 기록').innerText(), /승인 값과 문제 목록이 모순/);
-    assert.match(await failures.getByLabel('복구 완료 기록').innerText(), /출력 한도 2,000토큰 · 사용 2,000토큰/);
-    assert.match(await progress.getByLabel('최근 요청 출력 설정').innerText(), /출력 한도 2,000토큰/);
-    assert.match(await progress.getByLabel('최근 요청 출력 설정').innerText(), /호환 스키마/);
-    assert.match(await failures.getByLabel('미해결 기록').innerText(), /서버 응답 HTTP 400/);
-    assert.match(await failures.getByLabel('미해결 기록').innerText(), /서버·설정 확인 필요/);
+    await failures.locator('tbody tr').last().waitFor();
+    assert.equal(await failures.locator('tbody tr').count(), 14, 'each failed request has its own persistent row');
+    assert.ok(await failures.getByLabel('오류 목록 스크롤', { exact: true }).evaluate(e => e.scrollHeight > e.clientHeight && e.clientHeight <= 410), 'a bounded scroll area retains older errors');
+    const detail = failures.getByLabel('선택 오류 상세', { exact: true });
+    assert.match(await detail.innerText(), /복구 완료/);
+    await detail.locator('summary').click();
+    assert.match(await detail.innerText(), /SharedUnknownIds/);
+    await failures.locator('tbody tr button').nth(1).click();
+    assert.match(await detail.innerText(), /전송 전 검사/);
+    assert.match(await detail.innerText(), /60,700자 \/ 56,500/);
+    await failures.locator('tbody tr button').nth(2).click();
+    assert.match(await detail.innerText(), /출력 한도 2,000토큰 · 사용 2,000토큰/);
+    await failures.locator('tbody tr button').nth(3).click();
+    assert.match(await detail.innerText(), /조건 반전/);
+    assert.match(await detail.innerText(), /복구 실패/);
+    await failures.locator('tbody tr button').nth(4).click();
+    assert.match(await detail.innerText(), /승인 값과 문제 목록이 모순/);
+    await failures.locator('tbody tr button').nth(5).click();
+    assert.match(await detail.innerText(), /HTTP 400/);
+    assert.match(await detail.innerText(), /설정 확인 필요/);
+    assert.match(await detail.innerText(), /JSON 스키마 제약/);
+    await progress.getByText('실행 기술 정보', { exact: true }).click();
+    assert.match(await progress.innerText(), /전체 내부 처리 완료 12단위 · 이번 실행 새 완료 4단위 · 재사용 8단위/);
+    assert.match(await progress.innerText(), /호환 스키마/);
     assert.match(await progress.innerText(), /정책이 갱신/);
     assert.equal(await workspace.locator('.structured-diagram-editor').count(), 0);
     assert.equal(pageRequests, 0, 'Running results must not fetch pages');
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 1000 });
+      if (width === 390) assert.ok(await failures.getByLabel('오류 목록 스크롤', { exact: true }).evaluate(e =>
+        e.scrollWidth > e.clientWidth && getComputedStyle(e.querySelector('tbody td:nth-child(2)')).whiteSpace === 'nowrap'),
+      'small screens scroll the error table without breaking stage labels into single characters');
       await progress.screenshot({ path: path.join(fixture, `semantic-progress-${width}.png`) });
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
     }
@@ -92,7 +109,7 @@ export async function checkSemanticProgress({ page, fixture, run }) {
     await workspace.getByRole('button', { name: '부분 결과 열기', exact: true }).waitFor();
     assert.equal(pageRequests, 0, 'Stopped results remain closed until requested');
     await workspace.getByRole('button', { name: '부분 결과 열기', exact: true }).click();
-    await workspace.getByLabel('정적 구조 보기', { exact: true }).waitFor();
+    await workspace.getByLabel('Code 다이어그램 보기 (정적 구조)', { exact: true }).waitFor();
     await workspace.screenshot({ path: path.join(fixture, 'semantic-partial-open.png') });
   } finally {
     await page.unroute(pattern, routeHandler); page.off('request', onRequest);

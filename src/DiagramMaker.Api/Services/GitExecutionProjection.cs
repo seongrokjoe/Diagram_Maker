@@ -37,7 +37,8 @@ public static class GitExecutionProjection
             symbols.Any(s => s.Calls.Any(c => c.TargetSymbolId == v.Id))))
             symbols.Add(new(version.Id, version.FilePath, version.QualifiedName, "method", version.Signature,
                 new(version.FilePath, version.StartLine, version.EndLine, 0, 0), [], [], [], [], [], []));
-        var adapted = new CodeBlockGraph(symbols, [], evidence.DistinctBy(e => e.Id).ToArray(), [], [], SourceGraphAnalyzer.IndexVersion);
+        var adapted = new CodeBlockGraph(symbols, [], evidence.DistinctBy(e => e.Id).ToArray(), [], [], SourceGraphAnalyzer.IndexVersion,
+            comparison.Files.Where(f => CallPresentationBuilder.HasWindowsContract(f.AfterContent ?? f.BeforeContent ?? "")).Select(f => f.Path).ToArray());
         var called = symbols.SelectMany(s => s.Calls).Select(c => c.TargetSymbolId).OfType<string>().ToHashSet();
         var diagrams = symbols.Where(s => s.Calls.Count > 0).OrderBy(s => called.Contains(s.Id))
             .Select(s => ExecutionSequenceProjection.Build(s, adapted, direction)).ToArray();
@@ -57,7 +58,7 @@ public static class GitExecutionProjection
         {
             var original = graph.Edges.FirstOrDefault(e => e.Type == "calls" && e.EvidenceIds.Any(id => (edge.SourceFactIds ?? []).Contains(id)));
             return edge with { SourceId = ownerIds[edge.SourceId], TargetId = ownerIds[edge.TargetId],
-                Context = original?.Context, ControlPath = original?.ControlPath,
+                Context = original?.Context ?? edge.Context, ControlPath = original?.ControlPath,
                 SourceFactIds = (edge.SourceFactIds ?? []).Concat(original is null ? [] : new[] { original.Id }).Distinct().ToArray() };
         }
         return new("sequence", title, diagrams.SelectMany(d => d.Nodes).Select(Participant).GroupBy(n => n.Id).Select(g => g.First() with

@@ -199,3 +199,16 @@ test("real C++ base type syntax is retained", async () => {
   assert.deepEqual(graph.symbols.find(s => s.name === "Derived").baseTypes, ["Base"]);
   assert.notEqual(graph.symbols[0].location.startOffset, graph.symbols[1].location.startOffset);
 });
+
+test("initializer calls remain bound and member lookup precedes global functions", async () => {
+  const graph = await analyzeCodeBlocks([block("port", `
+    int PurgeComm(int h, int flags) { return 0; }
+    class Port { int m_hPort; int PurgeComm(int h, int flags) { return 1; }
+      int ClearComm() { int iState = PurgeComm(m_hPort, 3); return iState; } };`)]);
+  const method = graph.symbols.find(s => s.name === "Port::ClearComm");
+  assert.equal(graph.symbols.find(s => s.id === method.calls[0].targetSymbolId)?.name, "Port::PurgeComm");
+  const call = method.execution.find(e => e.kind === "call");
+  assert.equal(call.assignedTo, "iState");
+  assert.deepEqual(call.arguments, ["m_hPort", "3"]);
+  assert.equal(method.execution.find(e => e.kind === "declare").valueType, "int");
+});

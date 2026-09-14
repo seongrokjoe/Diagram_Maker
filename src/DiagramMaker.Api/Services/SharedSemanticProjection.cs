@@ -9,7 +9,7 @@ internal sealed record SharedPreparedDiagram(SharedDiagramInput Input, DiagramIr
 
 internal sealed class SharedSemanticProjection
 {
-    public const string Version = "shared-semantic-v3";
+    public const string Version = "shared-semantic-v4";
     internal static bool Improves(DiagramArtifact saved, SemanticGeneration incoming) =>
         incoming.Status == "Semantic" || saved.Explanation?.Status != "Semantic" &&
             (incoming.Explanation?.Coverage?.VerifiedUnits ?? 0) >= (saved.Explanation?.Coverage?.VerifiedUnits ?? 0);
@@ -59,7 +59,8 @@ internal sealed class SharedSemanticProjection
         foreach (var edge in candidate.Edges.Where(e => e.RelationOrigin != "user" &&
             (candidate.Type is "sequence" or "state" || e.Type is "calls" or "dependency")))
             if (edge.Type is not ("response" or "return" or "throw"))
-                edgeItems[edge.Id] = Item("message", edge.Label, edge.SourceFactIds ?? [], edge.Context is null ? [] : [edge.Context]);
+                edgeItems[edge.Id] = Item("message", edge.Label, edge.SourceFactIds ?? [], edge.Context is null ? [] : [edge.Context],
+                    edge.Call is null ? [] : [JsonSerializer.Serialize(edge.Call, PromptJson.Options)]);
         var controlItems = new Dictionary<string, string>();
         foreach (var block in CodeBlockPlanValidation.ControlBlocks(candidate.SequenceBlocks ?? []))
         {
@@ -96,6 +97,8 @@ internal sealed class SharedSemanticProjection
         foreach (var prepared in Diagrams)
         {
             var candidate = prepared.Candidate;
+            try
+            {
             var missing = prepared.NodeItems.Values.Concat(prepared.EdgeItems.Values).Concat(prepared.ControlItems.Values)
                 .Any(id => !annotations.ContainsKey(id));
             var pageFacts = candidate.Nodes.SelectMany(n => n.SourceFactIds ?? []).Concat(candidate.Edges.SelectMany(e => e.SourceFactIds ?? [])).ToHashSet();
@@ -145,7 +148,8 @@ internal sealed class SharedSemanticProjection
                         Details = (n.Details ?? []).Append(annotations[key].Description).Distinct().ToArray() } : n).ToArray(),
                 Edges = projected.Edges.Select(e => e with { Label = candidate.Type == "flowchart" ? e.Label switch
                     { "true" or "then" => "예", "false" or "else" => "아니요", "return" => "종료", _ => e.Label }
-                    : prepared.EdgeItems.TryGetValue(e.Id, out var key) && annotations.ContainsKey(key) ? annotations[key].Summary : e.Label }).ToArray(),
+                    : prepared.EdgeItems.TryGetValue(e.Id, out var key) && annotations.ContainsKey(key)
+                        ? annotations[key].Summary + (e.Call is null ? "" : "\n" + CallPresentationBuilder.Compact(e.Call)) : e.Label }).ToArray(),
                 SequenceBlocks = projected.SequenceBlocks?.Select(Control).ToArray()
             };
             var behaviors = projected.Nodes.Where(n => prepared.NodeItems.TryGetValue(n.Id, out var key) && annotations.ContainsKey(key)).Select(n => new CodeBlockBehavior(n.Id,
@@ -162,6 +166,12 @@ internal sealed class SharedSemanticProjection
             validator.Validate(projected);
             _ = new MermaidCompiler(validator).Compile(projected);
             results[prepared.Input.Key] = new(projected, missing ? "Incomplete" : "Semantic", warnings, [], 0, explanation, failureStage);
+            }
+            catch (Exception error) when (error is DiagramValidationException or DiagramGenerationException)
+            {
+                results[prepared.Input.Key] = new(candidate, "Incomplete", ["이 페이지의 구조 검증을 완료하지 못했습니다. Code 다이어그램을 확인하세요."], [], 0,
+                    FailureStage: "projection");
+            }
         }
         return new(semantics.Summary, semantics.RecommendedType, results,
             codeBlocks ? null : new ChangeUnderstanding(semantics.Summary, Items.Values.Where(i => i.Kind == "change" && annotations.ContainsKey(i.Id))

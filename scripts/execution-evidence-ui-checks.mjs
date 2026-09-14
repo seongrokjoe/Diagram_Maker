@@ -31,7 +31,7 @@ export async function checkExecutionEvidence({ page, fixture, origin }) {
   const screen = page.locator('.code-block-workspace');
   await screen.getByText('의미 생성 미완료 · 실패 사유와 정적 구조를 확인하세요', { exact: true }).waitFor();
   const editor = screen.locator('.structured-diagram-editor');
-  await editor.locator('svg').first().waitFor();
+  await editor.locator('.diagram-canvas svg').first().waitFor();
   await editor.getByText('동작 설명과 원본 근거', { exact: true }).click();
   const facts = editor.locator('.execution-evidence');
   await facts.locator(':scope > summary').click();
@@ -69,7 +69,7 @@ export async function checkExecutionEvidence({ page, fixture, origin }) {
   await writeFile(path.join(fixture, 'execution-result.json'), JSON.stringify({ calls, conditions: 5,
     returns: ['false', 'false', 'false', 'false', 'false', 'true'], evidenceRows: await rows.count(), runId: run.id }, null, 2));
   await page.reload();
-  await editor.locator('svg').first().waitFor();
+  await editor.locator('.diagram-canvas svg').first().waitFor();
   assert.equal(new URL(page.url()).searchParams.get('codeRun'), run.id);
   await page.setViewportSize({ width: 1440, height: 1000 });
 }

@@ -23,7 +23,10 @@ public static class CSharpExecutionFacts
                 { Children = Expression(conditional.WhenTrue), Alternative = Expression(conditional.WhenFalse) }];
             if (n is InvocationExpressionSyntax invocation)
                 return [.. Expression(invocation.Expression), .. invocation.ArgumentList.Arguments.SelectMany(a => Expression(a.Expression)),
-                    Fact(n, "call") with { Value = n.Parent is ExpressionStatementSyntax ? "discarded" : "unknown" }];
+                    Fact(n, "call") with { Value = n.Parent is ExpressionStatementSyntax ? "discarded" : "unknown",
+                        CallTarget = invocation.Expression.ToString(), Arguments = invocation.ArgumentList.Arguments.Select(a => a.ToString()).ToArray(),
+                        AssignedTo = n.Parent is AssignmentExpressionSyntax assigned && assigned.Right == n ? assigned.Left.ToString() :
+                            n.Parent is EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax variable } ? variable.Identifier.ValueText : null }];
             if (n is AssignmentExpressionSyntax assignment)
                 return [.. Expression(assignment.Left), .. Expression(assignment.Right), Fact(n, "assign") with
                 { Variable = assignment.Left is IdentifierNameSyntax ? assignment.Left.ToString() : null,
@@ -38,7 +41,7 @@ public static class CSharpExecutionFacts
             Expression(v.Initializer?.Value).Concat(v.Initializer?.Value is RefExpressionSyntax reference
                 ? [Fact(reference, "invalidate") with { Variable = reference.Expression.ToString(), Value = "escaped" }] : [])
             .Append(Fact(v, "declare") with
-            { Variable = v.Identifier.ValueText, Value = v.Initializer?.Value.ToString() })).ToArray();
+            { Variable = v.Identifier.ValueText, Value = v.Initializer?.Value.ToString(), ValueType = declaration.Type.ToString() })).ToArray();
         IReadOnlyList<ExecutionFact> Statement(StatementSyntax? n, string? loop = null)
         {
             if (n is null) return [];

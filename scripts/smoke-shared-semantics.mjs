@@ -10,6 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { assertLocalPath, gitEnvironment } from '../tools/git-worker/local-security.mjs';
 import { executionMeaningFixture } from './execution-meaning-fixture.mjs';
 import { reliabilitySource as source } from './reliability-fixture.mjs';
+import { checkVariants, checkVariantUi, checkGitVariantUi } from './ai-code-variant-checks.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 assertLocalPath(root);
@@ -100,7 +101,7 @@ try {
   async function request(url, method = 'GET', body, status = 200) {
     const response = await fetch(origin + '/api/v1' + url, { method, headers: { 'content-type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30000) });
-    const result = await response.json(); assert.equal(response.status, status, JSON.stringify(result)); return result;
+    const result = await response.json(); assert.equal(response.status, status, `${method} ${url}: ${result.error ?? result.errorCode ?? response.status}`); return result;
   }
   async function poll(url) {
     for (let i = 0; i < 9000; i++) {
@@ -135,6 +136,12 @@ try {
       assert.equal(artifact.explanation.status, 'Semantic'); assert.ok(artifact.mermaidDsl); pages++;
     }
     assert.equal(pages, selected.length === 1 ? 41 : 43, 'All baseline pages must remain');
+    if (selected.length === 1) {
+      const base = `/code-block-runs/${run.id}/groups/g/views/${run.results[0].views[0].viewId}/pages/${run.results[0].views[0].pages[0].id}`;
+      await checkVariants({ request, base, editPath: base + '/edits', summary: run.resultCounts });
+      const ui = await checkVariantUi({ root, origin, fixture, run, requestCount: () => requestCount });
+      checks.push({ name: 'code-ai-code-originals-edits', ui });
+    }
     checks.push({ name: 'code-block', lines: 1212, functions: 40, formats: selected.length, requests, generationRequests,
       functionRequests: 0, reviewRequests: requests - generationRequests, pages });
     const next = await request(`/code-block-workspaces/${workspace.id}/runs`, 'POST', { expectedRevision: workspace.revision }, 202);
@@ -154,6 +161,8 @@ try {
   for (const view of analysis.result.diagramGroups[0].views) {
     assert.equal(view.generationMetadata.llmStatus, 'Semantic', JSON.stringify(view.warnings));
     for (const page of view.document.pages) {
+      assert.equal(page.resultKind, 'semantic', 'compact responses retain page origin without explanation bodies');
+      assert.ok(!page.diagram.explanation);
       const artifact = await request(`/analyses/${analysis.id}/groups/g/views/${view.viewId}/pages/${page.id}`);
       assert.equal(artifact.explanation.status, 'Semantic'); pages++;
     }
@@ -161,6 +170,11 @@ try {
   const requests = requestCount - before;
   assert.ok(requests <= 32, `Shared Git annotations exceeded the 32-request target: ${requests}`);
   assert.equal(pages, 51, 'All Git baseline pages must remain');
+  const gitView = analysis.result.diagramGroups[0].views[0];
+  await checkVariants({ request, base: `/analyses/${analysis.id}/groups/g/views/${gitView.viewId}/pages/${gitView.document.pages[0].id}`,
+    editPath: `/analyses/${analysis.id}/groups/g/views/${gitView.viewId}/edits?pageId=${gitView.document.pages[0].id}`, summary: analysis.resultCounts });
+  const gitUi = await checkGitVariantUi({ root, origin, fixture, analysis, requestCount: () => requestCount });
+  checks.push({ name: 'git-ai-code-originals-edits', ui: gitUi });
   const generationRequests = batches.filter(b => b.source === 'git' && !b.reviewing).length;
   checks.push({ name: 'git', lines: 1212, functions: 40, formats: 3, requests, generationRequests, functionRequests: 0,
     reviewRequests: requests - generationRequests, pages });

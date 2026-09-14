@@ -167,9 +167,9 @@ public sealed class AnalysisJobProcessor(
             logger.LogError("Analysis {AnalysisId} failed at stage {State}.", currentJob.Id, currentJob.State);
             await UpdateAsync(currentJob with
             {
-                State = AnalysisState.Failed,
+                State = currentJob.Result?.Diagrams.Count > 0 ? AnalysisState.Partial : AnalysisState.Failed,
                 Progress = 100,
-                StageMessage = "Analysis failed",
+                StageMessage = "생성 중단 · 저장된 다이어그램은 확인할 수 있습니다.", StopReason = "generation-error",
                 ErrorCode = MapErrorCode(exception),
                 ErrorMessage = SafeMessage(exception),
                 LeaseUntil = null,
@@ -313,8 +313,8 @@ public sealed class AnalysisJobProcessor(
                         selection.FocusOnChanges, preserveDetails: true);
                     if (projected.Artifacts.FirstOrDefault() is not { } artifact) continue;
                     var document = DiagramDocumentBuilder.Build(artifact, bundle);
-                    document = document with { Pages = document.Pages.Select(page => page with { Diagram = page.Diagram with
-                    { MermaidDsl = compiler.Compile(page.Diagram.Ir), Explanation = DiagramExplanationBuilder.Fallback(page.Diagram.Ir, bundle, "Static", []) } }).ToArray() };
+                    document = document with { Pages = document.Pages.Select(page => DiagramVariants.PreserveCode(page with { Diagram = page.Diagram with
+                    { MermaidDsl = compiler.Compile(page.Diagram.Ir), Explanation = DiagramExplanationBuilder.Fallback(page.Diagram.Ir, bundle, "Static", []) } })).ToArray() };
                     var overview = document.Pages.First(p => p.Id == document.OverviewPageId).Diagram;
                     staticViews.Add(new(selection.Id, selection, overview, [], "Generating", Document: document));
                 }
@@ -395,8 +395,7 @@ public sealed class AnalysisJobProcessor(
                             {
                                 if (view.Document is null) return view;
                                 var pages = view.Document.Pages.Select(page => partial.Pages.TryGetValue(view.ViewId + "/" + page.Id, out var generated) && SharedSemanticProjection.Improves(page.Diagram, generated)
-                                    ? page with { Diagram = page.Diagram with { Ir = generated.Diagram,
-                                        MermaidDsl = compiler.Compile(generated.Diagram), Explanation = generated.Explanation } } : page).ToArray();
+                                    ? DiagramVariants.Apply(page, generated, compiler) : page).ToArray();
                                 return view with { Document = view.Document with { Pages = pages },
                                     Diagram = pages.First(p => p.Id == view.Document.OverviewPageId).Diagram };
                             }).ToArray();
@@ -493,7 +492,9 @@ public sealed class AnalysisJobProcessor(
                             explanation ??= DiagramExplanationBuilder.Fallback(pageIr, bundle, pageStatus, pageWarnings);
                             explanation = explanation with { Warnings = explanation.Warnings.Concat(pageWarnings).Distinct().ToArray() };
                             viewWarnings.AddRange(pageWarnings);
-                            pages.Add(page with { Diagram = page.Diagram with { Ir = pageIr, MermaidDsl = compiler.Compile(pageIr), Explanation = explanation } });
+                            var baseline = staticGroups.First(g => g.GroupId == group.Id).Views?.FirstOrDefault(v => v.ViewId == view.Id)?.Document?.Pages.FirstOrDefault(p => p.Id == page.Id)
+                                ?? DiagramVariants.PreserveCode(page);
+                            pages.Add(DiagramVariants.Apply(baseline, new SemanticGeneration(pageIr, pageStatus, pageWarnings, [], attempts, explanation), compiler, final: true));
                             var pendingView = new AnalysisDiagramViewResult(view.Id, view, pages[0].Diagram, viewWarnings.ToArray(), "Generating",
                                 Document: document with { Pages = pages.ToArray() });
                             var pendingGroup = new AnalysisDiagramGroupResult(group.Id, group.Title, group.ChangeIds, pages[0].Diagram,

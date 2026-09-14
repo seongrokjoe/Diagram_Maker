@@ -1,13 +1,17 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { api } from "./api";
 import { MermaidPreview, type DiagramInlineEdit, type DiagramSelection } from "./MermaidPreview";
 import { elapsedLabel, useElapsedSeconds } from "./useElapsedSeconds";
 import type { DiagramArtifact, DiagramEditDocument, DiagramEditPreview, DiagramRevisionRecord } from "./types";
 import { deleteDiagramSelection } from "./diagramInteraction";
 import { DiagramExplanationPanel } from "./DiagramExplanationPanel";
+import { DiagramBadge } from "./DiagramBadge";
+import { originOf, diagramName, type DiagramVariant } from "./diagramOrigin";
+import { withViewDirection, type ViewDirection } from "./diagramViewSettings";
 
 type EditInput = { rootArtifactId: string; parentRevisionId?: string; expectedVersion: number; document: DiagramEditDocument };
-export function DiagramEditor({ artifact, downloadName, zoomable = false, onSave, onPreview, onOpenDetail, reportError, showExplanation = false, onEvidence, collapsibleExplanation = false, canvasToolbar = false }: {
+export function DiagramEditor({ artifact, downloadName, variant, zoomable = false, onSave, onPreview, onOpenDetail, reportError, showExplanation = false, onEvidence, collapsibleExplanation = false, canvasToolbar = false }: {
+  variant?: DiagramVariant;
   collapsibleExplanation?: boolean;
   canvasToolbar?: boolean;
   showExplanation?: boolean;
@@ -32,6 +36,7 @@ export function DiagramEditor({ artifact, downloadName, zoomable = false, onSave
   const [selection, setSelection] = useState<DiagramSelection[]>([]);
   const [inlineEdit, setInlineEdit] = useState<DiagramInlineEdit | null>(null);
   const [directEditingAvailable, setDirectEditingAvailable] = useState(false);
+  const [viewDirection, setViewDirection] = useState<ViewDirection>("original");
   const editorRef = useRef<HTMLDivElement>(null);
   const previewRequest = useRef(onPreview);
   previewRequest.current = onPreview;
@@ -265,6 +270,7 @@ export function DiagramEditor({ artifact, downloadName, zoomable = false, onSave
   }
 
   return <div ref={editorRef} className="structured-diagram-editor" tabIndex={-1} onKeyDown={handleEditorKey}>
+    <div className="diagram-heading"><DiagramBadge kind={variant ?? originOf(artifact)} /><h3>{diagramName(artifact.ir.title, variant ?? originOf(artifact))}</h3></div>
     <div className="diagram-meta">
       <span>표시 리비전: v{displayed.version}{selectedRevision ? " · 구조 편집" : " · 생성 원본"}</span>
       <div className="button-row">
@@ -283,8 +289,10 @@ export function DiagramEditor({ artifact, downloadName, zoomable = false, onSave
     {onOpenDetail && selection.filter(item => item.kind === "node").map(item => currentArtifact.ir.nodes.find(node => node.id === item.id))
       .filter(node => node?.detailPageId).map(node => <button type="button" className="secondary" key={node!.id}
         onClick={() => onOpenDetail(node!.detailPageId!)}>{node!.label} · 세부 보기</button>)}
-    {editing && draft.nodes.length === 0 ? <div className="empty-state">모든 노드를 삭제했습니다. 실행 취소하거나 새 노드를 추가하세요. 저장하려면 노드가 하나 이상 필요합니다.</div> : <MermaidPreview source={currentArtifact.mermaidDsl} artifact={currentArtifact} downloadName={`${downloadName}-v${displayed.version}`}
-      toolbarContent={canvasToolbar && !editing ? <button className="secondary" disabled={!editingLatest && revisions.length > 0} onClick={beginEdit}>구조 편집</button> : undefined}
+    {editing && draft.nodes.length === 0 ? <div className="empty-state">모든 노드를 삭제했습니다. 실행 취소하거나 새 노드를 추가하세요. 저장하려면 노드가 하나 이상 필요합니다.</div> : <MermaidPreview source={withViewDirection(currentArtifact.mermaidDsl, viewDirection, currentArtifact.type)} artifact={currentArtifact} downloadName={`${downloadName}-v${displayed.version}`}
+      toolbarContent={<>{canvasToolbar && !editing && <button className="secondary" disabled={!editingLatest && revisions.length > 0} onClick={beginEdit}>구조 편집</button>}
+        <label className="inline-select">보기 방향<select aria-label="보기 방향" disabled={artifact.type === "sequence"} value={viewDirection} onChange={e => setViewDirection(e.target.value as ViewDirection)}>
+          <option value="original">원본</option><option value="LR">가로</option><option value="TB">세로</option></select></label>{artifact.type === "sequence" && <span className="help">시퀀스는 세로 시간순</span>}</>}
       fitLabel={canvasToolbar ? "맞춤 보기" : undefined}
       zoomable={zoomable} interactive={editing || Boolean(onOpenDetail)} selected={selection} inlineEdit={inlineEdit} onSelect={selectItem} onEditRequest={editing ? requestInlineEdit : undefined}
       onInlineEditChange={(value) => setInlineEdit((current) => current ? { ...current, value } : null)}
@@ -300,13 +308,21 @@ export function DiagramEditor({ artifact, downloadName, zoomable = false, onSave
     <details><summary>Mermaid DSL 확인</summary><pre>{currentArtifact.mermaidDsl}</pre></details>
     {editing && <section className="structure-editor-panel">
       <div className="panel-heading"><div><h3>구조 편집</h3><p className="help">추가는 목록에서, 삭제는 다이어그램 또는 목록에서 수행합니다. 저장하면 새 리비전이 생성됩니다.</p></div><div className="button-row"><button type="button" className="secondary" disabled={saving} onClick={cancel}>취소</button><button type="button" className="primary" disabled={saving || draft.nodes.length === 0 || Boolean(previewError)} onClick={() => void save()}>{elapsedLabel("새 리비전 저장", saving, elapsed)}</button></div></div>
-      <div className="field-row"><label>제목<input maxLength={200} value={draft.title} onChange={(event) => updateDraft((current) => ({ ...current, title: event.target.value }))} /></label><label>방향<select value={draft.direction ?? "LR"} onChange={(event) => updateDraft((current) => ({ ...current, direction: event.target.value as "LR" | "TB" }))}><option value="LR">가로 (LR)</option><option value="TB">세로 (TB)</option></select></label></div>
-      <div className="editor-section-heading"><h4>노드 ({draft.nodes.length})</h4><button type="button" className="secondary" onClick={addNode}>노드 추가</button></div>
-      <div className="edit-list">{draft.nodes.map((node, index) => <div className="edit-row" key={node.id}><code>{node.id}</code><textarea aria-label={`${node.id} 이름`} rows={Math.min(6, Math.max(2, node.label.split("\n").length))} maxLength={1000} value={node.label} onChange={(event) => updateDraft((current) => ({ ...current, nodes: current.nodes.map((item) => item.id === node.id ? { ...item, label: event.target.value } : item) }))} /><button type="button" className="text-button" disabled={index === 0} onClick={() => move("nodes", index, -1)}>↑</button><button type="button" className="text-button" disabled={index === draft.nodes.length - 1} onClick={() => move("nodes", index, 1)}>↓</button><button type="button" className="text-button danger" onClick={() => removeNode(node.id)}>삭제</button></div>)}</div>
-      <div className="editor-section-heading"><h4>관계 ({draft.edges.length})</h4><button type="button" className="secondary" disabled={draft.nodes.length < 2} onClick={addEdge}>관계 추가</button></div>
-      <div className="edit-list">{draft.edges.map((edge, index) => <div className="edit-row edge-edit-row" key={edge.id}><select aria-label={`${edge.id} 출발 노드`} value={edge.sourceId} onChange={(event) => updateDraft((current) => ({ ...current, edges: current.edges.map((item) => item.id === edge.id ? { ...item, sourceId: event.target.value } : item) }))}>{nodeOptions}</select><span>→</span><select aria-label={`${edge.id} 도착 노드`} value={edge.targetId} onChange={(event) => updateDraft((current) => ({ ...current, edges: current.edges.map((item) => item.id === edge.id ? { ...item, targetId: event.target.value } : item) }))}>{nodeOptions}</select><input aria-label={`${edge.id} 관계 이름`} maxLength={240} value={edge.label} onChange={(event) => updateDraft((current) => ({ ...current, edges: current.edges.map((item) => item.id === edge.id ? { ...item, label: event.target.value } : item) }))} /><button type="button" className="text-button" disabled={Boolean(currentArtifact.ir.sequenceBlocks) || index === 0} onClick={() => move("edges", index, -1)}>↑</button><button type="button" className="text-button" disabled={Boolean(currentArtifact.ir.sequenceBlocks) || index === draft.edges.length - 1} onClick={() => move("edges", index, 1)}>↓</button><button type="button" className="text-button danger" onClick={() => removeEdge(edge.id)}>삭제</button></div>)}</div>
-    </section>}
+      <div className="field-row"><label>제목<input maxLength={200} value={draft.title} onChange={(event) => updateDraft((current) => ({ ...current, title: event.target.value }))} /></label></div>
+      <StructureEditorSection title={`노드 (${draft.nodes.length})`}><div className="editor-section-heading"><button type="button" className="secondary" onClick={addNode}>노드 추가</button></div>
+      <div className="edit-list">{draft.nodes.map((node, index) => <div className="edit-row" key={node.id}><input aria-label={`노드 ${index + 1} 이름`} maxLength={1000} value={node.label} onChange={(event) => updateDraft((current) => ({ ...current, nodes: current.nodes.map((item) => item.id === node.id ? { ...item, label: event.target.value } : item) }))} /><button type="button" className="text-button" disabled={index === 0} onClick={() => move("nodes", index, -1)}>↑</button><button type="button" className="text-button" disabled={index === draft.nodes.length - 1} onClick={() => move("nodes", index, 1)}>↓</button><button type="button" className="text-button danger" onClick={() => removeNode(node.id)}>삭제</button></div>)}</div>
+      </StructureEditorSection><StructureEditorSection title={`관계 (${draft.edges.length})`}><div className="editor-section-heading"><button type="button" className="secondary" disabled={draft.nodes.length < 2} onClick={addEdge}>관계 추가</button></div>
+      <div className="edit-list">{draft.edges.map((edge, index) => <div className="edit-row edge-edit-row" key={edge.id}><select aria-label={`관계 ${index + 1} 출발 노드`} value={edge.sourceId} onChange={(event) => updateDraft((current) => ({ ...current, edges: current.edges.map((item) => item.id === edge.id ? { ...item, sourceId: event.target.value } : item) }))}>{nodeOptions}</select><span>→</span><select aria-label={`관계 ${index + 1} 도착 노드`} value={edge.targetId} onChange={(event) => updateDraft((current) => ({ ...current, edges: current.edges.map((item) => item.id === edge.id ? { ...item, targetId: event.target.value } : item) }))}>{nodeOptions}</select><input aria-label={`관계 ${index + 1} 이름`} maxLength={240} value={edge.label} onChange={(event) => updateDraft((current) => ({ ...current, edges: current.edges.map((item) => item.id === edge.id ? { ...item, label: event.target.value } : item) }))} /><button type="button" className="text-button" disabled={Boolean(currentArtifact.ir.sequenceBlocks) || index === 0} onClick={() => move("edges", index, -1)}>↑</button><button type="button" className="text-button" disabled={Boolean(currentArtifact.ir.sequenceBlocks) || index === draft.edges.length - 1} onClick={() => move("edges", index, 1)}>↓</button><button type="button" className="text-button danger" onClick={() => removeEdge(edge.id)}>삭제</button></div>)}</div>
+    </StructureEditorSection></section>}
   </div>;
+}
+
+function StructureEditorSection({ title, children }: { title: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  // Collapsed relations can otherwise mount thousands of node options and stall edits.
+  return <details className="structure-editor-section" onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary>{title}</summary>{open && children}
+  </details>;
 }
 
 function editInput(artifact: DiagramArtifact, latest: DiagramRevisionRecord | undefined, document: DiagramEditDocument): EditInput {

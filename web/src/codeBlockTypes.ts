@@ -8,10 +8,10 @@ export type CodeBlockWorkspaceRecord = { id: string; revision: number; input: Co
 export type CodeBlockWorkspaceSummary = { id: string; revision: number; title: string; blockCount: number; updatedAt: string };
 export type CodeBlockQuestion = { id: string; prompt: string; fromBlockId: string; evidenceIds: string[]; options: Array<{ id: string; label: string }> };
 export type CodeBlockView = { viewId: string; selection: DiagramViewSelection; state: string; pages: Array<{ id: string; title: string; artifactId: string;
-  level?: string; blockIds?: string[]; symbolIds?: string[]; resultKind?: string }>;
+  level?: string; blockIds?: string[]; symbolIds?: string[]; resultKind?: string; codeArtifactId?: string; aiState?: string }>;
   warnings: string[]; errorMessage?: string; reused: boolean; llmStatus: string; failureStage?: string };
 export type CodeBlockRun = { id: string; workspaceId: string; inputRevision: number; revision: number; state: string; progress: number; stageMessage: string;
   createdAt: string; groups: CodeBlockGroup[]; questions: CodeBlockQuestion[]; results: Array<{ groupId: string; title: string; blockIds: string[]; views: CodeBlockView[]; availability: DiagramAvailability[] }>;
   warnings: string[]; errorMessage?: string; canResume?: boolean; stopReason?: string;
-  execution?: SemanticProgress };
+  execution?: SemanticProgress; resultCounts?: import("./diagramOrigin").DiagramResultCounts };
 export type CodeBlockEvidence = { blockId: string; blockTitle: string; startLine: number; endLine: number; content: string; contentHash: string };

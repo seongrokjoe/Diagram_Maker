@@ -111,7 +111,7 @@ public sealed partial class DiagramRevisionService(
             edges = edges.Select(edge => !existingEdges.TryGetValue(edge.Id, out var original) || original.SourceId != edge.SourceId ||
                 original.TargetId != edge.TargetId || original.Type != edge.Type || original.Label != edge.Label
                 ? edge with { RelationOrigin = "user", Confidence = Confidence.Inferred, EvidenceIds = [], SourceFactIds = [], Context = null,
-                    ControlPath = null, OriginalExpression = null, ReturnValue = null, TerminationTarget = null,
+                    ControlPath = null, OriginalExpression = null, ReturnValue = null, TerminationTarget = null, Call = null,
                     Label = edge.Label.StartsWith("사용자 제공:", StringComparison.Ordinal) ? edge.Label : "사용자 제공: " + edge.Label }
                 : edge).ToArray();
         return basis with

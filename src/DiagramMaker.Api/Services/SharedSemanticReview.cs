@@ -9,6 +9,7 @@ internal sealed record SharedItemReview(string Id, IReadOnlyList<string> Issues)
 
 internal static class SharedReviewValidation
 {
+    internal static readonly string[] Aliases = ["M", "O", "C", "I", "R", "S", "G", "E"];
     internal static readonly string[] Codes = ["missing_action", "incorrect_outcome", "reversed_condition",
         "invented_call", "unsupported_role", "mixed_scope", "incorrect_change", "insufficient_evidence"];
 
@@ -18,7 +19,7 @@ internal static class SharedReviewValidation
         properties = new { items = new { type = "array", minItems = count, maxItems = count,
             items = new { type = "object", additionalProperties = false, required = new[] { "id", "issues" },
                 properties = new { id = new { type = "string" }, issues = new { type = "array", maxItems = 3,
-                    items = new { type = "string", @enum = Codes } } } } } }
+                    items = new { type = "string", @enum = Aliases } } } } } }
     });
 
     // Deserialization alone accepts omitted fields and additional properties.
@@ -51,7 +52,7 @@ internal static class SharedReviewValidation
         if (details.DuplicateItems > 0) return new("SharedReviewDuplicateIds", details);
         if (details.MissingItems > 0) return new("SharedReviewMissingIds", details);
         if (value.Items.Any(i => i.Issues is null || i.Issues.Count > 3 ||
-            i.Issues.Distinct().Count() != i.Issues.Count || i.Issues.Any(code => !Codes.Contains(code))))
+                i.Issues.Select(Expand).Distinct().Count() != i.Issues.Count || i.Issues.Any(code => !Codes.Contains(Expand(code)))))
             return new("SharedReviewIssuesInvalid", details);
         return null;
     }
@@ -60,12 +61,14 @@ internal static class SharedReviewValidation
     {
         var aliases = new PromptIds(ids);
         aliases.Encode(prompt);
-        var longest = Codes.OrderByDescending(c => c.Length).Take(3).ToArray();
+        var longest = Aliases.Take(3).ToArray();
         var maximum = new SharedSemanticReview(ids.Select(id => new SharedItemReview(id, longest)).ToArray());
         // One token per UTF-8 byte is deliberately conservative; actual serving
         // tokenizers vary. Reserve room for the compact response's framing.
         return 256 + Encoding.UTF8.GetByteCount(aliases.Encode(JsonSerializer.Serialize(maximum, PromptJson.Options)));
     }
+
+    internal static string Expand(string code) => Array.IndexOf(Aliases, code) is var index && index >= 0 ? Codes[index] : code;
 
     public static object RepairIssues(IReadOnlyList<SharedItemReview> rejected) => rejected.Select(item => new
     {

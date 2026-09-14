@@ -198,13 +198,31 @@ public sealed partial class CodeBlockWorkspaceService(IAppStore store, IOptions<
         (run.Results ?? []).Select(g => new CodeBlockGroupSummary(g.GroupId, g.Title, g.BlockIds,
             g.Views.Select(v => new CodeBlockViewSummary(v.ViewId, v.Selection, v.State,
                 v.Pages.Select(p => new CodeBlockPageSummary(p.Id, p.Title, p.Diagram.Id, p.Level ?? (p.Id == "overview" ? "summary" : "detail"),
-                    p.BlockIds ?? g.BlockIds, p.SymbolIds, p.ResultKind ?? (p.Diagram.Explanation?.Status == "Semantic" ? "semantic" : "static"))).ToArray(), v.Warnings, v.ErrorMessage,
+                    p.BlockIds ?? g.BlockIds, p.SymbolIds, p.ResultKind ?? (p.Diagram.Explanation?.Status == "Semantic" ? "semantic" : "static"),
+                    DiagramVariants.Select(p, "code")?.Id ?? (run.Graph is null ? null : CodeArtifactId(run.Id, g.GroupId, v.ViewId, p.Id)),
+                    p.AiState ?? (DiagramVariants.IsAi(p.Diagram) ? "Completed" : v.State == "Generating" ? "Pending" : "Failed"))).ToArray(), v.Warnings, v.ErrorMessage,
                 v.Reused, v.LlmStatus, v.FailureStage)).ToArray(), g.Availability)).ToArray(), run.Warnings ?? [], run.ErrorCode, run.ErrorMessage,
-        run.Execution, run.StopReason, CanResume(run));
+        run.Execution, run.StopReason, CanResume(run), DiagramVariants.Count((run.Results ?? []).SelectMany(g => g.Views).SelectMany(v => v.Pages),
+            run.IsTerminal, (run.Results ?? []).SelectMany(g => g.Views).Count(v => v.State == "Failed" && v.Pages.Count == 0),
+            (run.Results ?? []).SelectMany(g => g.Views).Where(v => v.Reused).SelectMany(v => v.Pages).Count(p => DiagramVariants.IsAi(p.Diagram))));
 
-    public static DiagramArtifact Page(CodeBlockRun run, string groupId, string viewId, string pageId) =>
-        run.Results?.FirstOrDefault(g => g.GroupId == groupId)?.Views.FirstOrDefault(v => v.ViewId == viewId)?
-            .Pages.FirstOrDefault(p => p.Id == pageId)?.Diagram ?? throw new KeyNotFoundException();
+    public static DiagramArtifact Page(CodeBlockRun run, string groupId, string viewId, string pageId, string? variant = null)
+    {
+        var view = run.Results?.FirstOrDefault(g => g.GroupId == groupId)?.Views.FirstOrDefault(v => v.ViewId == viewId) ?? throw new KeyNotFoundException();
+        var page = view.Pages.FirstOrDefault(p => p.Id == pageId) ?? throw new KeyNotFoundException();
+        if (DiagramVariants.Select(page, variant) is { } artifact) return artifact;
+        if (variant == "code" && run.Graph is { } graph && run.Groups?.FirstOrDefault(g => g.Id == groupId) is { } group)
+        {
+            var original = new CodeBlockProjectionService(new()).Build(graph, run.Relations ?? graph.Relations, group, view.Selection)
+                .FirstOrDefault(p => p.Id == pageId) ?? throw new KeyNotFoundException();
+            return new(CodeArtifactId(run.Id, groupId, viewId, pageId), original.Diagram.Type, 1, original.Diagram,
+                new MermaidCompiler(new()).Compile(original.Diagram), run.CreatedAt,
+                new DiagramExplanation("저장된 코드 근거의 Code 다이어그램", [], [], [], "Static", []));
+        }
+        throw new KeyNotFoundException();
+    }
+    private static Guid CodeArtifactId(Guid runId, string group, string view, string page) =>
+        new(SHA256.HashData(Encoding.UTF8.GetBytes($"{runId}/{group}/{view}/{page}/code"))[..16]);
     public static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
     [GeneratedRegex("^[A-Za-z0-9_.:-]{1,100}$", RegexOptions.CultureInvariant)] private static partial Regex SafeId();
 }

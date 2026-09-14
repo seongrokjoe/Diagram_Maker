@@ -92,7 +92,10 @@ export async function analyzeCodeBlocks(blocks, limits = { maximumBlocks: 20, ma
       for (const binding of nodes.filter(n => ["parameter_declaration", "declaration"].includes(n.type) &&
         n.startIndex > declaration?.startIndex && n.endIndex < declaration?.endIndex)) {
         const declarator = field(binding, "declarator");
-        if (declarator) walk(declarator, n => { if (n.type === "identifier") symbol.localBindings.push(n.text); });
+        // Initializer expressions contain uses, not declarations (e.g. int x = save()).
+        let bindingName = declarator;
+        while (bindingName && bindingName.type !== "identifier") bindingName = field(bindingName, "declarator");
+        if (bindingName) symbol.localBindings.push(bindingName.text);
       }
       symbol.steps = (symbol.controlNodes ?? []).map(n => {
         const ast = nodes.find(x => x.startIndex === n.startOffset && x.endIndex === n.endOffset) ??

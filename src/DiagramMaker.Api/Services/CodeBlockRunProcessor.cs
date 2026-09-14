@@ -68,8 +68,8 @@ public sealed class CodeBlockRunProcessor(IAppStore store, CodeBlockAnalyzer ana
                             var explanation = new DiagramExplanation("코드 근거로 생성한 정적 구조 · 의미 설명 대기", [],
                                 ir.Nodes.SelectMany(n => n.SourceFactIds ?? []).Distinct().ToArray(),
                                 ir.Nodes.SelectMany(n => n.EvidenceIds).Distinct().ToArray(), "Static", [], Behaviors: []);
-                            return new DiagramPage(candidate.Id, candidate.Title, new DiagramArtifact(Guid.NewGuid(), ir.Type, 1, ir,
-                                compiler.Compile(ir), DateTimeOffset.UtcNow, explanation), candidate.Level, candidate.BlockIds, candidate.SymbolIds, "static");
+                            return DiagramVariants.PreserveCode(new DiagramPage(candidate.Id, candidate.Title, new DiagramArtifact(Guid.NewGuid(), ir.Type, 1, ir,
+                                compiler.Compile(ir), DateTimeOffset.UtcNow, explanation), candidate.Level, candidate.BlockIds, candidate.SymbolIds, "static"));
                         }).ToArray();
                         staticViews.Add(new(selection.Id, selection, "Generating", pages, [],
                             CacheKey: CacheKey(run, group, selection, prepared.Relations), LlmStatus: "Static"));
@@ -118,8 +118,7 @@ public sealed class CodeBlockRunProcessor(IAppStore store, CodeBlockAnalyzer ana
                             var updated = savedGroup with { Views = savedGroup.Views.Select(view => view with
                             {
                                 Pages = view.Pages.Select(page => partial.Pages.TryGetValue(view.ViewId + "/" + page.Id, out var generated) && SharedSemanticProjection.Improves(page.Diagram, generated)
-                                    ? page with { Diagram = page.Diagram with { Ir = generated.Diagram, MermaidDsl = compiler.Compile(generated.Diagram),
-                                        Explanation = generated.Explanation }, ResultKind = generated.Status == "Semantic" ? "semantic" : "static" } : page).ToArray()
+                                    ? DiagramVariants.Apply(page, generated, compiler) : page).ToArray()
                             }).ToArray() };
                             if (!await Save(run with { Results = [updated], StageMessage = "검토된 의미 설명과 정적 구조를 저장하며 생성 중" }))
                                 throw new OperationCanceledException(leaseLost.Token);
@@ -166,14 +165,11 @@ public sealed class CodeBlockRunProcessor(IAppStore store, CodeBlockAnalyzer ana
                             }
                             catch (Exception e) when (e is LlmClientException or DiagramGenerationException or DiagramValidationException)
                             { failureStage = "llm-request"; viewWarnings.Add(LlmFailure.Describe(e)); }
-                            var ir = generated?.Diagram ?? candidate.Diagram;
                             semanticComplete &= generated?.Status == "Semantic";
                             if (generated?.Status != "Semantic") failureStage ??= generated?.FailureStage ?? "llm-configuration";
                             viewWarnings.AddRange(generated?.Warnings ?? [llm.IsEnabled ? "의미 설명 미완료: 코드 이해 또는 응답 검증에 실패했습니다." : "의미 설명 미완료: 내부 LLM 의미 생성이 활성화되지 않았습니다."]);
-                            var explanation = generated?.Explanation ?? new DiagramExplanation("의미 설명 미완료 — 정적 코드 근거 결과", [],
-                                ir.Nodes.SelectMany(n => n.SourceFactIds ?? []).Distinct().ToArray(), ir.Nodes.SelectMany(n => n.EvidenceIds).Distinct().ToArray(), "Incomplete", viewWarnings.ToArray(), Behaviors: []);
-                            pages.Add(new DiagramPage(candidate.Id, candidate.Title, new DiagramArtifact(Guid.NewGuid(), ir.Type, 1, ir, compiler.Compile(ir), DateTimeOffset.UtcNow, explanation),
-                                candidate.Level, candidate.BlockIds, candidate.SymbolIds, generated?.Status == "Semantic" ? "semantic" : "static"));
+                            var baseline = staticGroups.Single(g => g.GroupId == group.Id).Views.Single(v => v.ViewId == selection.Id).Pages.Single(p => p.Id == candidate.Id);
+                            pages.Add(DiagramVariants.Apply(baseline, generated, compiler, final: true));
                             var pendingView = new CodeBlockViewResult(selection.Id, selection, "Generating", pages.ToArray(), viewWarnings.Distinct().ToArray(),
                                 CacheKey: cacheKey, LlmStatus: semanticComplete ? "Semantic" : "Incomplete", FailureStage: failureStage);
                             var pendingGroup = new CodeBlockGroupResult(group.Id, group.Title, group.BlockIds, views.Append(pendingView).ToArray(), availability);
@@ -182,7 +178,7 @@ public sealed class CodeBlockRunProcessor(IAppStore store, CodeBlockAnalyzer ana
                         if (pages.Count == 0) throw new DiagramGenerationException("CODE_BLOCK_NO_PAGES", "생성할 근거 페이지가 없습니다.");
                         if (!semanticComplete && old is { Pages.Count: > 0 } && old.Pages.All(p => p.Diagram.Explanation?.Status == "Semantic"))
                         {
-                            views.Add(new CodeBlockViewResult(selection.Id, selection, "Partial", old.Pages, viewWarnings.Distinct().ToArray(),
+                            views.Add(new CodeBlockViewResult(selection.Id, selection, "Partial", old.Pages.Select(p => p with { AiState = "Failed" }).ToArray(), viewWarnings.Distinct().ToArray(),
                                 "최신 생성의 의미 검토를 완료하지 못해 이전 성공 결과를 유지합니다.", Reused: true, CacheKey: old.CacheKey, LlmStatus: "Incomplete", FailureStage: failureStage));
                             continue;
                         }
@@ -193,13 +189,16 @@ public sealed class CodeBlockRunProcessor(IAppStore store, CodeBlockAnalyzer ana
                     catch (Exception e) when (e is LlmClientException or DiagramGenerationException or DiagramValidationException)
                     {
                         var message = e is DiagramGenerationException known ? known.Message : "다이어그램 생성 또는 검증을 완료하지 못했습니다.";
-                        views.Add(new CodeBlockViewResult(selection.Id, selection, "Failed", old?.Pages ??
-                            run.Results?.FirstOrDefault(g => g.GroupId == group.Id)?.Views.FirstOrDefault(v => v.ViewId == selection.Id)?.Pages ?? [], viewWarnings.ToArray(), message,
+                        var retained = old?.Pages ?? run.Results?.FirstOrDefault(g => g.GroupId == group.Id)?.Views.FirstOrDefault(v => v.ViewId == selection.Id)?.Pages ?? [];
+                        views.Add(new CodeBlockViewResult(selection.Id, selection, "Failed", retained.Select(p => p with { AiState = "Failed" }).ToArray(), viewWarnings.ToArray(), message,
                             Reused: old?.Pages.Count > 0, CacheKey: old?.CacheKey, LlmStatus: "Incomplete",
                             FailureStage: e is DiagramGenerationException { Code: "CODE_BLOCK_UNAVAILABLE" } ? "availability" : "projection"));
                     }
                 }
-                results.Add(new CodeBlockGroupResult(group.Id, group.Title, group.BlockIds, views, availability));
+                results.Add(new CodeBlockGroupResult(group.Id, group.Title, group.BlockIds,
+                    views.Select(view => view with { Pages = view.Pages.Select(page =>
+                        !DiagramVariants.IsAi(page.Diagram) && page.AiState is null or "Pending"
+                            ? page with { AiState = "Failed" } : page).ToArray() }).ToArray(), availability));
                 if (!await Save(run with { Results = results.ToArray(), Progress = 25 + 70 * results.Count / populatedGroups.Length })) return;
             }
             var allViews = results.SelectMany(g => g.Views).ToArray();
@@ -217,9 +216,11 @@ public sealed class CodeBlockRunProcessor(IAppStore store, CodeBlockAnalyzer ana
         catch (OperationCanceledException) when (leaseLost.IsCancellationRequested) { }
         catch (Exception e)
         {
-            await Save(run with { State = CodeBlockRunState.Failed, ErrorCode = e is DiagramGenerationException known ? known.Code : "CODE_BLOCK_GENERATION_FAILED",
+            var hasResults = run.Results?.Any(g => g.Views.Any(v => v.Pages.Count > 0)) == true;
+            await Save(run with { State = hasResults ? CodeBlockRunState.Partial : CodeBlockRunState.Failed,
+                StopReason = "generation-error", ErrorCode = e is DiagramGenerationException known ? known.Code : "CODE_BLOCK_GENERATION_FAILED",
                 ErrorMessage = e is DiagramGenerationException detail ? detail.Message : "코드 분석 또는 생성에 실패했습니다. 입력과 서버 설정을 확인하세요.",
-                StageMessage = "생성 실패" });
+                StageMessage = hasResults ? "일부 생성 중단 · 완료된 다이어그램을 확인할 수 있습니다." : "생성 실패" });
         }
     }
     private string CacheKey(CodeBlockRun run, CodeBlockGroupSelection group, DiagramViewSelection selection, IReadOnlyList<CodeBlockRelation> relations) =>

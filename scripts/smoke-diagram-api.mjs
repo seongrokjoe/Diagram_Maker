@@ -101,8 +101,9 @@ try {
     const basePath = `/analyses/${analysis.id}/groups/group/views/${view.viewId}`;
     const artifact = await request(`${basePath}/pages/${page.id}`);
     assert.ok(artifact.ir.nodes.length > 0);
-    assert.equal(artifact.explanation.status, "Disabled");
-    assert.ok(artifact.explanation.warnings.some(warning => warning.includes("LLM")));
+    assert.equal(artifact.explanation.status, "Static");
+    assert.equal(view.generationMetadata.llmStatus, "Disabled");
+    assert.ok(view.warnings.some(warning => warning.includes("LLM")));
     assert.equal(artifact.explanation.changes.length, 0, "disabled generation must not invent change meaning");
     const removed = artifact.ir.nodes[0].id;
     const remaining = artifact.ir.nodes.filter(node => node.id !== removed);

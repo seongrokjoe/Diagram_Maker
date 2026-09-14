@@ -26,7 +26,6 @@ public static class ExecutionSequenceProjection
         var edges = new List<DiagramEdge>();
         var notes = new List<string> { "한 함수의 가능한 실행 경로이며 실제 실행 기록이 아닙니다. 호출 대상의 내부 구현은 상세 페이지에서 확인하세요." };
         var caller = StableIds.Create(symbol.Id, "caller");
-        var boundary = StableIds.Create(symbol.Id, "unresolved");
         nodes[symbol.Id] = Participant(symbol.Id, symbol.Name, symbol.EvidenceIds, [symbol.Id]);
         nodes[caller] = Participant(caller, "호출자", [], []);
         var replacements = new Dictionary<string, string>();
@@ -46,12 +45,15 @@ public static class ExecutionSequenceProjection
             if (Regex.IsMatch(expression, "^(true|false|null|nullptr|void|-?[0-9]+(?:\\.[0-9]+)?)$", RegexOptions.CultureInvariant)) return expression;
             return values.GetValueOrDefault(expression, "unknown");
         }
-        SequenceBlock Message(ExecutionFact fact, string type, string from, string to, string label, string? value = null)
+        SequenceBlock Message(ExecutionFact fact, string type, string from, string to, string label, string? value = null, CallPresentation? call = null)
         {
             var id = StableIds.Create(symbol.Id, fact.Id, type);
             edges.Add(new DiagramEdge(id, from, to, type, label, "unchanged", Confidence.Exact, fact.EvidenceIds ?? [],
                 edges.Count + 1, SourceFactIds: new[] { fact.Id, fact.CallSiteId }.OfType<string>().ToArray(), RelationOrigin: "code",
-                OriginalExpression: fact.Expression, ReturnValue: value, TerminationTarget: fact.TerminationTarget));
+                OriginalExpression: fact.Expression, ReturnValue: value, TerminationTarget: fact.TerminationTarget, Call: call,
+                Context: call is null ? null : new CodeContext(fact.Expression, call.Target, null, call.Arguments, call.AssignedTo, null, [],
+                    symbol.Calls.FirstOrDefault(c => c.Id == fact.CallSiteId)?.ControlPath ?? [],
+                    new("code-block", "", symbol.BlockId, symbol.Location.StartLine, symbol.Location.EndLine, fact.StartOffset, fact.EndOffset), "call")));
             return new(id, "message", label, [], id);
         }
         SequenceBlock Block(ExecutionFact fact, string kind, string label, IReadOnlyList<SequenceBlock> children) =>
@@ -67,16 +69,22 @@ public static class ExecutionSequenceProjection
                 {
                     var call = symbol.Calls.FirstOrDefault(c => c.Id == fact.CallSiteId);
                     var target = graph.Symbols.FirstOrDefault(s => s.Id == call?.TargetSymbolId);
+                    var presentation = CallPresentationBuilder.Build(fact, call, target, symbol, graph);
+                    var boundary = StableIds.Create(symbol.Id, "unresolved", presentation.Target);
                     var targetId = target?.Id ?? boundary;
-                    nodes.TryAdd(targetId, target is null ? Participant(boundary, "호출 대상 · 구현 미확인", [], []) :
+                    nodes.TryAdd(targetId, target is null ? Participant(boundary, presentation.Target, [], []) with
+                        { Details = [presentation.Basis == "api-contract" ? "외부 API · 공식 계약" : "호출 대상 · 구현 미확인", call?.ResolutionReason ?? "targetNotProven"] } :
                         Participant(target.Id, target.Name, target.EvidenceIds, [target.Id]) with { DetailPageId = CodeBlockProjectionService.Detail(target.Id) });
-                    result.Add(Message(fact, "message", symbol.Id, targetId, fact.Expression));
+                    result.Add(Message(fact, "message", symbol.Id, targetId, fact.Expression, call: presentation));
                     var response = "r" + ++callIndex;
                     if (fact.Value != "discarded")
                     {
-                        result.Add(Message(fact, "response", targetId, symbol.Id, response + " · 반환값 미확인", "unknown"));
-                        replacements[fact.Expression] = response;
+                        result.Add(Message(fact, "response", targetId, symbol.Id,
+                            CallPresentationBuilder.ReturnLabel(presentation, response + " · 반환값") + OutputLabel(presentation), "unknown", presentation));
+                        replacements[fact.Expression] = presentation.AssignedTo ?? response;
                     }
+                    else if (presentation.Outputs.Count > 0)
+                        result.Add(Message(fact, "response", targetId, symbol.Id, OutputLabel(presentation).TrimStart(' ', '·'), call: presentation));
                     foreach (var variable in values.Keys.ToArray())
                         if (Regex.IsMatch(fact.Expression, $@"(?:\bref\s+|\bout\s+|&\s*){Regex.Escape(variable)}\b"))
                         { values.Remove(variable); escaped.Add(variable); }
@@ -92,13 +100,20 @@ public static class ExecutionSequenceProjection
                         if (value == "unknown") values.Remove(fact.Variable);
                         else values[fact.Variable] = value;
                     }
-                    result.Add(Block(fact, "note", fact.Expression, []));
+                    var responseEdge = edges.LastOrDefault(e => e.Type == "response" && e.Call?.AssignedTo == fact.Variable && e.OriginalExpression == fact.Value);
+                    if (responseEdge is not null)
+                    {
+                        var position = edges.IndexOf(responseEdge);
+                        edges[position] = responseEdge with { EvidenceIds = responseEdge.EvidenceIds.Concat(fact.EvidenceIds ?? []).Distinct().ToArray(),
+                            SourceFactIds = (responseEdge.SourceFactIds ?? []).Append(fact.Id).Distinct().ToArray() };
+                    }
+                    else if (fact.Kind != "declare" || fact.Value is not null) result.Add(Block(fact, "note", fact.Expression, []));
                 }
                 else if (fact.Kind is "return" or "throw")
                 {
                     var value = Value(fact.Value, values);
                     var label = fact.Kind == "throw" ? "예외 전달: " + fact.Value : value == "unknown"
-                        ? $"반환 {fact.Value} · 값 미확인" : $"반환 {value}";
+                        ? $"반환 {Condition(fact.Value ?? "값")}" : $"반환 {value}";
                     result.Add(Message(fact, fact.Kind, symbol.Id, caller, label, value));
                     return (result, true);
                 }
@@ -180,7 +195,7 @@ public static class ExecutionSequenceProjection
                     if (fact.Kind == "invalidate" && fact.Variable is { } variable)
                     { values.Remove(variable); if (fact.Value == "escaped") escaped.Add(variable); }
                     else values.Clear();
-                    result.Add(Block(fact, "note", fact.Expression, []));
+                    if (!(fact.Kind == "invalidate" && fact.Value == "escaped")) result.Add(Block(fact, "note", fact.Expression, []));
                     if (fact.Kind == "unsupported") notes.Add(fact.Expression);
                 }
             }
@@ -193,4 +208,7 @@ public static class ExecutionSequenceProjection
     }
     private static DiagramNode Participant(string id, string label, IReadOnlyList<string> evidence, IReadOnlyList<string> facts) =>
         new(id, label, "participant", null, "unchanged", Confidence.Exact, evidence, SourceFactIds: facts);
+
+    private static string OutputLabel(CallPresentation call) => string.Join("", call.Outputs.Select(o =>
+        " · " + o.Expression + ": " + (o.Description.Length > 80 ? o.Description[..77] + "…" : o.Description)));
 }

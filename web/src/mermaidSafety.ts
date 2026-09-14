@@ -1,6 +1,8 @@
 // Inspect syntax after removing only recognized display strings. Mermaid strict
 // mode and SVG sanitizing remain separate layers at the rendering boundary.
+export const maximumMermaidCharacters = 1_000_000;
 export function mermaidSafetyError(source: string): string | null {
+  if (source.length > maximumMermaidCharacters) return "그림이 표시 크기 한도를 넘었습니다. 상세 페이지에서 확인하세요.";
   const blocked = "보안 차단: 링크 동작, click 명령, 설정 지시문 또는 삽입 구문은 사용할 수 없습니다.";
   if (/```|%%\{|^\s*---|<\/?[a-z][^>]*>/im.test(source)) return blocked;
   const type = source.trimStart().split(/\s/, 1)[0];

@@ -59,5 +59,5 @@ export function isSemanticPage(view: CodeBlockView, page: CodeBlockView["pages"]
   return page.resultKind ? page.resultKind === "semantic" : view.llmStatus === "Semantic";
 }
 
-export type CodeBlockLocationSelection = { group: string; view: string; page: string };
+export type CodeBlockLocationSelection = { group: string; view: string; page: string; variant?: "ai" | "code" };
 export const typeLabels: Array<[string, string]> = [["flowchart", "Flow"], ["sequence", "Sequence"], ["class", "Class"], ["state", "State"], ["code-relation", "코드 관계도"]];

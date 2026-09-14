@@ -97,7 +97,7 @@ public static class CodeBlockEndpoints
         });
         api.MapGet("/code-block-runs/{id:guid}/groups/{groupId}/views/{viewId}/pages/{pageId}", async (Guid id,
             string groupId, string viewId, string pageId, HttpContext context, CodeBlockWorkspaceService service, CancellationToken ct) =>
-            Results.Ok(CodeBlockWorkspaceService.Page(await service.GetRunAsync(id, Owner(context), ct), groupId, viewId, pageId)));
+            Results.Ok(CodeBlockWorkspaceService.Page(await service.GetRunAsync(id, Owner(context), ct), groupId, viewId, pageId, context.Request.Query["variant"])));
         api.MapGet("/code-block-runs/{id:guid}/evidence/{evidenceId}", async (Guid id, string evidenceId, HttpContext context,
             CodeBlockWorkspaceService service, IAppStore store, CancellationToken ct) =>
         {
@@ -123,14 +123,14 @@ public static class CodeBlockEndpoints
             string groupId, string viewId, string pageId, SaveDiagramEditRequest request, HttpContext context,
             CodeBlockWorkspaceService service, DiagramRevisionService revisions, CancellationToken ct) =>
         {
-            var page = CodeBlockWorkspaceService.Page(await service.GetRunAsync(id, Owner(context), ct), groupId, viewId, pageId);
+            var page = CodeBlockWorkspaceService.Page(await service.GetRunAsync(id, Owner(context), ct), groupId, viewId, pageId, context.Request.Query["variant"]);
             return Results.Ok(await revisions.PreviewAsync(page, request, Owner(context), ct));
         });
         api.MapPost("/code-block-runs/{id:guid}/groups/{groupId}/views/{viewId}/pages/{pageId}/edits", async (Guid id,
             string groupId, string viewId, string pageId, SaveDiagramEditRequest request, HttpContext context,
             CodeBlockWorkspaceService service, DiagramRevisionService revisions, CancellationToken ct) =>
         {
-            var page = CodeBlockWorkspaceService.Page(await service.GetRunAsync(id, Owner(context), ct), groupId, viewId, pageId);
+            var page = CodeBlockWorkspaceService.Page(await service.GetRunAsync(id, Owner(context), ct), groupId, viewId, pageId, context.Request.Query["variant"]);
             return Results.Ok(await revisions.SaveAsync(page, request, Owner(context), "code-block", id, groupId, viewId, ct));
         });
     }

@@ -34,6 +34,13 @@ export function ExecutionEvidence({ diagram, onEvidence }: {
       <strong>{kind(row.kind)} · {row.label}</strong>
       <code className="execution-expression">{row.expression}</code>
       {row.value && <span>반환값: {row.value === "unknown" ? "미확인" : row.value}</span>}
+      {events.get(row.id)?.call && (() => { const call = events.get(row.id)!.call!; return <div className="call-presentation">
+        <p>호출: {call.target} · 인자: {call.arguments.join(", ") || "없음"}</p>
+        {call.assignedTo && <p>반환 대상: {call.assignedTo}{call.returnType && ` (${call.returnType})`}</p>}
+        {call.basis === "api-contract" && <p>동봉 Win32 API 계약 · 입력 코드의 구현 근거와 구분됩니다.</p>}
+        {call.outputs.map((output, index) => <div key={index}><p>{output.expression}: {output.description} · {output.basis === "api-contract" ? "API 계약" : output.basis === "code" ? "코드 근거" : "구문상 참조 전달"}</p>
+          {onEvidence && output.evidenceIds.length > 0 && <EvidenceBrowser evidenceIds={output.evidenceIds} onEvidence={onEvidence} />}</div>)}
+      </div>; })()}
       {onEvidence && row.evidence.length > 0 && <EvidenceBrowser evidenceIds={row.evidence} onEvidence={onEvidence} />}
     </div>)}
   </details>;

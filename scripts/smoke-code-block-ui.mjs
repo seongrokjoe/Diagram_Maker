@@ -161,12 +161,13 @@ try {
   const editor = workspace.locator('.structured-diagram-editor');
   assert.equal(await editor.count(), 0, 'an incomplete run does not open static pages as successful results');
   await workspace.getByRole('button', { name: '정적 구조 열기', exact: true }).click();
-  await editor.locator('svg').first().waitFor();
+  await editor.locator('.diagram-canvas svg').first().waitFor();
   await editor.getByText('동작 설명과 원본 근거', { exact: true }).click();
   assert.ok(await editor.getByText('의미 설명 미완료', { exact: true }).isVisible());
   assert.equal(await editor.getByText('핵심 변경', { exact: true }).count(), 0, 'pasted code does not show Git change language');
+  await editor.getByLabel('원본 기준 확대', { exact: true }).selectOption('1');
   await editor.getByRole('button', { name: '확대', exact: true }).click();
-  await editor.getByText('110%', { exact: true }).waitFor();
+  await editor.locator('.zoom-status').filter({ hasText: /^110%$/ }).waitFor();
   await editor.getByRole('button', { name: '맞춤 보기', exact: true }).click();
   const body = await (await page.request.get(`${origin}/api/v1/code-block-runs/${(await generated.json()).id}`)).json();
   const tree = workspace.getByRole('tree', { name: '다이어그램 결과 트리', exact: true });
@@ -175,14 +176,14 @@ try {
   assert.equal(await firstType.getAttribute('aria-expanded'), 'false');
   await page.keyboard.press('ArrowRight');
   assert.equal(await firstType.getAttribute('aria-expanded'), 'true');
-  await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter');
+  await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter');
   assert.equal(await tree.locator('[aria-selected="true"]').count(), 1, 'keyboard selects a result page');
   await page.keyboard.press('ArrowLeft');
-  assert.equal(await tree.locator(':focus').getAttribute('aria-level'), '2', 'left arrow moves to the parent');
+  assert.equal(await tree.locator(':focus').getAttribute('aria-level'), '3', 'left arrow moves to the AI/Code parent');
   await page.keyboard.press(' ');
   assert.equal(await tree.locator(':focus').getAttribute('aria-expanded'), 'false', 'space collapses a group');
   await page.keyboard.press('ArrowRight'); await page.keyboard.press('ArrowRight');
-  assert.equal(await tree.locator(':focus').getAttribute('aria-level'), '3', 'right arrow opens and enters a group');
+  assert.equal(await tree.locator(':focus').getAttribute('aria-level'), '4', 'right arrow opens and enters an AI/Code group');
   await page.keyboard.press('End');
   assert.equal(await tree.locator(':focus').getAttribute('data-row-id'), await tree.getByRole('treeitem').last().getAttribute('data-row-id'));
   await page.keyboard.press('ArrowUp');
@@ -193,9 +194,9 @@ try {
   for (const view of body.results[0].views) {
     const artifact = await (await page.request.get(`${origin}/api/v1/code-block-runs/${body.id}/groups/${body.results[0].groupId}/views/${view.viewId}/pages/${view.pages[0].id}`)).json();
     if (view.selection.diagramType === 'flowchart') assert.ok(artifact.ir.edges.some(e => e.type === 'calls'), 'same-line C++ return call remains connected in Flow');
-    await workspace.locator(`[role="treeitem"][data-row-id="${view.viewId}:${view.pages[0].id}"]`).click();
+    await workspace.locator(`[role="treeitem"][data-row-id="view:${body.results[0].groupId}/${view.viewId}:${view.pages[0].id}:code"]`).click();
     await page.waitForFunction(dsl => document.querySelector('.code-block-workspace .structured-diagram-editor details pre')?.textContent === dsl, artifact.mermaidDsl);
-    await editor.locator('svg').first().waitFor();
+    await editor.locator('.diagram-canvas svg').first().waitFor();
     await editor.screenshot({ path: path.join(fixture, `${view.selection.diagramType}.png`) });
   }
   await editor.locator('.code-block-explanation > summary').click();
@@ -206,8 +207,9 @@ try {
   assert.ok(code.includes(await evidence.locator('pre').innerText()), 'evidence shows the original pasted source');
   await evidence.getByRole('button', { name: '근거 닫기', exact: true }).click();
   await editor.getByRole('button', { name: '구조 편집', exact: true }).click();
+  await editor.locator('.structure-editor-section > summary').filter({ hasText: /^관계/ }).click();
   await editor.locator('.edge-edit-row input').first().fill('사용자 검토 관계');
-  const saveResponse = page.waitForResponse(r => r.url().endsWith('/edits') && r.request().method() === 'POST');
+  const saveResponse = page.waitForResponse(r => new URL(r.url()).pathname.endsWith('/edits') && r.request().method() === 'POST');
   await editor.getByRole('button', { name: '새 리비전 저장', exact: true }).click();
   const saved = await saveResponse; assert.equal(saved.status(), 200);
   const revision = await saved.json();
@@ -228,8 +230,8 @@ try {
   await page.reload();
   await page.waitForFunction(expected => document.querySelector('.code-block-workspace textarea[aria-label="코드"]')?.value === expected, code);
   assert.equal(await workspace.getByLabel('코드', { exact: true }).inputValue(), code, 'saved draft restores after reload');
-  await editor.locator('svg').first().waitFor();
-  for (const name of ['codeWorkspace', 'codeRun', 'codeGroup', 'codeView', 'codePage', 'codeScreen'])
+  await editor.locator('.diagram-canvas svg').first().waitFor();
+  for (const name of ['codeWorkspace', 'codeRun', 'codeGroup', 'codeView', 'codePage', 'codeScreen', 'codeVariant'])
     assert.equal(new URL(page.url()).searchParams.get(name), selectedUrl.searchParams.get(name), `reload restores ${name}`);
   for (const width of [1366, 1440, 1920, 800, 390]) {
     await page.setViewportSize({ width, height: 1000 });
@@ -245,9 +247,9 @@ try {
   await workspace.getByRole('tab', { name: '다이어그램 결과', exact: true }).click();
   assert.equal(await firstType.getAttribute('aria-expanded'), 'false', 'screen switches preserve collapsed branches');
   await page.reload();
-  await editor.locator('svg').first().waitFor();
+  await editor.locator('.diagram-canvas svg').first().waitFor();
   assert.equal(await firstType.getAttribute('aria-expanded'), 'false', 'reload preserves non-selected collapsed branches');
-  assert.equal(await tree.locator('[aria-selected="true"]').getAttribute('data-row-id'), `${selectedUrl.searchParams.get('codeView')}:${selectedUrl.searchParams.get('codePage')}`);
+  assert.equal(await tree.locator('[aria-selected="true"]').getAttribute('data-row-id'), `view:${selectedUrl.searchParams.get('codeGroup')}/${selectedUrl.searchParams.get('codeView')}:${selectedUrl.searchParams.get('codePage')}:code`);
   assert.equal(generationRequests, navigationRequests, 'tree navigation, screen switches and reload do not generate');
   const regeneratedResponse = page.waitForResponse(r => /code-block-workspaces\/[^/]+\/runs$/.test(r.url()) && r.request().method() === 'POST');
   await workspace.getByRole('button', { name: '이 결과 재생성', exact: true }).click();
@@ -255,11 +257,11 @@ try {
   const regeneratedId = (await regenerated.json()).id;
   await workspace.getByText('의미 생성 미완료 · 실패 사유와 정적 구조를 확인하세요', { exact: true }).waitFor({ timeout: 30000 });
   await workspace.getByLabel('생성 이력', { exact: true }).selectOption(body.id);
-  await workspace.getByLabel('정적 구조 보기', { exact: true }).check();
-  await workspace.locator(`[role="treeitem"][data-row-id="${selectedUrl.searchParams.get('codeView')}:${selectedUrl.searchParams.get('codePage')}"]`).click();
+  await workspace.getByLabel('Code 다이어그램 보기 (정적 구조)', { exact: true }).check();
+  await workspace.locator(`[role="treeitem"][data-row-id="view:${selectedUrl.searchParams.get('codeGroup')}/${selectedUrl.searchParams.get('codeView')}:${selectedUrl.searchParams.get('codePage')}:code"]`).click();
   await page.waitForFunction(dsl => document.querySelector('.code-block-workspace .structured-diagram-editor details pre')?.textContent === dsl, revision.diagram.mermaidDsl);
   await page.reload();
-  await editor.locator('svg').first().waitFor();
+  await editor.locator('.diagram-canvas svg').first().waitFor();
   assert.equal(await workspace.getByLabel('생성 이력', { exact: true }).inputValue(), body.id, 'reload keeps the selected older generation');
   assert.notEqual(new URL(page.url()).searchParams.get('codeRun'), regeneratedId);
   await page.waitForFunction(dsl => document.querySelector('.code-block-workspace .structured-diagram-editor details pre')?.textContent === dsl, revision.diagram.mermaidDsl);
@@ -294,8 +296,8 @@ try {
   const answeredId = (await answered.json()).id;
   await workspace.getByText('의미 생성 미완료 · 실패 사유와 정적 구조를 확인하세요', { exact: true }).waitFor({ timeout: 30000 });
   await workspace.getByRole('button', { name: '정적 구조 열기', exact: true }).click();
-  await editor.locator('svg').first().waitFor();
-  await page.waitForFunction(() => /사용자\s*제공:/.test(document.querySelector('.code-block-workspace .structured-diagram-editor svg')?.textContent ?? ''));
+  await editor.locator('.diagram-canvas svg').first().waitFor();
+  await page.waitForFunction(() => /사용자\s*제공:/.test(document.querySelector('.code-block-workspace .structured-diagram-editor .diagram-canvas svg')?.textContent ?? ''));
   const merged = await (await page.request.get(`${origin}/api/v1/code-block-runs/${answeredId}`)).json();
   assert.equal(merged.groups.length, 1, 'explicit answer merges the selected groups');
   assert.equal(merged.results[0].views[0].selection.diagramType, 'code-relation');
@@ -319,7 +321,7 @@ try {
   await generateButton.click();
   const fiveId = (await (await fiveResponse).json()).id;
   await workspace.getByText('의미 생성 미완료 · 실패 사유와 정적 구조를 확인하세요', { exact: true }).waitFor({ timeout: 30000 });
-  await workspace.getByLabel('정적 구조 보기', { exact: true }).check();
+  await workspace.getByLabel('Code 다이어그램 보기 (정적 구조)', { exact: true }).check();
   const five = await (await page.request.get(`${origin}/api/v1/code-block-runs/${fiveId}`)).json();
   assert.equal(five.results[0].views.length, 5);
   const diagnosticDownload = page.waitForEvent('download');
@@ -337,13 +339,14 @@ try {
   assert.match(textReport, /DiagramMaker generation diagnostics/); assert.ok(!textReport.includes('class Machine'));
   for (const view of five.results[0].views) {
     assert.ok(view.pages.length, `${view.selection.diagramType} has source-backed pages`);
-    await workspace.locator(`[role="treeitem"][data-row-id="${view.viewId}:${view.pages[0].id}"]`).click();
+    await workspace.locator(`[role="treeitem"][data-row-id="view:${five.results[0].groupId}/${view.viewId}:${view.pages[0].id}:code"]`).click();
     await editor.getByRole('button', { name: '구조 편집', exact: true }).click();
-    await editor.locator('.edit-list .edit-row textarea').first().fill('http://localhost:5173 click 요청 확인');
-    const edited = page.waitForResponse(r => r.url().endsWith('/edits') && r.request().method() === 'POST');
+    await editor.locator('.structure-editor-section > summary').filter({ hasText: /^노드/ }).click();
+    await editor.getByRole('textbox', { name: '노드 1 이름', exact: true }).fill('http://localhost:5173 click 요청 확인');
+    const edited = page.waitForResponse(r => new URL(r.url()).pathname.endsWith('/edits') && r.request().method() === 'POST');
     await editor.getByRole('button', { name: '새 리비전 저장', exact: true }).click();
     assert.equal((await edited).status(), 200);
-    await page.waitForFunction(() => /http:\/\/localhost:5173/.test(document.querySelector('.code-block-workspace .structured-diagram-editor svg')?.textContent ?? ''));
+    await page.waitForFunction(() => /http:\/\/localhost:5173/.test(document.querySelector('.code-block-workspace .structured-diagram-editor .diagram-canvas svg')?.textContent ?? ''));
     assert.equal(await editor.locator('.error-panel').count(), 0, 'display URL is not a security error');
     assert.equal(await editor.locator('svg a, svg image, svg foreignObject, svg [onclick]').count(), 0, 'display URL has no link or embedded content');
     await editor.screenshot({ path: path.join(fixture, `url-${view.selection.diagramType}.png`) });

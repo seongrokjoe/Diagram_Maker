@@ -64,6 +64,6 @@ internal static class CodeBlockPlanValidation
 
     private static string Scope(CodeContext context) => string.Join("|", context.ControlPath.Select(s => s.Id + ":" + s.Branch));
     private static bool NaturalLabel(string? value, int maximum) => !string.IsNullOrWhiteSpace(value) && value.Length <= maximum &&
-        Regex.IsMatch(value, "[가-힣]") && !Regex.IsMatch(value, @"[<>`;{}]|&&|\|\||==|!=|\breturn\b|\bif\s*\(") &&
+        Regex.IsMatch(value, "[가-힣]") && !Regex.IsMatch(value, @"```|<\s*/?\s*[a-zA-Z][^>]*>|%%\{|\b(?:javascript|data)\s*:", RegexOptions.IgnoreCase) &&
         value.Trim() is not ("데이터 처리" or "관련 기능 호출" or "코드 처리");
 }
