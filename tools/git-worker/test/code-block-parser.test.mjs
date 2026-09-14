@@ -113,6 +113,61 @@ test("duplicates, receivers, overloads and file-local functions are not name-onl
   assert.equal(g.symbols[0].calls[0].targetSymbolId, null);
   assert.equal(g.symbols[0].calls[0].candidateSymbolIds.length, 2);
 });
+
+test("cast receivers resolve across blocks without fabricating cast calls", async () => {
+  const graph = await analyzeCodeBlocks([
+    block("entry", "void CCommand::Run(void *dummy) { static_cast<CCommand*>(dummy)->portMonThread(dummy); }"),
+    block("worker", "BOOL CCommand::portMonThread(void *dummy) { return 1; }")
+  ]);
+  const entry = graph.symbols.find(s => s.name === "CCommand::Run");
+  assert.equal(entry.calls.length, 1);
+  assert.equal(entry.calls[0].targetSymbolId, graph.symbols.find(s => s.name === "CCommand::portMonThread").id);
+  assert.equal(entry.calls[0].receiverType, "CCommand");
+  assert.equal(entry.execution.filter(e => e.kind === "call").length, 1);
+});
+
+test("typed aliases, nested arguments and lexical shadowing retain honest targets", async () => {
+  const graph = await analyzeCodeBlocks([block("all", `
+    using Alias = Worker;
+    void Worker::save(int value) {}
+    void Other::save(int value) {}
+    int load() { return 1; }
+    void run(Worker* worker) {
+      Alias* alias = static_cast<Alias*>(worker);
+      alias->save(load());
+      { Other* worker; worker->save(1); }
+      worker->save(2);
+    }`)]);
+  const run = graph.symbols.find(s => s.name === "run");
+  assert.deepEqual(run.calls.map(c => c.name), ["load", "save", "save", "save"]);
+  assert.deepEqual(run.calls.map(c => graph.symbols.find(s => s.id === c.targetSymbolId)?.name), ["load", "Worker::save", "Other::save", "Worker::save"]);
+});
+
+test("unknown receivers and virtual dispatch do not become exact calls", async () => {
+  const graph = await analyzeCodeBlocks([block("all", `
+    struct Base { virtual void save(int value) {} };
+    void run(Base* value) { value->save(1); missing->outside(); }
+    void unrelated() {}`)]);
+  const calls = graph.symbols.find(s => s.name === "run").calls;
+  assert.equal(calls[0].targetSymbolId, null);
+  assert.equal(calls[0].resolutionReason, "virtualDispatch");
+  assert.deepEqual(calls[1].candidateSymbolIds, []);
+});
+
+test("receiver casts preserve lexical namespaces and distinguish overload argument types", async () => {
+  const graph = await analyzeCodeBlocks([block("all", `
+    namespace N {
+      struct Worker { void save(int n){} void save(bool n){} };
+      void run(void* value) {
+        static_cast<Worker*>(value)->save(1);
+        ((Worker*)value)->save(true);
+      }
+    }`)]);
+  const calls = graph.symbols.find(s => s.name === "N::run").calls;
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every(call => call.targetSymbolId));
+  assert.notEqual(calls[0].targetSymbolId, calls[1].targetSymbolId);
+});
 test("state transitions require a same-variable guard and assignment", async () => {
   const g = await analyzeCodeBlocks([block("state", "void tick(){if(state == Idle) {state = Running;}}")]);
   assert.equal(g.transitions.length, 1);

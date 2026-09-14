@@ -376,6 +376,14 @@ pre { overflow: auto; max-height: 260px; padding: 14px; background: #101c2d; col
 .code-block-workspace label { display: grid; gap: 4px; margin: 0; }
 .code-block-workspace input[type="checkbox"] { width: auto; }
 .code-block-source { font-family: Consolas, monospace; tab-size: 4; width: 100%; resize: vertical; }
+.code-source-input { display: flex; min-width: 0; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; }
+.code-source-input:focus-within { outline: 2px solid #2563eb; outline-offset: 2px; }
+.code-source-input .code-block-source { min-width: 0; flex: 1; margin: 0; border: 0; border-radius: 0; padding: 12px; font-size: 13px; line-height: 20px; white-space: pre; }
+.code-source-input .code-block-source:focus { outline: none; box-shadow: none; }
+.code-source-lines { flex: 0 0 4.5em; align-self: stretch; height: auto; overflow: hidden; background: #f1f5f9; color: #64748b; user-select: none; position: relative; }
+.code-source-lines pre { position: absolute; inset: 0; margin: 0; padding: 12px 10px 12px 4px; font: 13px/20px Consolas, monospace; text-align: right; color: inherit; background: transparent; overflow: visible; }
+.code-block-run-status { border-left: 4px solid #2563eb; }
+.semantic-progress .semantic-progress-current { padding: 12px 14px; background: #eff6ff; border-radius: 8px; color: #1e3a8a; font-weight: 600; }
 .code-block-group { padding: 16px 0; border-top: 1px solid var(--code-block-border); }
 .code-block-workspace details > summary { cursor: pointer; padding: 4px 0; }
 .code-block-evidence pre { overflow: auto; max-height: 420px; white-space: pre; }

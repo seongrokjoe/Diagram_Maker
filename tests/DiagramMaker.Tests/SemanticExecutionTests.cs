@@ -55,7 +55,7 @@ public sealed class SemanticExecutionTests
             var original = (await store.GetCodeBlockRunAsync(runId, Ct))!;
             await Assert.ThrowsAsync<KeyNotFoundException>(() => service.ResumeAsync(runId, new(original.Revision), "outsider", Ct));
             var resumed = await service.ResumeAsync(runId, new(original.Revision), "owner", Ct);
-            Assert.Equal("shared-semantic-v2", resumed.GenerationVersion);
+            Assert.Equal(SharedSemanticProjection.Version, resumed.GenerationVersion);
             Assert.Equal(original.Snapshot, resumed.Snapshot);
             Assert.Null(resumed.Checkpoints);
             Assert.Null(resumed.Results);

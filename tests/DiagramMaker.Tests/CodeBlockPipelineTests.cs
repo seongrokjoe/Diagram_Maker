@@ -192,15 +192,15 @@ public sealed class CodeBlockPipelineTests
             return result;
         }
         var first = await Generate();
-        // Each group plans/reviews its function, then generates/reviews shared labels.
-        Assert.Equal(8, transport.Requests.Count);
-        Assert.All(transport.Requests.Take(4), r => Assert.True(r.EnableThinking));
-        Assert.All(transport.Requests.Skip(4), r => Assert.False(r.EnableThinking));
+        // Each group generates and independently reviews the shared annotations once.
+        Assert.Equal(4, transport.Requests.Count);
+        Assert.All(transport.Requests.Take(2), r => Assert.True(r.EnableThinking));
+        Assert.All(transport.Requests.Skip(2), r => Assert.False(r.EnableThinking));
         transport.Requests.Clear();
         var regenerated = await Generate(["va"]);
         Assert.True(regenerated.Groups!.Single(g => g.Id == "ga").EnableThinking);
         Assert.False(regenerated.Groups!.Single(g => g.Id == "gb").EnableThinking);
-        Assert.Equal(4, transport.Requests.Count);
+        Assert.Equal(2, transport.Requests.Count);
         Assert.All(transport.Requests, r => Assert.True(r.EnableThinking));
         Assert.Equal(first.Results![1].Views[0].Pages[0].Diagram.Id, regenerated.Results![1].Views[0].Pages[0].Diagram.Id);
         workspace = await service.SaveAsync(workspace.Id, new(workspace.Revision, input with {

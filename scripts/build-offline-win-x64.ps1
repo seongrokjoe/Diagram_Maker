@@ -1,5 +1,5 @@
 param(
-    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$')][string]$Version = '0.1.0-internal.6',
+    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$')][string]$Version = '0.1.0-internal.7',
     [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')][string]$NodeVersion = '24.12.0',
     [switch]$SkipTests
 )
@@ -159,6 +159,9 @@ Copy-Item -Path (Join-Path $projectRoot 'packaging\windows\*.cmd') -Destination 
 Copy-Item -LiteralPath (Join-Path $projectRoot 'packaging\windows\OFFLINE_INSTALL_KO.txt') -Destination $stageRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot 'packaging\windows\INTERNAL_TEST_KO.txt') -Destination $stageRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot 'packaging\windows\config') -Destination $stageRoot -Recurse
+Copy-Item -LiteralPath (Join-Path $projectRoot 'packaging\windows\benchmarks') -Destination $stageRoot -Recurse
+& $targetNode (Join-Path $PSScriptRoot 'reliability-fixture.mjs') (Join-Path $stageRoot 'benchmarks')
+Assert-LastExitCode 'onsite synthetic measurement fixtures'
 
 $licenseRoot = Join-Path $stageRoot 'licenses'
 $npmLicenseRoot = Join-Path $licenseRoot 'npm'

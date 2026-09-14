@@ -63,18 +63,23 @@ public sealed class CodeBlockGroupingService(IOptions<CodeBlockOptions> options)
         IEnumerable<CodeBlockQuestion> CreateQuestions()
         {
             var unresolved = graph.Symbols.SelectMany(s => s.Calls).Where(c => c.TargetSymbolId is null &&
-                (c.CandidateSymbolIds?.Count > 0 || c.Receiver is not null)).ToArray();
+                c.CandidateSymbolIds?.Count > 0).ToArray();
             var questions = new List<CodeBlockQuestion>();
             foreach (var call in unresolved)
             {
                 var source = symbols[call.SymbolId];
                 var candidates = (call.CandidateSymbolIds ?? []).Where(symbols.ContainsKey).ToArray();
-                // A receiver can be an interface/callback whose implementation has a different name.
-                if (candidates.Length == 0) candidates = graph.Symbols.Where(s => s.BlockId != source.BlockId &&
-                    s.Kind is "function" or "method" or "fragment").Select(s => s.Id).ToArray();
                 if (candidates.Length == 0) continue;
+                var reason = call.ResolutionReason switch
+                {
+                    "virtualDispatch" => "가상 호출의 실제 런타임 타입이 필요합니다.",
+                    "receiverTypeUnknown" => "수신 객체의 타입을 입력 코드에서 확인할 수 없습니다.",
+                    "overloadAmbiguous" => "인자 타입으로 오버로드를 하나로 좁힐 수 없습니다.",
+                    "multipleTargets" => "동일한 이름과 인자 수의 구현이 여러 개 있습니다.",
+                    _ => "선언 범위 또는 호출 대상의 타입 근거가 부족합니다."
+                };
                 questions.Add(new CodeBlockQuestion(StableIds.Create("question", call.Id),
-                    $"{blocks[source.BlockId].Title} {call.Location.StartLine}행의 {call.Name} 호출은 어느 구현으로 연결됩니까? 코드만으로 대상을 확정할 수 없습니다.",
+                    $"{blocks[source.BlockId].Title} {call.Location.StartLine}행의 {call.Name} 호출은 어느 구현으로 연결됩니까? {reason}",
                     source.BlockId, source.Id, call.Id, graph.Evidence.Where(e => e.Location == call.Location).Select(e => e.Id).ToArray(),
                     candidates.Select(id => new CodeBlockQuestionOption(id, $"{blocks[symbols[id].BlockId].Title} / {symbols[id].Signature}", id)).ToArray()));
             }

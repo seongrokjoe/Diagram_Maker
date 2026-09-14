@@ -112,7 +112,7 @@ export async function analyzeCodeBlocks(blocks, limits = { maximumBlocks: 20, ma
         const ast = nodes.find(n => n.type === "call_expression" && n.startIndex === c.startOffset && n.endIndex === c.endOffset);
         const controlPath = ast ? [...scopes(ast), ...c.controlPath.filter(s => s.kind === "unordered").map(s => ({ ...s, id: hash(symbol.id, s.id) }))] : c.controlPath;
         return { ...c, id: hash(symbol.id, "call", loc.startOffset), symbolId: symbol.id, location: loc,
-          statement: block.code.slice(loc.startOffset, loc.endOffset), receiver: c.expression.includes("->") || c.expression.includes(".") ? c.expression : null,
+          statement: block.code.slice(loc.startOffset, loc.endOffset), receiver: c.receiver,
           controlPath, orderUncertain: c.controlPath.some(s => s.kind === "unordered") };
       });
       const mapExecution = items => items.map(e => {
@@ -162,15 +162,10 @@ export async function analyzeCodeBlocks(blocks, limits = { maximumBlocks: 20, ma
   const resolution = resolveCppCalls(files);
   const symbols = files.flatMap(f => f.symbols);
   for (const source of symbols) for (const call of source.calls) {
-    const owner = source.qualifiedName.split("::").slice(0, -1).join("::");
-    const name = call.expression.includes("::") ? call.expression : [owner, call.name].filter(Boolean).join("::");
-    const candidates = symbols.filter(t => t.parameterCount === call.argumentCount && t.simpleName === call.name &&
-      (!t.fileLocal || t.blockId === source.blockId));
-    const exact = candidates.filter(t => t.qualifiedName === name);
-    // The legacy resolver supplies candidates. Its name-only fallback is never proof
-    // of a pasted-code relationship; duplicate definitions and receivers remain open.
-    const resolved = resolution.edges.some(e => e.sourceSemanticKey === source.semanticKey && e.sequenceIndex === call.order && e.confidence === "Exact");
-    const target = resolved && exact.length === 1 && !call.receiver && !source.isFragment && !source.localBindings.includes(call.name) ? exact[0] : null;
+    const candidates = symbols.filter(t => call.candidateSemanticKeys?.includes(t.semanticKey) && (!t.fileLocal || t.blockId === source.blockId));
+    const exact = candidates.filter(t => t.semanticKey === call.resolvedSemanticKey);
+    const target = call.resolutionConfidence === "Exact" && exact.length === 1 && !source.isFragment &&
+      (call.receiver || !source.localBindings.includes(call.name)) ? exact[0] : null;
     call.targetSymbolId = target?.id ?? null;
     call.candidateSymbolIds = candidates.map(t => t.id);
   }

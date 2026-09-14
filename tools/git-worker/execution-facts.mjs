@@ -1,5 +1,9 @@
 // Syntax-owned execution regions. Offsets are UTF-16, just like the editor.
 // These facts describe observed syntax; they never imply a resolved call target.
+export const isCppCast = node => node?.type === "call_expression" &&
+  node.childForFieldName("function")?.type === "template_function" &&
+  /^(?:static_cast|dynamic_cast|reinterpret_cast|const_cast)\s*</.test(node.childForFieldName("function")?.text ?? "");
+
 export function executionFacts(declaration) {
   const field = (n, key) => n?.childForFieldName(key);
   const children = n => n?.namedChildren.filter(c => c.type !== "comment") ?? [];
@@ -20,6 +24,7 @@ export function executionFacts(declaration) {
       children: expression(field(n, "consequence")), alternative: expression(field(n, "alternative")),
     })];
     if (n.type === "call_expression") {
+      if (isCppCast(n)) return children(field(n, "arguments")).flatMap(expression);
       const args = children(field(n, "arguments"));
       const evaluations = args.map(expression);
       const active = evaluations.map((events, index) => ({ events, node: args[index] })).filter(a => a.events.length);

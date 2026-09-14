@@ -21,6 +21,7 @@ export type SemanticProgress = {
   attemptTokenizationRequests?: number; waitMilliseconds?: number; attemptWaitMilliseconds?: number;
   waitingSince?: string; recentFailures?: FailureDiagnostic[];
   lastRequest?: FailureDiagnostic; protocolUpgraded?: boolean;
+  lastProgressAt?: string; coverage?: { totalUnits: number; verifiedUnits: number; pendingUnits: number; failedUnits: number };
 };
 
 export function SemanticProgressView({ value, running }: { value: SemanticProgress; running: boolean }) {
@@ -53,6 +54,11 @@ export function SemanticProgressView({ value, running }: { value: SemanticProgre
     </>}
   </div>);
   return <div className="help semantic-progress" aria-label="전체 및 이번 실행 진척">
+    <div className="semantic-progress-current"><p role="status">{running ? "생성 중" : "실행 종료"} · {value.lastRequest ? purpose(value.lastRequest) : "코드 구조 준비"}
+      {value.coverage && ` · 의미 설명 검토 ${value.coverage.verifiedUnits} / ${value.coverage.totalUnits}개`}</p>
+      <p>경과 {Math.floor(elapsed / 60)}분 {elapsed % 60}초</p></div>
+    {value.lastProgressAt && <p>최근 진행 <time dateTime={value.lastProgressAt}>{new Date(value.lastProgressAt).toLocaleTimeString()}</time>
+      {value.coverage && ` · 남은 설명 ${value.coverage.pendingUnits}개 · 미완료 ${value.coverage.failedUnits}개`}</p>}
     <p>전체: 완료 {value.completedUnits}단위 · 요청 {value.requests}회 · 실제 전송 {value.transportRequests ?? value.requests}회 · 누적 {total}초</p>
     <p>이번 실행 {value.attemptNumber ?? 1}: 새 완료 {value.attemptCompletedUnits ?? value.completedUnits}단위 · 재사용 {value.reusedUnits}단위 · 요청 {value.attemptRequests ?? value.requests}회 · 실제 전송 {value.attemptTransportRequests ?? value.requests}회 · {elapsed} / {value.budgetSeconds}초</p>
     <p>LLM 대기: 전체 {Math.floor(((value.waitMilliseconds ?? 0) + waiting) / 1000)}초 · 이번 실행 {Math.floor(((value.attemptWaitMilliseconds ?? 0) + waiting) / 1000)}초

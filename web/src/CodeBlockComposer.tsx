@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { PresetPicker } from "./PresetPicker";
 import { CodeBlockGroupRelations } from "./CodeBlockGroupRelations";
+import { CodeSourceInput } from "./CodeSourceInput";
 import type { CodeBlockDraft, CodeBlockGroup, CodeBlockInput } from "./codeBlockTypes";
 import type { DiagramPreset, DiagramType } from "./types";
 import { mergeGroups, moveBlock, nextTitle, reorderGroupBlock, typeLabels } from "./codeBlockWorkspaceState";
@@ -74,9 +75,8 @@ export function CodeBlockComposer({ draft, groups, presets, limits, onChange }: 
               <label>언어<select aria-label="언어" value={block.language} onChange={e => updateBlock(block.id, { language: e.target.value as CodeBlockInput["language"] })}><option value="cpp">C/C++</option><option value="csharp">C#</option></select></label>
               <label>소속 그룹<select aria-label="블럭 그룹 이동" value={selectedGroup.id} onChange={e => move(block.id, groups.find(g => g.id === e.target.value)!)}>
                 {groups.map(g => <option key={g.id} value={g.id}>{g.title}</option>)}</select></label></div>
-            <label>코드<textarea aria-label="코드" className="code-block-source" rows={14} spellCheck={false} value={block.code}
-              aria-invalid={block.code.length > limits.maximumBlockCharacters}
-              placeholder="클래스, 함수 또는 함수 내부 코드를 붙여 넣으세요." onChange={e => updateBlock(block.id, { code: e.target.value })} /></label>
+            <label>코드<CodeSourceInput value={block.code} invalid={block.code.length > limits.maximumBlockCharacters}
+              onChange={code => updateBlock(block.id, { code })} /></label>
             <p className={block.code.length > limits.maximumBlockCharacters ? "error" : "help"}>{block.code.length.toLocaleString()} / {limits.maximumBlockCharacters.toLocaleString()}자{block.code.length > limits.maximumBlockCharacters ? " · 한도 초과: 입력은 보존했습니다." : ""}</p>
             <label>설명 (선택)<input maxLength={2000} value={block.description ?? ""} onChange={e => updateBlock(block.id, { description: e.target.value })} /></label>
           </div>

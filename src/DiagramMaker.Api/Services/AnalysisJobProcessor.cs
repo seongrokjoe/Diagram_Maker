@@ -295,6 +295,43 @@ public sealed class AnalysisJobProcessor(
         var groupResults = new List<AnalysisDiagramGroupResult>();
         var requested = requestedViewIds?.ToHashSet(StringComparer.Ordinal);
         var expectedCount = 0;
+        // Save all static pages before semantic generation (including all groups).
+        // This checkpoint uses the parent execution lease, independent of LLM timeouts.
+        var staticGroups = new List<AnalysisDiagramGroupResult>();
+        foreach (var group in groups)
+        {
+            var bundle = DiagramEvidenceBuilder.Build(graph, comparison, group.ChangeIds);
+            var staticViews = new List<AnalysisDiagramViewResult>();
+            foreach (var selection in group.EffectiveViews())
+            {
+                try
+                {
+                    var preset = presets.Resolve(selection.DiagramType, selection.PresetId);
+                    var projected = projection.Build(repositoryName, graph, comparison, [selection.DiagramType],
+                        preset.CallerDepth, preset.CalleeDepth, comparison.ContextFilesTruncated,
+                        group.ChangeIds.ToHashSet(StringComparer.Ordinal), preset, selection.Overrides,
+                        selection.FocusOnChanges, preserveDetails: true);
+                    if (projected.Artifacts.FirstOrDefault() is not { } artifact) continue;
+                    var document = DiagramDocumentBuilder.Build(artifact, bundle);
+                    document = document with { Pages = document.Pages.Select(page => page with { Diagram = page.Diagram with
+                    { MermaidDsl = compiler.Compile(page.Diagram.Ir), Explanation = DiagramExplanationBuilder.Fallback(page.Diagram.Ir, bundle, "Static", []) } }).ToArray() };
+                    var overview = document.Pages.First(p => p.Id == document.OverviewPageId).Diagram;
+                    staticViews.Add(new(selection.Id, selection, overview, [], "Generating", Document: document));
+                }
+                catch (Exception error) when (error is not OperationCanceledException)
+                { staticViews.Add(new(selection.Id, selection, null, ["정적 구조를 생성하지 못했습니다."], "Failed", "DIAGRAM_INVALID", "정적 구조를 생성하지 못했습니다.")); }
+            }
+            staticGroups.Add(new(group.Id, group.Title, group.ChangeIds, staticViews.FirstOrDefault(v => v.Diagram is not null)?.Diagram,
+                BuildGroupNarrative(group, graph, []), [], staticViews, BundleHash: bundle.Hash));
+        }
+        var baselineJob = await store.GetAnalysisAsync(analysisId, cancellationToken);
+        if (baselineJob?.Result is not null)
+        {
+            var savedGroups = MergeResults(staticGroups, baselineJob.Result.DiagramGroups ?? []);
+            await UpdateAsync(baselineJob with { StageMessage = "정적 구조 저장 완료 · 의미 설명 생성 중", Result = baselineJob.Result with
+            { DiagramGroups = savedGroups, Diagrams = savedGroups.SelectMany(g => EffectiveResultViews(g)).Select(v => v.Diagram)
+                .OfType<DiagramArtifact>().ToArray() } }, cancellationToken);
+        }
         foreach (var group in groups)
         {
             var groupWarnings = new List<string>();
@@ -349,6 +386,26 @@ public sealed class AnalysisJobProcessor(
                 {
                     try
                     {
+                        using var sharedScope = SemanticExecution.Current?.BeginSharedProjection(async partial =>
+                        {
+                            var latest = await store.GetAnalysisAsync(analysisId, cancellationToken);
+                            if (latest?.Result is null) return;
+                            var saved = latest.Result.DiagramGroups!.Single(g => g.GroupId == group.Id);
+                            var views = (saved.Views ?? []).Select(view =>
+                            {
+                                if (view.Document is null) return view;
+                                var pages = view.Document.Pages.Select(page => partial.Pages.TryGetValue(view.ViewId + "/" + page.Id, out var generated) && SharedSemanticProjection.Improves(page.Diagram, generated)
+                                    ? page with { Diagram = page.Diagram with { Ir = generated.Diagram,
+                                        MermaidDsl = compiler.Compile(generated.Diagram), Explanation = generated.Explanation } } : page).ToArray();
+                                return view with { Document = view.Document with { Pages = pages },
+                                    Diagram = pages.First(p => p.Id == view.Document.OverviewPageId).Diagram };
+                            }).ToArray();
+                            var updated = saved with { Views = views, Diagram = views.FirstOrDefault(v => v.Diagram is not null)?.Diagram };
+                            var merged = MergeResults(latest.Result.DiagramGroups!, [updated]);
+                            await UpdateAsync(latest with { StageMessage = "검토된 의미 설명과 정적 구조를 저장하며 생성 중",
+                                Result = latest.Result with { DiagramGroups = merged,
+                                    Diagrams = merged.SelectMany(g => EffectiveResultViews(g)).Select(v => v.Diagram).OfType<DiagramArtifact>().ToArray() } }, cancellationToken);
+                        });
                         shared = await llm.PlanGitGroupAsync(bundle, sharedInputs, enableThinking, cancellationToken);
                         understanding = shared?.Understanding;
                     }

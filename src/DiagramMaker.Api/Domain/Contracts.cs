@@ -497,7 +497,8 @@ public sealed record PageChangeExplanation(string ChangeId, string Summary,
 public sealed record DiagramExplanation(string Summary, IReadOnlyList<PageChangeExplanation> Changes,
     IReadOnlyList<string> FactIds, IReadOnlyList<string> EvidenceIds, string Status,
     IReadOnlyList<string> Warnings, string Basis = "GeneratedSource",
-    IReadOnlyList<CodeBlockBehavior>? Behaviors = null);
+    IReadOnlyList<CodeBlockBehavior>? Behaviors = null, SemanticCoverage? Coverage = null);
+public sealed record SemanticCoverage(int TotalUnits, int VerifiedUnits, int PendingUnits, int FailedUnits = 0);
 public sealed record DiagramPlanReview(bool Accepted, IReadOnlyList<string> Issues);
 public sealed record SemanticGeneration(DiagramIr Diagram, string Status, IReadOnlyList<string> Warnings,
     IReadOnlyList<string> InstructionResults, int Attempts, DiagramExplanation? Explanation = null, string? FailureStage = null);

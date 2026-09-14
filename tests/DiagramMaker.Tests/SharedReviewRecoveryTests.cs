@@ -95,7 +95,7 @@ public sealed class SharedReviewRecoveryTests
         using var handler = new Model("reject-once");
         var result = await Run(handler, count);
         Assert.Equal(count, result.Response.Items.Count);
-        Assert.Equal((count + 11) / 12 + 1, handler.Generations);
+        Assert.Equal((count + 15) / 16 + 1, handler.Generations);
         Assert.Equal(2, handler.Counts["work0"]);
         Assert.All(handler.Counts.Where(kv => kv.Key != "work0"), kv => Assert.Equal(1, kv.Value));
         Assert.Contains(result.Diagnostics, d => d.ValidationCode == "SemanticReviewRejected" &&
@@ -122,14 +122,14 @@ public sealed class SharedReviewRecoveryTests
     {
         using var small = new Model("valid");
         var result = await Run(small, 40);
-        Assert.Equal(40, result.Response.Items.Count); Assert.Equal(4, small.Generations);
+        Assert.Equal(40, result.Response.Items.Count); Assert.Equal(3, small.Generations);
         Assert.True(small.Reviews > 1);
-        Assert.All(small.ReviewSizes, count => Assert.InRange(count, 1, 16));
+        Assert.All(small.ReviewSizes, count => Assert.InRange(count, 1, 20));
         Assert.DoesNotContain(result.Diagnostics, d => d.ErrorCode is not null);
         using var large = new Model("valid");
         var options = Config(); options.ReviewOutputTokens = 10000;
         Assert.Equal(40, (await Run(large, 40, options)).Response.Items.Count);
-        Assert.Equal(4, large.Reviews); Assert.All(large.ReviewLimits, limit => Assert.Equal(10000, limit));
+        Assert.Equal(2, large.Reviews); Assert.All(large.ReviewLimits, limit => Assert.Equal(10000, limit));
     }
 
     [Fact]
@@ -187,7 +187,7 @@ public sealed class SharedReviewRecoveryTests
                 progress = execution.Progress;
             }
         }
-        Assert.Equal(mode == "valid" ? 4 : 5, handler.Generations);
+        Assert.Equal(mode == "valid" ? 3 : 4, handler.Generations);
         Assert.Equal(handler.RequestKeys.Count, handler.RequestKeys.Distinct().Count());
         Assert.Equal(handler.Generations + handler.Reviews, progress!.TransportRequests);
         Assert.All(diagnostics!.Where(d => d.ErrorCode is not null), d => Assert.Equal("Recovered", d.RecoveryState));

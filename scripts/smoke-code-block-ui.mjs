@@ -80,6 +80,18 @@ try {
   const code = 'int save(int n){return n;}\nint run(){if(ready) return save(1); return 0;}';
   await workspace.getByLabel('작업 제목', { exact: true }).fill('합성 UI 검증 — 주문 요청 검증과 저장 처리 흐름을 함께 확인하는 긴 작업 제목');
   await workspace.getByLabel('코드', { exact: true }).fill(code);
+  const codeInput = workspace.getByLabel('코드', { exact: true });
+  const numberedCode = Array.from({ length: 120 }, (_, i) => `// 한글😀 ${i + 1}`).join('\n') + '\n';
+  await codeInput.fill(numberedCode);
+  const lines = workspace.locator('.code-source-lines').first();
+  assert.equal((await lines.innerText()).trim().split('\n').length, 121);
+  await codeInput.evaluate(element => { element.scrollTop = 900; element.dispatchEvent(new Event('scroll', { bubbles: true })); });
+  assert.equal(await lines.evaluate(element => element.scrollTop), await codeInput.evaluate(element => element.scrollTop));
+  assert.equal(await lines.getAttribute('aria-hidden'), 'true');
+  await workspace.locator('.code-source-input').first().screenshot({ path: path.join(fixture, 'source-line-numbers.png') });
+  await codeInput.fill(code);
+  await codeInput.evaluate(element => { element.scrollTop = 0; element.dispatchEvent(new Event('scroll', { bubbles: true })); });
+  assert.equal((await lines.innerText()).trim().split('\n').length, code.split('\n').length);
   await page.getByRole('button', { name: '자연어 다이어그램', exact: true }).click();
   await page.getByRole('button', { name: '코드 블럭 다이어그램', exact: true }).click();
   assert.equal(await workspace.getByLabel('코드', { exact: true }).inputValue(), code, 'tab switch retains draft');

@@ -12,6 +12,7 @@ export async function checkSemanticProgress({ page, fixture, run }) {
       attemptCompletedUnits: 4, attemptRequests: 5, transportRequests: 17, attemptTransportRequests: 6,
       waitMilliseconds: 20000, attemptWaitMilliseconds: 5000,
       protocolUpgraded: true,
+      lastProgressAt: '2026-09-14T00:00:00Z', coverage: { totalUnits: 24, verifiedUnits: 12, pendingUnits: 12, failedUnits: 1 },
       lastRequest: { id: 'review-invalid', stage: 'llm-SharedSemanticReview', sent: true, purpose: 'review',
         outputLimit: 2000, completionTokens: 412, finishReason: 'stop', outputMode: 'structured_outputs', schemaRelaxed: true },
       recentFailures: [
@@ -60,6 +61,11 @@ export async function checkSemanticProgress({ page, fixture, run }) {
     assert.match(await progress.innerText(), /전체: 완료 12단위.*실제 전송 17회/);
     assert.match(await progress.innerText(), /이번 실행 3: 새 완료 4단위.*실제 전송 6회/);
     await progress.getByText('5분이 지났습니다.', { exact: false }).waitFor();
+    assert.match(await progress.innerText(), /의미 설명 검토 12 \/ 24개/);
+    assert.equal(await progress.locator('time').getAttribute('datetime'), '2026-09-14T00:00:00Z');
+    const announcement = await progress.getByRole('status').innerText();
+    await page.waitForTimeout(1100);
+    assert.equal(await progress.getByRole('status').innerText(), announcement, 'Clock ticks must not update the live announcement');
     const failures = progress.getByLabel('요청 오류 진단', { exact: true });
     await failures.getByLabel('복구 완료 기록', { exact: true }).locator('summary').click();
     assert.match(await failures.innerText(), /최초 기록.*의미 생성.*전송 후/);

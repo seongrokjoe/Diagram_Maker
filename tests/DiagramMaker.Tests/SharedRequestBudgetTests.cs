@@ -18,6 +18,24 @@ public sealed class SharedRequestBudgetTests
         AllowedOrigin = "http://127.0.0.1:19099", UseServerTokenization = false, MaxTransientRetries = 0, MaxInputCharacters = 60000 };
 
     [Theory]
+    [InlineData("system", "LLM_INPUT_CHARACTERS")]
+    [InlineData("schema", "LLM_INPUT_CHARACTERS")]
+    [InlineData("unicode", "LLM_INPUT_LIMIT")]
+    public async Task CompleteRequestBudgetRejectsSystemSchemaAndUtf8OverflowBeforeTransport(string mode, string code)
+    {
+        var transport = new CodeBlockPipelineTests.CodeTransport();
+        var system = mode == "system" ? new string('x', 2000) : mode == "unicode" ? new string('가', 700) : "Review";
+        var schema = JsonSerializer.SerializeToElement(new { type = "object", description = mode == "schema" ? new string('x', 2000) : "Result" });
+        using var execution = new SemanticExecution(OptionsForTest(), null, CancellationToken.None);
+        var error = await Assert.ThrowsAsync<LlmClientException>(() => new StructuredLlmCompletion(transport)
+            .CompleteAsync<SharedSemanticResponse>(system, "{}", schema, 100, false, _ => null, execution.Token,
+                inputTokenLimit: 1500, inputCharacterLimit: 1500));
+        Assert.Equal(code, error.Code);
+        Assert.Empty(transport.Requests);
+        Assert.False(Assert.Single(execution.Diagnostics).Sent);
+    }
+
+    [Theory]
     [InlineData("summary", "SharedSummaryInvalid")]
     [InlineData("type", "SharedRecommendedTypeInvalid")]
     [InlineData("items", "SharedItemsInvalid")]
@@ -72,7 +90,7 @@ public sealed class SharedRequestBudgetTests
             using (execution)
             {
                 var operation = client.GenerateSharedAsync("code-block", "경계 검사", Items(12),
-                    _ => new { code = new string('x', 28000) }, Views, false, execution.Token);
+                    _ => new { code = new string('x', 31000) }, Views, false, execution.Token);
                 if (attempt < 2) await Assert.ThrowsAnyAsync<OperationCanceledException>(() => operation);
                 else Assert.Equal(12, (await operation).Items.Count);
                 checkpoints = execution.Checkpoints; diagnostics = execution.Diagnostics; progress = execution.Progress;
@@ -80,7 +98,7 @@ public sealed class SharedRequestBudgetTests
         }
         Assert.Equal(1, handler.GenerationRequests);
         Assert.True(handler.ReviewRequests >= 2);
-        Assert.Contains(diagnostics!, d => d.ErrorCode == "LLM_INPUT_CHARACTERS" && d.Purpose == "review" && !d.Sent && d.InputCharacters > 36500);
+        Assert.Contains(diagnostics!, d => d.ErrorCode == "LLM_INPUT_CHARACTERS" && d.Purpose == "review" && !d.Sent && d.InputCharacters > 40000);
         Assert.Contains(checkpoints!, c => c.WasSplit);
         Assert.Equal(handler.GenerationRequests + handler.ReviewRequests, progress!.TransportRequests);
         Assert.True(progress.ReusedUnits > 0);
@@ -100,7 +118,7 @@ public sealed class SharedRequestBudgetTests
         {
             using var execution = new SemanticExecution(options, saved, CancellationToken.None);
             var response = await client.GenerateSharedAsync("code-block", "경계 검사", Items(12),
-                _ => new { code = new string('x', 28000) }, Views, false, execution.Token);
+                _ => new { code = new string('x', 31000) }, Views, false, execution.Token);
             Assert.Equal(12, response.Items.Count);
             saved = execution.Checkpoints;
             if (attempt == 0)
@@ -135,7 +153,7 @@ public sealed class SharedRequestBudgetTests
             {
                 var error = Assert.Single(execution.Diagnostics);
                 Assert.Equal("LLM_INPUT_CHARACTERS", error.ErrorCode); Assert.False(error.Sent);
-                Assert.Equal(56500, error.InputCharacterLimit); Assert.Equal(0, execution.Progress.TransportRequests);
+                Assert.Equal(60000, error.InputCharacterLimit); Assert.Equal(0, execution.Progress.TransportRequests);
             }
             else Assert.Empty(execution.Diagnostics);
         }

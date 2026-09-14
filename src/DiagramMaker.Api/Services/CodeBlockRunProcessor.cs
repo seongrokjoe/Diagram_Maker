@@ -48,6 +48,38 @@ public sealed class CodeBlockRunProcessor(IAppStore store, CodeBlockAnalyzer ana
             var results = new List<CodeBlockGroupResult>();
             var populatedGroups = prepared.Groups.Where(g => g.BlockIds.Count > 0).ToArray();
             var appliedGraph = graph with { Relations = prepared.Relations };
+            // Persist every parseable view before the first model request. Budget
+            // expiration or a transport failure must never erase the source result.
+            var staticGroups = new List<CodeBlockGroupResult>();
+            foreach (var group in populatedGroups)
+            {
+                var available = projection.Availability(graph, group);
+                var recommended = CodeBlockProjectionService.Recommend(available, graph, group);
+                var selected = group.Views is { Count: > 0 } ? group.Views :
+                    [new DiagramViewSelection(StableIds.Create(group.Id, recommended), recommended, presets.Resolve(recommended, "balanced").Id)];
+                var staticViews = new List<CodeBlockViewResult>();
+                foreach (var selection in selected)
+                {
+                    try
+                    {
+                        var pages = projection.Build(graph, prepared.Relations, group, selection).Select(candidate =>
+                        {
+                            var ir = candidate.Diagram;
+                            var explanation = new DiagramExplanation("코드 근거로 생성한 정적 구조 · 의미 설명 대기", [],
+                                ir.Nodes.SelectMany(n => n.SourceFactIds ?? []).Distinct().ToArray(),
+                                ir.Nodes.SelectMany(n => n.EvidenceIds).Distinct().ToArray(), "Static", [], Behaviors: []);
+                            return new DiagramPage(candidate.Id, candidate.Title, new DiagramArtifact(Guid.NewGuid(), ir.Type, 1, ir,
+                                compiler.Compile(ir), DateTimeOffset.UtcNow, explanation), candidate.Level, candidate.BlockIds, candidate.SymbolIds, "static");
+                        }).ToArray();
+                        staticViews.Add(new(selection.Id, selection, "Generating", pages, [],
+                            CacheKey: CacheKey(run, group, selection, prepared.Relations), LlmStatus: "Static"));
+                    }
+                    catch (Exception error) when (error is DiagramValidationException or DiagramGenerationException)
+                    { staticViews.Add(new(selection.Id, selection, "Failed", [], [error.Message], FailureStage: "projection")); }
+                }
+                staticGroups.Add(new(group.Id, group.Title, group.BlockIds, staticViews, available));
+            }
+            if (!await Save(run with { Results = MergeResults(staticGroups, run.Results ?? []), StageMessage = "정적 구조 저장 완료 · 의미 설명 생성 중" })) return;
             foreach (var group in populatedGroups)
             {
                 workToken.ThrowIfCancellationRequested();
@@ -75,12 +107,23 @@ public sealed class CodeBlockRunProcessor(IAppStore store, CodeBlockAnalyzer ana
                     if (useShared)
                     {
                         var requestedSelections = group.Views is { Count: > 0 } configured ? configured :
-                            availability.Where(a => a.Available).Select(a => new DiagramViewSelection(StableIds.Create(group.Id, a.Type), a.Type,
-                                presets.Resolve(a.Type, "balanced").Id)).ToArray();
+                            staticGroups.Single(g => g.GroupId == group.Id).Views.Select(v => v.Selection).ToArray();
                         var toGenerate = requestedSelections.Where(v => availability.Any(a => a.Type == v.DiagramType && a.Available) &&
                             (run.RegenerateViewIds is not { Count: > 0 } only || only.Contains(v.Id)) &&
                             (run.RegenerateViewIds?.Contains(v.Id) == true || !previous.SelectMany(r => r.Results ?? []).Where(g => g.GroupId == group.Id)
                                 .SelectMany(g => g.Views).Any(old => old.ViewId == v.Id && old.State == "Completed" && old.CacheKey == CacheKey(run, group, v, prepared.Relations)))).ToArray();
+                        using var sharedScope = execution.BeginSharedProjection(async partial =>
+                        {
+                            var savedGroup = run.Results!.Single(g => g.GroupId == group.Id);
+                            var updated = savedGroup with { Views = savedGroup.Views.Select(view => view with
+                            {
+                                Pages = view.Pages.Select(page => partial.Pages.TryGetValue(view.ViewId + "/" + page.Id, out var generated) && SharedSemanticProjection.Improves(page.Diagram, generated)
+                                    ? page with { Diagram = page.Diagram with { Ir = generated.Diagram, MermaidDsl = compiler.Compile(generated.Diagram),
+                                        Explanation = generated.Explanation }, ResultKind = generated.Status == "Semantic" ? "semantic" : "static" } : page).ToArray()
+                            }).ToArray() };
+                            if (!await Save(run with { Results = [updated], StageMessage = "검토된 의미 설명과 정적 구조를 저장하며 생성 중" }))
+                                throw new OperationCanceledException(leaseLost.Token);
+                        });
                         if (toGenerate.Length > 0) shared = await llm.PlanCodeBlockGroupAsync(groupInput, appliedGraph, group, toGenerate, workToken);
                         if (shared is not null) understanding = new(shared.Summary, shared.RecommendedType, []);
                     }
@@ -88,7 +131,7 @@ public sealed class CodeBlockRunProcessor(IAppStore store, CodeBlockAnalyzer ana
                 }
                 catch (Exception e) when (e is LlmClientException or DiagramGenerationException)
                 { understandingFailure = "understanding"; warnings.Add(LlmFailure.Describe(e)); }
-                var type = understanding?.RecommendedType ?? CodeBlockProjectionService.Recommend(availability, graph, group);
+                var type = CodeBlockProjectionService.Recommend(availability, graph, group);
                 var selections = group.Views is { Count: > 0 } ? group.Views : [new DiagramViewSelection(StableIds.Create(group.Id, type), type, presets.Resolve(type, "balanced").Id)];
                 var views = new List<CodeBlockViewResult>();
                 foreach (var selection in selections)
@@ -150,7 +193,8 @@ public sealed class CodeBlockRunProcessor(IAppStore store, CodeBlockAnalyzer ana
                     catch (Exception e) when (e is LlmClientException or DiagramGenerationException or DiagramValidationException)
                     {
                         var message = e is DiagramGenerationException known ? known.Message : "다이어그램 생성 또는 검증을 완료하지 못했습니다.";
-                        views.Add(new CodeBlockViewResult(selection.Id, selection, "Failed", old?.Pages ?? [], viewWarnings.ToArray(), message,
+                        views.Add(new CodeBlockViewResult(selection.Id, selection, "Failed", old?.Pages ??
+                            run.Results?.FirstOrDefault(g => g.GroupId == group.Id)?.Views.FirstOrDefault(v => v.ViewId == selection.Id)?.Pages ?? [], viewWarnings.ToArray(), message,
                             Reused: old?.Pages.Count > 0, CacheKey: old?.CacheKey, LlmStatus: "Incomplete",
                             FailureStage: e is DiagramGenerationException { Code: "CODE_BLOCK_UNAVAILABLE" } ? "availability" : "projection"));
                     }

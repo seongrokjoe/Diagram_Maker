@@ -36,7 +36,22 @@ public sealed class SemanticExecution : IDisposable
     public bool BudgetExpired => budget.IsCancellationRequested && !parent.IsCancellationRequested;
     public LlmClientException? RequestFailure { get; private set; }
     public void StopRequests(LlmClientException error) => RequestFailure ??= error;
-    internal const string SharedPolicyVersion = "shared-requests-v5";
+    internal const string SharedPolicyVersion = "shared-requests-v6";
+    private DateTimeOffset lastProgressAt = DateTimeOffset.UtcNow;
+    private readonly Dictionary<string, SemanticCoverage> coverage = new();
+    private Func<SharedDiagramGroup, Task>? sharedProgress;
+    public IDisposable BeginSharedProjection(Func<SharedDiagramGroup, Task> callback)
+    {
+        var before = sharedProgress;
+        sharedProgress = callback;
+        return new RequestScope(() => sharedProgress = before);
+    }
+    public Task ReportSharedProjectionAsync(SharedDiagramGroup value) => sharedProgress?.Invoke(value) ?? Task.CompletedTask;
+    public async Task ReportCoverageAsync(string key, SemanticCoverage value)
+    {
+        coverage[key] = value;
+        await NotifyAsync();
+    }
     internal static string PolicyFingerprint(LlmOptions options) =>
         Hash(JsonSerializer.Serialize(options) + InternalLlmClient.SemanticPromptVersion + InternalLlmClient.CodeBlockPromptVersion + SharedPolicyVersion);
     public IReadOnlyList<SemanticCheckpoint> Checkpoints => checkpoints.ToArray();
@@ -60,7 +75,9 @@ public sealed class SemanticExecution : IDisposable
         diagnostics.Where(d => d.ErrorCode is not null).Take(1)
             .Concat(diagnostics.Where(d => d.ErrorCode is not null && d.RecoveryState != "Recovered").TakeLast(3))
             .Concat(diagnostics.Where(d => d.ErrorCode is not null).TakeLast(3)).DistinctBy(d => d.Id).ToArray(),
-        diagnostics.LastOrDefault(), protocolUpgraded);
+        diagnostics.LastOrDefault(), protocolUpgraded, lastProgressAt,
+        coverage.Count == 0 ? null : new(coverage.Values.Sum(c => c.TotalUnits), coverage.Values.Sum(c => c.VerifiedUnits),
+            coverage.Values.Sum(c => c.PendingUnits), coverage.Values.Sum(c => c.FailedUnits)));
 
     public SemanticExecution(LlmOptions options, IReadOnlyList<SemanticCheckpoint>? saved, CancellationToken cancellationToken, Func<Task>? onProgress = null,
         IReadOnlyList<LlmDiagnostic>? savedDiagnostics = null, SemanticProgress? savedProgress = null)
@@ -202,7 +219,11 @@ public sealed class SemanticExecution : IDisposable
         checkpoints[index] = checkpoints[index] with { State = "Split", WasSplit = true };
         await NotifyAsync();
     }
-    public Task NotifyAsync() => persist?.Invoke() ?? Task.CompletedTask;
+    public Task NotifyAsync()
+    {
+        lastProgressAt = DateTimeOffset.UtcNow;
+        return persist?.Invoke() ?? Task.CompletedTask;
+    }
     public void Dispose() { Slot.Value = previous; budget.Dispose(); }
     internal static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 }

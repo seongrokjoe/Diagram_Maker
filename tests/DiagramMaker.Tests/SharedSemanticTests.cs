@@ -102,7 +102,7 @@ public sealed class SharedSemanticTests(ITestOutputHelper output)
                     Views: [new("flow", "flowchart", "balanced"), new("class", "class", "balanced")]);
                 await store.SaveAnalysisAsync(new(jobId, new(repositoryId, comparison.BaseSha, comparison.TargetSha, Groups: [group]),
                     AnalysisState.Queued, comparison.BaseSha, comparison.TargetSha, 0, "Queued", null, null, null, now, now, null,
-                    GenerationVersion: "shared-semantic-v2"), Ct);
+                    GenerationVersion: SharedSemanticProjection.Version), Ct);
             }
             else
             {
@@ -319,15 +319,8 @@ public sealed class SharedSemanticTests(ITestOutputHelper output)
         var transport = new CodeBlockPipelineTests.CodeTransport();
         var result = await Client(transport).PlanCodeBlockGroupAsync(input, graph, group, selections, Ct);
         output.WriteLine($"{language}: {transport.Requests.Count} requests, {result!.Pages.Count} pages, {selections.Length} types");
-        var functionPlans = transport.Requests.Where(r => r.Purpose == "execution-plan").ToArray();
-        var functionReviews = transport.Requests.Where(r => r.Purpose == "execution-review").ToArray();
-        Assert.Equal(40, functionPlans.Length);
-        Assert.Equal(40, functionReviews.Length);
-        Assert.All(functionPlans, request => {
-            using var json = JsonDocument.Parse(request.UserPrompt);
-            Assert.Contains("return input;", json.RootElement.GetProperty("source").GetString());
-            Assert.Equal(28, json.RootElement.GetProperty("steps").GetArrayLength());
-        });
+        Assert.DoesNotContain(transport.Requests, r => r.Purpose is "execution-plan" or "execution-review");
+        Assert.InRange(transport.Requests.Count, 1, 20);
         var generations = transport.Requests.Where(r => r.Purpose is not ("review" or "execution-plan" or "execution-review")).ToArray();
         var reviews = transport.Requests.Where(r => r.Purpose == "review").ToArray();
         foreach (var request in generations)
@@ -335,18 +328,18 @@ public sealed class SharedSemanticTests(ITestOutputHelper output)
             using var json = JsonDocument.Parse(request.UserPrompt);
             output.WriteLine($"Batch: {request.UserPrompt.Length} chars, {json.RootElement.GetProperty("items").GetArrayLength()} annotations");
         }
-        Assert.Equal(11, generations.Length);
+        Assert.InRange(generations.Length, 1, 10);
         Assert.All(generations, request =>
         {
             using var json = JsonDocument.Parse(request.UserPrompt);
-            Assert.InRange(json.RootElement.GetProperty("items").GetArrayLength(), 1, 12);
+            Assert.InRange(json.RootElement.GetProperty("items").GetArrayLength(), 1, 20);
         });
         Assert.InRange(reviews.Length, generations.Length, 24);
         Assert.All(reviews, request =>
         {
             Assert.Equal(2000, request.MaxOutputTokens);
             using var json = JsonDocument.Parse(request.UserPrompt);
-            Assert.InRange(json.RootElement.GetProperty("context").GetProperty("items").GetArrayLength(), 1, 16);
+            Assert.InRange(json.RootElement.GetProperty("context").GetProperty("items").GetArrayLength(), 1, 20);
         });
         Assert.True(result.Pages.Count > 40);
         Assert.All(result.Pages.Values, page => Assert.Equal("Semantic", page.Status));

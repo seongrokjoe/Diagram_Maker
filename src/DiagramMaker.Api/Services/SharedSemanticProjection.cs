@@ -9,7 +9,10 @@ internal sealed record SharedPreparedDiagram(SharedDiagramInput Input, DiagramIr
 
 internal sealed class SharedSemanticProjection
 {
-    public const string Version = "shared-semantic-v2";
+    public const string Version = "shared-semantic-v3";
+    internal static bool Improves(DiagramArtifact saved, SemanticGeneration incoming) =>
+        incoming.Status == "Semantic" || saved.Explanation?.Status != "Semantic" &&
+            (incoming.Explanation?.Coverage?.VerifiedUnits ?? 0) >= (saved.Explanation?.Coverage?.VerifiedUnits ?? 0);
     public Dictionary<string, SharedSemanticItem> Items { get; } = new(StringComparer.Ordinal);
     public List<SharedPreparedDiagram> Diagrams { get; } = [];
     private readonly bool codeBlocks;
@@ -49,7 +52,7 @@ internal sealed class SharedSemanticProjection
             var contexts = (node.SourceFactIds ?? []).Where(facts.ContainsKey).Select(id => facts[id].Context)
                 .Append(node.Context).Where(c => c is not null).Cast<CodeContext>().Distinct().ToArray();
             var kind = node.Kind is "class" or "type" or "struct" or "interface" or "record" ? "type" :
-                node.Kind is "participant" or "method" or "function" ? "symbol" : node.Kind;
+                node.Kind is "participant" or "method" or "function" or "responsibility" ? "symbol" : node.Kind;
             nodeItems[node.Id] = Item(kind, node.QualifiedName ?? node.Label, node.SourceFactIds ?? [], contexts, node.Details);
         }
         var edgeItems = new Dictionary<string, string>();
@@ -76,7 +79,7 @@ internal sealed class SharedSemanticProjection
     {
         foreach (var changeId in selectedChangeIds.Distinct())
         {
-            var source = facts.Values.Where(f => f.ChangeIds.Contains(changeId)).ToArray();
+            var source = facts.Values.Where(f => f.ChangeIds.Contains(changeId) && f.Kind is "symbol" or "source").ToArray();
             var key = "change-" + changeId;
             Items[key] = new(key, "change", "변경 전후 차이", source.Select(f => f.Id).ToArray(),
                 [], [], [changeId], FirstLocation(source));
@@ -98,6 +101,10 @@ internal sealed class SharedSemanticProjection
             var pageFacts = candidate.Nodes.SelectMany(n => n.SourceFactIds ?? []).Concat(candidate.Edges.SelectMany(e => e.SourceFactIds ?? [])).ToHashSet();
             var changes = facts.Values.Where(f => pageFacts.Contains(f.Id)).SelectMany(f => f.ChangeIds).Distinct().ToArray();
             missing |= !codeBlocks && changes.Any(id => !annotations.ContainsKey("change-" + id));
+            var warnings = new List<string>();
+            string? failureStage = null;
+            var required = prepared.NodeItems.Values.Concat(prepared.EdgeItems.Values).Concat(prepared.ControlItems.Values)
+                .Concat(codeBlocks ? [] : changes.Select(id => "change-" + id)).Distinct().ToArray();
             if (missing)
             {
                 var needed = prepared.NodeItems.Values.Concat(prepared.EdgeItems.Values).Concat(prepared.ControlItems.Values)
@@ -106,21 +113,21 @@ internal sealed class SharedSemanticProjection
                 var warning = failure is null ? "일부 코드 묶음의 의미 검토를 완료하지 못했습니다." :
                     (failure.Stage == "generation" ? "의미 생성 단계: " : failure.Stage == "plan-validation" ? "생성 응답 검증 단계: " : "의미 검토 단계: ") +
                     LlmFailure.Describe(new LlmClientException(failure.Code, "Shared annotation incomplete.", serverErrorCategory: failure.Category));
-                results[prepared.Input.Key] = new(candidate, "Incomplete", [warning], [], 0, FailureStage: failure?.Stage ?? "semantic-review");
-                continue;
+                warnings.Add(warning);
+                failureStage = failure?.Stage ?? "semantic-review";
             }
             var elements = candidate.Nodes.Select(n => new SemanticElement(n.Id,
-                prepared.NodeItems.TryGetValue(n.Id, out var key) ? annotations[key].Summary : n.Label, [n.Id])).ToArray();
+                prepared.NodeItems.TryGetValue(n.Id, out var key) && annotations.TryGetValue(key, out var annotation) ? annotation.Summary : n.Label, [n.Id])).ToArray();
             var messages = candidate.Edges.Where(e => prepared.EdgeItems.ContainsKey(e.Id) ||
                 candidate.Type == "sequence").Select(e => new SemanticMessage(e.Id,
-                prepared.EdgeItems.TryGetValue(e.Id, out var key) ? annotations[key].Summary : e.Label)).ToArray();
-            var changeExplanations = changes.Select(id => new PageChangeExplanation(id, annotations["change-" + id].Description,
+                prepared.EdgeItems.TryGetValue(e.Id, out var key) && annotations.TryGetValue(key, out var annotation) ? annotation.Summary : e.Label)).ToArray();
+            var changeExplanations = changes.Where(id => annotations.ContainsKey("change-" + id)).Select(id => new PageChangeExplanation(id, annotations["change-" + id].Description,
                 facts.Values.Where(f => f.ChangeIds.Contains(id)).Select(f => f.Id).ToArray(),
                 candidate.Nodes.Where(n => (n.SourceFactIds ?? []).Any(f => facts.TryGetValue(f, out var value) && value.ChangeIds.Contains(id))).Select(n => n.Id).ToArray(),
                 candidate.Edges.Where(e => (e.SourceFactIds ?? []).Any(f => facts.TryGetValue(f, out var value) && value.ChangeIds.Contains(id))).Select(e => e.Id).ToArray())).ToArray();
             var plan = new DiagramPlan(semantics.Summary, elements, messages, [], changeExplanations);
             if (InternalLlmClient.ValidatePlan(candidate, plan) is not null ||
-                !codeBlocks && InternalLlmClient.ValidateChanges(candidate, plan, facts.Values.ToArray()) is not null)
+                !codeBlocks && !missing && InternalLlmClient.ValidateChanges(candidate, plan, facts.Values.ToArray()) is not null)
             {
                 results[prepared.Input.Key] = new(candidate, "Incomplete", ["공유 의미의 구조·변경 근거 검증을 완료하지 못했습니다."], [], 0, FailureStage: "plan-validation");
                 continue;
@@ -128,31 +135,33 @@ internal sealed class SharedSemanticProjection
             var projected = InternalLlmClient.ApplyPlan(candidate, plan);
             SequenceBlock Control(SequenceBlock block) => block with
             {
-                Label = prepared.ControlItems.TryGetValue(block.Id, out var key) ? annotations[key].Summary : block.Label,
+                Label = prepared.ControlItems.TryGetValue(block.Id, out var key) && annotations.TryGetValue(key, out var annotation) ? annotation.Summary : block.Label,
                 Children = block.Children.Select(Control).ToArray()
             };
             projected = projected with
             {
-                Nodes = projected.Nodes.Select(n => prepared.NodeItems.TryGetValue(n.Id, out var key)
+                Nodes = projected.Nodes.Select(n => prepared.NodeItems.TryGetValue(n.Id, out var key) && annotations.ContainsKey(key)
                     ? n with { Label = n.Kind == "state" ? annotations[key].Summary + " (" + candidate.Nodes.First(original => original.Id == n.Id).Label + ")" : n.Label,
                         Details = (n.Details ?? []).Append(annotations[key].Description).Distinct().ToArray() } : n).ToArray(),
                 Edges = projected.Edges.Select(e => e with { Label = candidate.Type == "flowchart" ? e.Label switch
                     { "true" or "then" => "예", "false" or "else" => "아니요", "return" => "종료", _ => e.Label }
-                    : prepared.EdgeItems.TryGetValue(e.Id, out var key) ? annotations[key].Summary : e.Label }).ToArray(),
+                    : prepared.EdgeItems.TryGetValue(e.Id, out var key) && annotations.ContainsKey(key) ? annotations[key].Summary : e.Label }).ToArray(),
                 SequenceBlocks = projected.SequenceBlocks?.Select(Control).ToArray()
             };
-            var behaviors = projected.Nodes.Select(n => new CodeBlockBehavior(n.Id,
-                prepared.NodeItems.TryGetValue(n.Id, out var key) ? annotations[key].Description : n.Label,
+            var behaviors = projected.Nodes.Where(n => prepared.NodeItems.TryGetValue(n.Id, out var key) && annotations.ContainsKey(key)).Select(n => new CodeBlockBehavior(n.Id,
+                annotations[prepared.NodeItems[n.Id]].Description,
                 n.SourceFactIds ?? [], [n.Id], [])).ToArray();
             var evidence = projected.Nodes.SelectMany(n => n.EvidenceIds).Concat(projected.Edges.SelectMany(e => e.EvidenceIds))
                 .Concat(changeExplanations.SelectMany(c => c.FactIds).Where(facts.ContainsKey).SelectMany(id => facts[id].EvidenceIds)).Distinct().ToArray();
             var explanation = new DiagramExplanation(semantics.Summary, changeExplanations,
-                pageFacts.Concat(changeExplanations.SelectMany(c => c.FactIds)).Distinct().ToArray(), evidence, "Semantic", [],
-                Behaviors: codeBlocks ? behaviors : null);
+                pageFacts.Concat(changeExplanations.SelectMany(c => c.FactIds)).Distinct().ToArray(), evidence, missing ? "Incomplete" : "Semantic", warnings,
+                Behaviors: codeBlocks ? behaviors : null, Coverage: new(required.Length, required.Count(annotations.ContainsKey),
+                    required.Count(id => !annotations.ContainsKey(id)), required.Count(id => !annotations.ContainsKey(id) &&
+                        semantics.Failures?.Any(f => f.ItemIds.Contains(id)) == true)));
             var validator = new DiagramValidator();
             validator.Validate(projected);
             _ = new MermaidCompiler(validator).Compile(projected);
-            results[prepared.Input.Key] = new(projected, "Semantic", [], [], 0, explanation);
+            results[prepared.Input.Key] = new(projected, missing ? "Incomplete" : "Semantic", warnings, [], 0, explanation, failureStage);
         }
         return new(semantics.Summary, semantics.RecommendedType, results,
             codeBlocks ? null : new ChangeUnderstanding(semantics.Summary, Items.Values.Where(i => i.Kind == "change" && annotations.ContainsKey(i.Id))

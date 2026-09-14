@@ -244,6 +244,8 @@ export function CodeBlockWorkspace() {
           {selectedView.errorMessage && <p role="alert" className="error">{selectedView.errorMessage}</p>}
           {selectedView.failureStage && <p className="help">실패 단계: {failureLabel(selectedView.failureStage)}</p>}
           {selectedPage && !isSemanticPage(selectedView, selectedPage) && <p className="warning">정적 구조 · 의미 검토를 완료한 다이어그램이 아닙니다.</p>}
+          {artifact?.explanation?.coverage && <p>의미 설명 검토 {artifact.explanation.coverage.verifiedUnits} / {artifact.explanation.coverage.totalUnits}개
+            {artifact.explanation.coverage.pendingUnits > 0 && " · 검토된 설명과 원본 구조를 함께 표시합니다."}</p>}
           {!active?.page && <><p>의미 다이어그램을 완성하지 못했습니다. 분석된 코드 구조를 별도로 살펴볼 수 있습니다.</p>
             {selectedView.pages.some(p => !isSemanticPage(selectedView, p)) && <button onClick={openStatic}>정적 구조 열기</button>}</>}
           <details><summary>생성 안내와 종류별 가능 여부</summary>{selectedView.warnings.map((w, i) => <p key={i}>{w}</p>)}<ul>{selectedGroup?.availability.map(a => <li key={a.type}>{typeLabels.find(([t]) => t === a.type)?.[1]}: {a.available ? "가능" : a.reason}</li>)}</ul></details>

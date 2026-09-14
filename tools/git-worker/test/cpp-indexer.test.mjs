@@ -2,6 +2,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseCppFile, resolveCppCalls } from "../cpp-indexer.mjs";
 
+test("Git resolves cast receivers but does not replace local callbacks with global functions", async () => {
+  const parsed = await parseCppFile("Calls.cpp", `
+    void save(int n){}
+    struct Worker { void save(int n){} };
+    void run(void* value, void (*save)(int)) {
+      static_cast<Worker*>(value)->save(1);
+      save(2);
+    }`);
+  const resolution = resolveCppCalls([parsed]);
+  const run = parsed.symbols.find(s => s.simpleName === "run");
+  const calls = resolution.edges.filter(e => e.sourceSemanticKey === run.semanticKey);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].targetSemanticKey, parsed.symbols.find(s => s.qualifiedName === "Worker::save").semanticKey);
+  assert.equal(run.calls[1].resolutionReason, "localCallable");
+});
+
 test("switch preserves fallthrough, no-match and break destinations", async () => {
   const parsed = await parseCppFile("Switch.cpp", `void Save() {} void Run(int n) {
     switch(n) { case 1: n++; case 2: Save(); break; } Save();
@@ -80,10 +96,10 @@ test("C++ overload identities include canonical parameter types and qualifiers",
   assert.ok(overloads.some((symbol) => symbol.semanticKey === "function:Service::Save(const char*)"));
 
   const resolved = resolveCppCalls([parsed]);
-  assert.equal(resolved.ambiguousCallCount, 1);
-  assert.equal(resolved.edges.length, 0);
-  assert.equal(resolved.excludedCallCount, 1);
-  assert.equal(resolved.excludedCalls[0].reason, "multipleTargets");
+  assert.equal(resolved.ambiguousCallCount, 0);
+  assert.equal(resolved.edges.length, 1);
+  assert.equal(resolved.edges[0].targetSemanticKey, "function:Service::Save(int) const&");
+  assert.equal(resolved.edges[0].confidence, "Exact");
 });
 
 test("C++ call resolver keeps a unique name and arity match", async () => {

@@ -2,7 +2,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { Language, Parser } from "web-tree-sitter";
-import { executionFacts } from "./execution-facts.mjs";
+import { executionFacts, isCppCast } from "./execution-facts.mjs";
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 let parserPromise;
@@ -189,13 +189,69 @@ function conditionLabel(node) {
     .replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
+// Resolve only lexical type evidence. Never infer an object's type from its name.
+function expressionType(expression, useSite, depth = 0, localOnly = false) {
+  if (!expression || depth > 12) return null;
+  if (expression.type === "parenthesized_expression") return expressionType(expression.namedChild(0), useSite, depth + 1);
+  if (isCppCast(expression)) return field(field(expression, "function"), "arguments")?.namedChild(0)?.text ?? null;
+  if (expression.type === "cast_expression") return field(expression, "type")?.text ?? null;
+  if (expression.type === "number_literal") return /^\d+$/.test(expression.text) ? "int" : null;
+  if (expression.type === "true" || expression.type === "false") return "bool";
+  if (expression.type === "string_literal") return "const char*";
+  if (expression.type !== "identifier") return null;
+  for (let scope = useSite.parent; scope; scope = scope.parent) {
+    const declarations = children(scope).filter(n => n.endIndex <= useSite.startIndex &&
+      ["declaration", "parameter_declaration", "optional_parameter_declaration", "field_declaration"].includes(n.type));
+    if (scope.type === "function_definition") {
+      const parameters = field(functionDeclarator(field(scope, "declarator")), "parameters");
+      if (parameters) declarations.push(...children(parameters));
+    }
+    for (const declaration of declarations.reverse()) {
+      for (const declarator of children(declaration).filter(n => !["type_identifier", "primitive_type", "type_qualifier"].includes(n.type))) {
+        if (declaratorIdentifier(declarator)?.text !== expression.text) continue;
+        const type = field(declaration, "type")?.text;
+        if (type === "auto") return expressionType(field(declarator, "value"), declaration, depth + 1);
+        return type ? canonicalType(type + (/pointer_declarator/.test(declarator.toString()) ? "*" : "")) : null;
+      }
+    }
+    if (localOnly && scope.type === "function_definition") break;
+  }
+  return null;
+}
+
+function receiverType(expression, call) {
+  let type = expressionType(expression, call);
+  if (!type) return null;
+  type = type.replace(/\b(const|volatile|class|struct)\b|[*&]/g, "").trim();
+  // Follow visible using/typedef aliases, bounded to avoid cycles.
+  for (let depth = 0; depth < 12; depth++) {
+    let alias = null;
+    for (let scope = call.parent; scope && !alias; scope = scope.parent) {
+      alias = children(scope).filter(n => n.endIndex <= call.startIndex &&
+        (n.type === "alias_declaration" && field(n, "name")?.text === type ||
+         n.type === "type_definition" && field(n, "declarator")?.text === type)).at(-1);
+    }
+    if (!alias) return type;
+    const next = field(alias, "type")?.text.replace(/\b(const|volatile)\b|[*&]/g, "").trim();
+    if (!next || next === type) return null;
+    type = next;
+  }
+  return null;
+}
+
 function collectCalls(node) {
   const calls = [];
   let order = 0;
   function visit(current, controlPath = [], parentOrder = null) {
     if (current !== node && current.type === "function_definition") return;
     if (current.type === "call_expression") {
+      if (isCppCast(current)) {
+        for (const child of children(field(current, "arguments"))) visit(child, controlPath, parentOrder);
+        return;
+      }
       const expression = cleanName(field(current, "function")?.text ?? "");
+      const functionNode = field(current, "function");
+      const receiver = functionNode?.type === "field_expression" ? field(functionNode, "argument") : null;
       const currentOrder = current.startIndex;
       // Nested calls must complete before their enclosing call. Argument-to-argument
       // order is not guaranteed by C++; retain that uncertainty in the control scope.
@@ -207,7 +263,11 @@ function collectCalls(node) {
       if (expression) {
         calls.push({
           expression,
-          name: lastName(expression),
+          name: lastName(receiver ? field(functionNode, "field")?.text ?? expression : expression),
+          receiver: receiver?.text ?? null,
+          receiverType: receiver ? receiverType(receiver, current) : null,
+          calleeIsLocal: functionNode?.type === "identifier" && !!expressionType(functionNode, current, 0, true),
+          argumentTypes: children(field(current, "arguments")).filter(n => n.type !== "comment").map(n => expressionType(n, current)),
           argumentCount: countArguments(current),
           line: current.startPosition.row + 1,
           endLine: current.endPosition.row + 1,
@@ -592,6 +652,7 @@ export async function parseCppFile(filepath, content, projectPath = null) {
           simpleName: lastName(declared),
           kind: ownerParts.length > 0 || alreadyQualified ? "method" : "function",
           parameterCount,
+          parameterTypes: parameters,
           signature: node.text.split("{")[0].replace(/\s+/g, " ").trim().slice(0, 240),
           startOffset: node.startIndex,
           endOffset: node.endIndex,
@@ -765,18 +826,42 @@ export function resolveCppCalls(files, indirectCallRules = []) {
         continue;
       }
 
-      const exactName = call.expression.replaceAll(".", "::").replaceAll("->", "::");
+      let typedOwner = call.receiver === "this" ? ownerName(source.qualifiedName) : call.receiverType;
+      if (typedOwner && call.receiver !== "this") {
+        const scopes = ownerName(source.qualifiedName).split("::");
+        const owners = [];
+        for (let count = scopes.length; count > 0; count--) owners.push([...scopes.slice(0, count), typedOwner].join("::"));
+        owners.push(typedOwner);
+        typedOwner = owners.find(owner => byQualified.has(`${owner}::${call.name}/${call.argumentCount}`)) ?? typedOwner;
+      }
+      const exactName = call.receiver ? (typedOwner ? `${typedOwner}::${call.name}` : "") : call.expression;
       const ownerCandidate = [ownerName(source.qualifiedName), call.name].filter(Boolean).join("::");
-      const qualifiedCandidates = [
+      let qualifiedCandidates = [
         ...(byQualified.get(`${exactName}/${call.argumentCount}`) ?? []),
-        ...(exactName === ownerCandidate ? [] : (byQualified.get(`${ownerCandidate}/${call.argumentCount}`) ?? [])),
-      ].filter((candidate, index, all) => all.indexOf(candidate) === index);
+        ...(call.receiver || call.expression.includes("::") || exactName === ownerCandidate ? [] : (byQualified.get(`${ownerCandidate}/${call.argumentCount}`) ?? [])),
+      ].filter((candidate, index, all) => all.indexOf(candidate) === index && (!candidate.fileLocal || candidate.filePath === source.filePath));
+      if (qualifiedCandidates.length > 1 && call.argumentTypes?.every(Boolean)) {
+        const typed = qualifiedCandidates.filter(candidate => candidate.parameterTypes?.every((type, i) => canonicalType(type) === canonicalType(call.argumentTypes[i])));
+        if (typed.length === 1) qualifiedCandidates = typed;
+      }
+      const candidates = (typedOwner ? qualifiedCandidates : bySimple.get(`${call.name}/${call.argumentCount}`) ?? [])
+        .filter(candidate => !candidate.fileLocal || candidate.filePath === source.filePath);
+      call.candidateSemanticKeys = candidates.map(candidate => candidate.semanticKey);
+      if (call.calleeIsLocal) {
+        call.resolutionReason = "localCallable";
+        exclude(source, call, "localCallable", candidates.map(candidate => candidate.qualifiedName));
+        continue;
+      }
+      const virtual = typedOwner && symbols.some(symbol => symbol.qualifiedName === typedOwner &&
+        symbol.members?.some(member => member.name === call.name && /\bvirtual\b|\boverride\b/.test(member.signature ?? "")));
+      call.resolutionReason = virtual ? "virtualDispatch" : call.receiver && !typedOwner ? "receiverTypeUnknown" :
+        qualifiedCandidates.length > 1 ? "overloadAmbiguous" : candidates.length > 1 ? "multipleTargets" : "targetNotProven";
       let target = qualifiedCandidates.length === 1 ? qualifiedCandidates[0] : null;
+      if (virtual) target = null;
       let confidence = "Exact";
       if (qualifiedCandidates.length > 1) {
         exclude(source, call, "multipleTargets", qualifiedCandidates.map((candidate) => candidate.qualifiedName));
-      } else if (!target) {
-        const candidates = bySimple.get(`${call.name}/${call.argumentCount}`) ?? [];
+      } else if (!target && !call.receiver) {
         if (candidates.length === 1) {
           [target] = candidates;
           confidence = "Inferred";
@@ -784,7 +869,10 @@ export function resolveCppCalls(files, indirectCallRules = []) {
           exclude(source, call, "multipleTargets", candidates.map((candidate) => candidate.qualifiedName));
         }
       }
-      if (!target || target.semanticKey === source.semanticKey) continue;
+      if (!target) continue;
+      call.resolvedSemanticKey = target.semanticKey;
+      call.resolutionConfidence = confidence;
+      call.resolutionReason = confidence === "Exact" ? "exactScopeAndType" : "nameOnly";
       edges.push({
         sourceSemanticKey: source.semanticKey,
         targetSemanticKey: target.semanticKey,

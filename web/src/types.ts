@@ -137,6 +137,7 @@ export type CodeContext = {
 };
 
 export type DiagramExplanation = {
+  coverage?: { totalUnits: number; verifiedUnits: number; pendingUnits: number; failedUnits: number } | null;
   behaviors?: Array<{ id: string; summary: string; factIds: string[]; nodeIds: string[]; edgeIds: string[] }> | null;
   summary: string;
   changes: Array<{ changeId: string; summary: string; factIds: string[]; nodeIds: string[]; edgeIds: string[] }>;

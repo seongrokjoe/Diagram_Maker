@@ -30,7 +30,8 @@ public sealed record CodeBlockStep(string Id, string Kind, string Label, string 
 public sealed record CodeBlockCall(string Id, string SymbolId, string Name, int ArgumentCount,
     CodeBlockLocation Location, IReadOnlyList<ControlScope> ControlPath, int Order,
     string? TargetSymbolId = null, IReadOnlyList<string>? CandidateSymbolIds = null,
-    string? Receiver = null, string? Statement = null, bool OrderUncertain = false);
+    string? Receiver = null, string? Statement = null, bool OrderUncertain = false,
+    string? ResolutionReason = null, string? ReceiverType = null);
 public sealed record CodeBlockSymbol(string Id, string BlockId, string Name, string Kind, string Signature,
     CodeBlockLocation Location, IReadOnlyList<string> EvidenceIds, IReadOnlyList<CodeBlockStep> Steps,
     IReadOnlyList<ControlFlowEdge> FlowEdges, IReadOnlyList<CodeBlockCall> Calls,

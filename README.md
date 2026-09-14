@@ -1,8 +1,8 @@
 # AI Git Architecture Reviewer
 
-현재 사내 LLM 시험용 Windows 배포본은 [0.1.0-internal.6 ZIP](artifacts/release/DiagramMaker-0.1.0-internal.6-win-x64.zip)과
-[SHA-256](artifacts/release/DiagramMaker-0.1.0-internal.6-win-x64.zip.sha256)입니다.
-기능별 검증 결과는 [배포 검증 보고서](CODE_DIAGRAM_ACCURACY_REPORT.md), 사내 시험 절차는
+현재 사내 LLM 시험용 Windows 배포본은 [0.1.0-internal.7 ZIP](artifacts/release/DiagramMaker-0.1.0-internal.7-win-x64.zip)과
+[SHA-256](artifacts/release/DiagramMaker-0.1.0-internal.7-win-x64.zip.sha256)입니다.
+기능별 검증 결과는 [배포 검증 보고서](CODE_DIAGRAM_RELIABILITY_REPORT.md), 사내 시험 절차는
 [INTERNAL_TEST_KO.txt](packaging/windows/INTERNAL_TEST_KO.txt)를 참조하세요.
 
 사내 Git 커밋의 변경 심볼과 중요한 호출 관계만 선별해 Mermaid 다이어그램으로 만드는 내부용 애플리케이션입니다. 외부 LLM fallback, CDN, telemetry, 임의 Git URL, 저장소 build·hook 실행은 지원하지 않습니다.
@@ -13,7 +13,7 @@
 - Target 커밋의 첫 번째 부모를 Base로 자동 선택하며 고급 옵션에서 직접 변경 가능
 - Visual Studio `.sln`/`.vcxproj` 범위를 따라 C++를 Tree-sitter로 인덱싱하고, C#은 Roslyn으로 분석
 - 대상이 모호한 C++ 호출은 미확인 호출로 보존하고 대상 심벌을 임의 연결하지 않으며 파일별 진단으로 표시
-- 내부 LLM이 활성화되면 변경 전·후 코드의 공통 이해 → 페이지별 의미 설계 → 독립 의미 검토를 수행하며 실패 시 최대 한 번 재설계
+- 내부 LLM이 활성화되면 파서가 확정한 구조에 형식 간 공유 의미 설명과 독립 검토를 적용하며 실패 항목은 최대 한 번 수정
 - Git 분석 그룹마다 메서드 흐름도, 호출 시퀀스, 클래스 관계, 상태 전이, 변경 구현 맵 중 최대 5개 형식과 내장 샘플 프리셋 선택
 - 흐름도는 짧은 동작 설명과 개별 switch case·반복·종료 경로를 표시하며, 시퀀스는 실제 호출의 loop/alt 문맥만 표현하고 반환 메시지를 추측하지 않음
 - 핵심 요약과 세부 페이지를 분리하고 큰 그래프도 원본 관계를 잘라 버리지 않고 상세 참조로 연결
@@ -38,11 +38,11 @@
 
 내부 LLM이 활성화되면 코드 이해·종류 추천·의미 단계 계획·근거/제어 검증·의미 검토를 수행합니다. 비활성 또는 실패 시 정적 결과를 **의미 설명 미완료 / Partial**로 표시합니다. State는 같은 변수의 조건과 대입 근거가 필요하며 enum 이름만으로 생성하지 않습니다. 큰 입력은 함수별로 나누고 한 함수·제어 문맥이 모델 한도를 넘으면 원문을 자르지 않고 제한을 안내합니다.
 
-LLM 구성 여부와 실패 단계가 표시되며 미설정·요청 실패·검증 실패 결과는 완성 그림으로 열리지 않습니다. **정적 구조 열기**로 별도 확인할 수 있습니다. 이전 성공 그림은 재생성 실패에도 유지됩니다. 같은 분기의 연속 처리는 근거를 보존한 의미 단계로 묶고, 조건·반복·함수 경계를 넘는 묶음은 거부합니다. 코드 분석 `code-block-v4`, Git 분석 `source-graph-v11`, 공유 의미 `shared-semantic-v2`는 이전 결과 캐시와 구분합니다. 실제 사내 모델 연결과 의미 품질은 별도 사내 검증 대상입니다.
+LLM 구성 여부와 실패 단계가 표시되며 미설정·요청 실패·검증 실패 결과는 완성 그림으로 열리지 않습니다. **정적 구조 열기**로 별도 확인할 수 있습니다. 이전 성공 그림은 재생성 실패에도 유지됩니다. 같은 분기의 연속 처리는 근거를 보존한 의미 단계로 묶고, 조건·반복·함수 경계를 넘는 묶음은 거부합니다. 코드 분석 `code-block-v5`, Git 분석 `source-graph-v12`, 공유 의미 `shared-semantic-v3`는 이전 결과 캐시와 구분합니다. 실제 사내 모델 연결과 의미 품질은 별도 사내 검증 대상입니다.
 
 `accuracy.1`은 C++/C#의 관측 호출·조건 평가·반복·반환을 공통 실행 사실로 보존합니다. Sequence는 함수의 첫 실패별 조기 반환과 정상 반환을 함께 표시하며 같은 이름의 반복 호출을 유지합니다. **호출·조건·반환과 원본 근거**에서 정확한 원식을 확인할 수 있습니다. Git State는 같은 변수의 전이를 두 리비전에서 비교하고 조건만 변경된 전이에도 양쪽 근거를 제공합니다.
 
-함수 원문과 실행 사실을 사용하는 의미 계획·전체 검토를 형식 간 공유합니다. 분할이 없는 함수마다 계획 1회와 검토 1회가 추가되므로 40함수는 80회, Git 양쪽 리비전은 160회가 추가됩니다. 긴 함수는 완결된 형제 제어 영역 사이에서 분할하고 전체 함수를 재결합해 검토합니다. 단일 제어 영역이나 전체 검토가 예산을 넘으면 원문을 자르지 않고 **의미 설명 미완료**로 남깁니다. 기존 시간·요청·출력 한도와 수정 1회 제한은 유지합니다.
+실행 구조는 파서가 확정하고, 같은 함수·동작의 한국어 설명 생성과 독립 검토를 형식 간 공유합니다. 함수마다 별도 LLM 실행 계획을 요청하지 않습니다. 시스템 지시·스키마·마스킹·별칭을 포함한 전체 요청 크기를 먼저 검사하고 완결된 영역의 근거로 배치를 나눕니다. 한 항목이 예산을 넘으면 원문을 자르지 않고 **의미 설명 미완료**로 남기며 다른 항목을 계속 처리합니다. 정적 페이지를 먼저 저장하고 검토된 설명을 단위별로 보존합니다. 기존 시간·출력 한도와 수정 1회 제한은 유지합니다.
 
 코드 입력 기본 한도는 블럭당 100,000자, 전체 1,000,000자, 최대 20개입니다. 화면은 서버의 한도를 표시하며 초과한 붙여넣기 원문도 보존합니다. 큰 함수는 원본 연결을 유지한 구간 페이지로 나누며 경계 노드에서 다음 구간을 열 수 있습니다. 필수 문맥은 함수 또는 완전한 구문과 제어 경계를 기준으로 분할합니다. 필요한 호출 문맥은 이미 입력된 코드의 확인된 관련 심벌에 한해 한 차례 요청하며 외부 파일을 읽지 않습니다. 더 나눌 수 없는 단일 구문은 한도 오류를 표시합니다.
 
@@ -52,9 +52,11 @@ LLM 구성 여부와 실패 단계가 표시되며 미설정·요청 실패·검
 
 **요청 오류 진단**은 화면에서도 최초·후속 오류, 응답 항목 검증 사유와 문자/토큰 한도를 보여줍니다. `MaxInputCharacters`는 문자 수이며 입력 토큰 상한인 `MaxInputTokens`와 다릅니다. 기본 문자 수 2,000,000, 입력 토큰 200,000을 사용하는 [완성 JSON 예제](packaging/windows/config/llm-policy.example.json)와 [설정 안내](packaging/windows/config/LLM_POLICY_KO.txt)를 제공합니다. 검토 입력만 커지면 생성된 의미를 보존하고 검토를 나눕니다.
 
-최신 Windows 시험 패키지는 [0.1.0-internal.6 ZIP](artifacts/release/DiagramMaker-0.1.0-internal.6-win-x64.zip)과 [SHA-256](artifacts/release/DiagramMaker-0.1.0-internal.6-win-x64.zip.sha256)입니다. 기능별 변경 사항과 검증 결과는 [accuracy.1 보고서](CODE_DIAGRAM_ACCURACY_REPORT.md) 및 [진행 기록](CODE_BLOCK_DIAGRAM_PROGRESS.md)에 기록했습니다.
+최신 Windows 시험 패키지는 [0.1.0-internal.7 ZIP](artifacts/release/DiagramMaker-0.1.0-internal.7-win-x64.zip)과 [SHA-256](artifacts/release/DiagramMaker-0.1.0-internal.7-win-x64.zip.sha256)입니다. 기능별 변경 사항과 검증 결과는 [accuracy.1 보고서](CODE_DIAGRAM_ACCURACY_REPORT.md) 및 [진행 기록](CODE_BLOCK_DIAGRAM_PROGRESS.md)에 기록했습니다.
 
 공유 의미 생성은 대상 ID를 요청 스키마로 제한하고 항목별 검토를 수행합니다. 검토 응답은 문제 코드만 반환하며 동봉 정책 예제의 2,000토큰 출력 예산에 맞춰 사전 분할합니다. 검토 형식 오류·잘림은 생성 결과를 보존한 채 검토만 복구합니다. 화면의 **최근 요청 출력 설정**, **미해결 기록**, **복구 완료 기록**에서 실제 한도와 묶음별 상태를 확인할 수 있습니다. 자세한 변경과 시험 기록은 [perf.4 보고서](CODE_DIAGRAM_PERF4_REPORT.md)를 참고하세요.
+
+internal.7은 코드 입력의 스크롤에 맞춘 줄 번호와 생성 중 검토 수·최근 진행 시각을 표시합니다. 1,212줄·40함수 합성 회귀에서 코드 Flow/3종은 10/14회, Git 3종은 30회 전송하며 41/43/51페이지를 보존합니다. ZIP의 `benchmarks/`에는 동일 입력과 사내 반복 측정 안내·기록 양식이 있습니다. 실제 모델의 의미 품질과 300초 목표는 사내에서 별도로 측정합니다.
 
 LLM 설정의 `MaxInputTokens`와 `MaxContextTokens` 기본값은 각각 200,000이고 `OutputHardLimit`은 60,000입니다. 입력과 출력 예약의 합계에 문맥 상한을 적용합니다. `UseServerTokenization`으로 서버의 토큰 계산을 시도하고 지원하지 않으면 보수적인 추정치를 표시합니다. `structured_outputs` 미지원이 명시된 경우에만 `response_format`을 시도하고, 둘 다 미지원이면 JSON 지시문을 사용하되 동일한 근거 검증을 수행합니다. Thinking 기본값은 계속 OFF입니다.
 
@@ -72,12 +74,12 @@ node scripts/smoke-code-block-ui.mjs
 Windows 패키지는 아래 명령으로 빌드하고 검사합니다. 빌드 스크립트는 같은 버전의 기존 ZIP을 덮어쓰지 않습니다. 검증 결과와 실제 내부 LLM/PostgreSQL 연결 검증 상태는 [진행 기록](CODE_BLOCK_DIAGRAM_PROGRESS.md)에 기록합니다.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1 -Version '0.1.0-internal.6'
-node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.6-win-x64
-node scripts/smoke-code-block-ui.mjs artifacts/stage/DiagramMaker-0.1.0-internal.6-win-x64
-node scripts/smoke-packaged-llm.mjs artifacts/stage/DiagramMaker-0.1.0-internal.6-win-x64
-node scripts/smoke-packaged-llm.mjs artifacts/stage/DiagramMaker-0.1.0-internal.6-win-x64 --basic
-node scripts/smoke-windows-launchers.mjs artifacts/stage/DiagramMaker-0.1.0-internal.6-win-x64
+powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1 -Version '0.1.0-internal.7'
+node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.7-win-x64
+node scripts/smoke-code-block-ui.mjs artifacts/stage/DiagramMaker-0.1.0-internal.7-win-x64
+node scripts/smoke-packaged-llm.mjs artifacts/stage/DiagramMaker-0.1.0-internal.7-win-x64
+node scripts/smoke-packaged-llm.mjs artifacts/stage/DiagramMaker-0.1.0-internal.7-win-x64 --basic
+node scripts/smoke-windows-launchers.mjs artifacts/stage/DiagramMaker-0.1.0-internal.7-win-x64
 ```
 
 ## 로컬 실행
@@ -143,7 +145,7 @@ Git 결과의 페이지 아래에는 **동작 설명 / 핵심 변경 / 코드 �
 
 선택적 UI 검사는 경고 80개·근거 603개·여러 그룹의 합성 응답으로 접기, 검색·페이지 이동, 실패 그룹 전환과 코드 지연 조회를 검증합니다. 그룹·표시 페이지·근거 목록을 바꿀 때 추가 LLM 호출이 없는지도 확인합니다.
 
-LLM 비활성화·입력 한도·근거 또는 의미 검토 실패 시 정적 결과와 **의미 설명 미완료** 원인을 접힌 상세 영역 밖에 표시하며 재생성을 제공합니다. 예전 이력은 계속 열 수 있지만 새 설명이 없음을 알립니다. 수동 편집에서는 설명이 생성 당시 코드 기준임을 표시합니다. 분석기 `source-graph-v11`과 공유 의미 `shared-semantic-v2`로 이전 결과의 재사용을 구분합니다.
+LLM 비활성화·입력 한도·근거 또는 의미 검토 실패 시 정적 결과와 **의미 설명 미완료** 원인을 접힌 상세 영역 밖에 표시하며 재생성을 제공합니다. 예전 이력은 계속 열 수 있지만 새 설명이 없음을 알립니다. 수동 편집에서는 설명이 생성 당시 코드 기준임을 표시합니다. 분석기 `source-graph-v12`과 공유 의미 `shared-semantic-v3`로 이전 결과의 재사용을 구분합니다.
 
 ## 사내 LLM 연결
 
@@ -174,15 +176,15 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 Windows x64 오프라인 패키지 생성:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1 -Version '0.1.0-internal.6'
+powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1 -Version '0.1.0-internal.7'
 ```
 
-이번 시험의 명시적 패키징 버전은 `0.1.0-internal.6`이며 출력은 `artifacts/release/DiagramMaker-0.1.0-internal.6-win-x64.zip`과 SHA-256 파일입니다. 기존 ZIP이 있으면 새 버전명을 지정해야 합니다. 실제 사내 LLM의 의미 품질은 사내 환경에서 별도로 확인해야 합니다.
+이번 시험의 명시적 패키징 버전은 `0.1.0-internal.7`이며 출력은 `artifacts/release/DiagramMaker-0.1.0-internal.7-win-x64.zip`과 SHA-256 파일입니다. 기존 ZIP이 있으면 새 버전명을 지정해야 합니다. 실제 사내 LLM의 의미 품질은 사내 환경에서 별도로 확인해야 합니다.
 
 승인된 Playwright를 미리 반입하고 패키징을 완료한 뒤 실제 배포 실행 파일의 오프라인 샘플을 검사할 수 있습니다.
 
 ```powershell
-node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.6-win-x64
+node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.7-win-x64
 ```
 
 격리된 메모리 저장소·동적 loopback 포트와 배포 start.cmd와 동일한 Development 환경에서 LLM과 개발용 생성 스텁을 끄고, 외부 페이지 요청과 생성 요청을 차단합니다. 배포 HTML/JS/CSS/Mermaid 파일의 SHA-256 일치와 4개 종류 × 4개 화면 폭의 모든 샘플을 확인합니다. 단계별 결과·파일 해시·스크린샷·서버 로그는 `artifacts/offline-preview-*/`에 저장합니다. 기존 운영 서버·저장 데이터·LLM 설정은 변경하지 않습니다.

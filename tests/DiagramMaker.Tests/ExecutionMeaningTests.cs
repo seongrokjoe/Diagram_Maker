@@ -82,7 +82,7 @@ public sealed class ExecutionMeaningTests
     }
 
     [Fact]
-    public async Task LongFunctionPartitionsCompleteRegionsAndReviewsTheReassembledFunction()
+    public async Task LongFunctionUsesSyntaxOwnedRegionsAndOnlyReviewsSharedAnnotations()
     {
         var code = "int Run(int value){" + string.Concat(Enumerable.Range(0, 75).Select(i => $"value += {i};")) +
             "if(value<0){Save();return -1;}return value;}";
@@ -92,30 +92,20 @@ public sealed class ExecutionMeaningTests
         var transport = new CodeBlockPipelineTests.CodeTransport();
         var client = new InternalLlmClient(Options.Create(new LlmOptions { Enabled = true }), new(), new(), transport, new(transport));
         var result = await client.PlanCodeBlockGroupAsync(input, graph, new("g", "함수", ["a"]), [new("s", "sequence", "balanced")], CancellationToken.None);
-        var parts = transport.Requests.Where(r => r.Purpose == "execution-plan").ToArray();
-        Assert.True(parts.Length > 1);
-        var suppliedSteps = new List<(string Kind, string Expression)>();
-        foreach (var request in parts)
-        {
-            using var json = JsonDocument.Parse(request.UserPrompt);
-            Assert.Equal(code, json.RootElement.GetProperty("source").GetString());
-            var steps = json.RootElement.GetProperty("steps").Deserialize<ExecutionMeaningStep[]>(new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-            var ids = steps.Select(s => s.Id).ToHashSet();
-            Assert.All(steps, s => Assert.All(s.ChildIds.Concat(s.AlternativeIds).Concat(s.EvaluationIds), id => Assert.Contains(id, ids)));
-            suppliedSteps.AddRange(steps.Select(s => (s.Kind, s.Expression)));
-        }
-        Assert.Equal(observed.Select(s => (s.Kind, s.Expression)), suppliedSteps);
-        using var review = JsonDocument.Parse(Assert.Single(transport.Requests, r => r.Purpose == "execution-review").UserPrompt);
-        Assert.Equal(code, review.RootElement.GetProperty("source").GetString());
-        Assert.Equal(observed.Select(s => (s.Kind, s.Expression)), review.RootElement.GetProperty("plan").GetProperty("steps").EnumerateArray()
-            .Select(s => (s.GetProperty("kind").GetString()!, s.GetProperty("expression").GetString()!)));
+        Assert.DoesNotContain(transport.Requests, r => r.Purpose is "execution-plan" or "execution-review");
+        var meanings = InternalLlmClient.BuildExecutionMeanings([new(graph.Symbols[0].Id, "Run",
+            new("code-block", "", "a", 1, 1, 0, code.Length), code, graph.Symbols[0].Execution!)]);
+        var plan = Assert.Single(meanings).Plan!;
+        Assert.Equal(observed.Select(s => s.Id).Order(), plan.Units.SelectMany(u => u.EventIds).Order());
+        Assert.Null(ExecutionMeaningValidation.Check(meanings[0].Input, plan));
+        Assert.Contains(transport.Requests, r => r.Purpose == "review");
         Assert.All(result!.Pages.Values, page => Assert.Equal("Semantic", page.Status));
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task OversizedRegionStaysIntactAndCannotClaimReviewedMeaning(bool inputBudget)
+    public async Task NestedControlKeepsAllCallsWhenAnnotationsAreBatchedUnderSmallBudgets(bool inputBudget)
     {
         var code = "void Run(int value){if(value>0){" + string.Concat(Enumerable.Range(0, inputBudget ? 10 : 60).Select(i => $"Save({i});")) + "}}";
         var input = new CodeBlockWorkspaceInput("제어 영역", [new("a", "csharp", "함수", code)]);
@@ -126,8 +116,9 @@ public sealed class ExecutionMeaningTests
         var result = await client.PlanCodeBlockGroupAsync(input, graph, new("g", "함수", ["a"]), [new("s", "sequence", "balanced")], CancellationToken.None);
         Assert.DoesNotContain(transport.Requests, r => r.Purpose is "execution-plan" or "execution-review");
         Assert.All(result!.Pages.Values, page => {
-            Assert.Equal("Incomplete", page.Status);
-            Assert.Equal("execution-plan", page.FailureStage);
+            Assert.Equal("Semantic", page.Status);
+            Assert.Null(page.FailureStage);
+            Assert.Equal(inputBudget ? 12 : 62, page.Explanation!.Coverage!.VerifiedUnits);
             Assert.DoesNotContain("whole-function-reviewed", page.Diagram.Provenance);
         });
         Assert.Equal(inputBudget ? 10 : 60, Assert.Single(result.Pages.Values).Diagram.Edges.Count(e => e.Type == "message"));

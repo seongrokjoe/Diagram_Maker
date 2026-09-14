@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { assertLocalPath, gitEnvironment } from '../tools/git-worker/local-security.mjs';
 import { executionMeaningFixture } from './execution-meaning-fixture.mjs';
+import { reliabilitySource as source } from './reliability-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 assertLocalPath(root);
@@ -20,9 +21,6 @@ if (packageRoot) {
   const relative = path.relative(await realpath(path.join(root, 'artifacts/stage')), packageRoot);
   assert.ok(relative && relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative));
 }
-const source = increment => Array.from({ length: 4 }, (_, c) => `class Example${c} {\npublic:\n` +
-  Array.from({ length: 10 }, (_, m) => `  int Task${m}(int input) {\n` +
-    Array.from({ length: 27 }, (_, i) => `    input += ${i + increment};`).join('\n') + '\n    return input;\n  }').join('\n') + '\n};').join('\n');
 assert.equal(source(1).split('\n').length, 1212);
 const repositoryPath = path.join(fixture, 'repository');
 await mkdir(repositoryPath);
@@ -125,10 +123,10 @@ try {
     assert.equal(run.state, 'Completed', run.errorMessage ?? JSON.stringify(run.results.map(g => g.views.map(v => v.warnings))));
     const requests = requestCount - before;
     const generationRequests = batches.slice(beforeBatch).filter(b => !b.reviewing).length;
-    assert.equal(generationRequests, selected.length === 1 ? 7 : 11, 'Generation uses at most twelve annotations per initial batch');
-    assert.ok(batches.slice(beforeBatch).filter(b => !b.reviewing).every(b => b.items <= 12));
-    assert.ok(requests > 0 && requests <= 110, `C++ ${selected.length} formats: ${requests} requests (80 function plan/review requests plus shared labels)`);
-    assert.ok(batches.filter(b => b.reviewing).every(b => b.items <= 16 && b.outputLimit === 2000), 'Reviews must fit the default output budget');
+    assert.ok(generationRequests <= 10, 'Adaptive batches share annotations across all selected views');
+    assert.ok(batches.slice(beforeBatch).filter(b => !b.reviewing).every(b => b.items <= 20));
+    assert.ok(requests > 0 && requests <= 20, `C++ ${selected.length} formats: ${requests} requests (shared annotation generation and review)`);
+    assert.ok(batches.filter(b => b.reviewing).every(b => b.items <= 20 && b.outputLimit === 2000), 'Reviews must fit the default output budget');
     const diagnostic = await request(`/code-block-runs/${run.id}/diagnostics`);
     assert.equal(diagnostic.version, 2); assert.equal(diagnostic.execution.transportRequests, requests);
     let pages = 0;
@@ -138,7 +136,7 @@ try {
     }
     assert.equal(pages, selected.length === 1 ? 41 : 43, 'All baseline pages must remain');
     checks.push({ name: 'code-block', lines: 1212, functions: 40, formats: selected.length, requests, generationRequests,
-      functionRequests: 80, reviewRequests: requests - generationRequests - 80, pages });
+      functionRequests: 0, reviewRequests: requests - generationRequests, pages });
     const next = await request(`/code-block-workspaces/${workspace.id}/runs`, 'POST', { expectedRevision: workspace.revision }, 202);
     assert.equal((await poll(`/code-block-runs/${next.id}`)).state, 'Completed');
     assert.equal(requestCount - before, requests, 'Unchanged completed results should not call the LLM again');
@@ -161,13 +159,11 @@ try {
     }
   }
   const requests = requestCount - before;
-  assert.equal(requests, 256, '160 function plan/review requests plus 48 generation and 48 review requests');
-  assert.equal(batches.filter(b => b.source === 'git' && !b.reviewing).length, 48,
-    'Both revisions retain execution facts, so input budgets split the shared twelve-item batches further');
+  assert.ok(requests <= 32, `Shared Git annotations exceeded the 32-request target: ${requests}`);
   assert.equal(pages, 51, 'All Git baseline pages must remain');
   const generationRequests = batches.filter(b => b.source === 'git' && !b.reviewing).length;
-  checks.push({ name: 'git', lines: 1212, functions: 40, formats: 3, requests, generationRequests, functionRequests: 160,
-    reviewRequests: requests - generationRequests - 160, pages });
+  checks.push({ name: 'git', lines: 1212, functions: 40, formats: 3, requests, generationRequests, functionRequests: 0,
+    reviewRequests: requests - generationRequests, pages });
   }
   // Compare one guarded state transition through all five public Git views.
   const machine = guard => `class Machine { int state; bool ready; public: bool Check(){return true;} void Save(){} bool Run(){if(${guard})state=1;if(Check()!=true)return false;Save();return true;} };`;

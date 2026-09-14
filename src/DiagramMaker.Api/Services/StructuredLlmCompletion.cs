@@ -7,6 +7,16 @@ public sealed record StructuredCompletionResult<T>(T Value, VllmCompletionResult
 
 public sealed class StructuredLlmCompletion(ILlmCompletionTransport client)
 {
+    internal static (int Characters, int Tokens) Measure(string system, string prompt, JsonElement schema, IReadOnlySet<string>? responseIds)
+    {
+        var ids = new PromptIds(responseIds);
+        prompt = ids.Encode(prompt);
+        var bound = ids.BindSchema(schema).GetRawText();
+        // Includes the plain-JSON compatibility instruction and chat framing.
+        return (system.Length + prompt.Length + bound.Length + 64,
+            System.Text.Encoding.UTF8.GetByteCount(system) + System.Text.Encoding.UTF8.GetByteCount(prompt) +
+            System.Text.Encoding.UTF8.GetByteCount(bound) + 320);
+    }
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true
@@ -45,12 +55,17 @@ public sealed class StructuredLlmCompletion(ILlmCompletionTransport client)
         schema = ids.BindSchema(schema);
         async Task CheckCharacters(string prompt, string? purpose)
         {
-            if (inputCharacterLimit is not { } limit || prompt.Length <= limit) return;
+            var characters = systemPrompt.Length + prompt.Length + schema.GetRawText().Length + 64;
+            var tokens = System.Text.Encoding.UTF8.GetByteCount(systemPrompt) + System.Text.Encoding.UTF8.GetByteCount(prompt) +
+                System.Text.Encoding.UTF8.GetByteCount(schema.GetRawText()) + 320;
+            var code = inputCharacterLimit is { } characterLimit && characters > characterLimit ? "LLM_INPUT_CHARACTERS" :
+                inputTokenLimit is { } tokenLimit && tokens > tokenLimit ? "LLM_INPUT_LIMIT" : null;
+            if (code is null) return;
             if (SemanticExecution.Current is { } execution)
                 await execution.RecordAsync(new(Guid.NewGuid().ToString("N"), execution.Stage, execution.UnitId,
-                    "Failed", DateTimeOffset.UtcNow, ErrorCode: "LLM_INPUT_CHARACTERS", Purpose: purpose,
-                    InputCharacters: prompt.Length, InputCharacterLimit: limit, InputTokenLimit: inputTokenLimit));
-            throw new LlmClientException("LLM_INPUT_CHARACTERS", "The prepared request exceeds the character budget.");
+                    "Failed", DateTimeOffset.UtcNow, ErrorCode: code, Purpose: purpose, InputTokens: tokens,
+                    InputCharacters: characters, InputCharacterLimit: inputCharacterLimit, InputTokenLimit: inputTokenLimit));
+            throw new LlmClientException(code, "The prepared messages and schema exceed the input budget.");
         }
         await CheckCharacters(userPrompt, requestPurpose);
         var first = await client.CompleteAsync(new VllmCompletionRequest(
