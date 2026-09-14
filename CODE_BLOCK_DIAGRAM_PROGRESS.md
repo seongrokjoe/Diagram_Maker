@@ -6,6 +6,14 @@
 
 ## 현재 상태
 
+- 2026-09-14 internal.7 원격 전달 완료: 사용자의 명시적 푸시 승인 후 소스 `cfe855e`와
+  배포 `8b6c55a`를 `origin/main`에 push했다(exit 0). 읽기 전용 원격 조회로
+  `8b6c55acb2a205d889d0f100efa2967641ee92fe` 반영을 확인했다. 새 ZIP/SHA와 이전 5개
+  배포 쌍 정리, 검증 기록·화면 캡처가 포함된다. GitHub의 50MB 권장 크기 경고는 있었으나
+  91.89MB ZIP과 푸시는 정상 수락됐다. 이전 자동 승인 차단은 사용자 승인으로 해소됐다.
+  다음: 사내 PC의 비동기화 폴더에 internal.7 ZIP을 풀고 승인된 LLM 정책을 적용한 뒤
+  `benchmarks/README_KO.txt`의 반복 측정, 실제 모델 의미 품질·300초 목표·PostgreSQL 연결을 확인한다.
+
 - 2026-09-14 internal.7 로컬 전달 완료, 원격 게시 승인 대기: 검증된 ZIP/SHA를
   `artifacts/release/`로 복사하고 SHA-256을 재확인했다. 이전 5개 ZIP/SHA 쌍은
   승인 계획에 따라 로컬에서 정리했으며 Git 이력과 의존성 캐시는 보존했다.
