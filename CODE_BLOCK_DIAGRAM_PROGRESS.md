@@ -6,6 +6,18 @@
 
 ## 현재 상태
 
+- 2026-09-15 `0.1.0-internal.8` 오프라인 Windows ZIP 생성·감사 완료. OneDrive 경로 보호를
+  유지하기 위해 `4f9e44e`의 비동기화 로컬 복제본에서 빌드했다. 첫 실행은 복제본에 Git 무시
+  대상인 작업자 `node_modules`가 없어 대형 C++ 테스트가 닫힌 stdin 파이프로 실패했고, 잠금 파일로
+  설치·검증된 원본 작업자 의존성을 복사한 뒤 해당 테스트 2/2와 전체 .NET 302/302가 통과했다.
+  이어 작업자 43/43, 웹 50/50, 프런트엔드 빌드, npm 268/NuGet 11 라이선스, CycloneDX 281개
+  구성요소와 internal-only guard가 통과했다. 최종 ZIP은 96,368,473 bytes/1,862 entries이며
+  API·Node·작업자·SBOM을 포함하고 금지된 data/repositories/.git/.env/auth/policy 항목은 0개다.
+  manifest는 `sourceCommit=4f9e44efd10b1f9f0b844bc410cf0c410de6971a`,
+  `sourceTreeDirty=false`다. 복사 전·후·선언 SHA-256이 모두
+  `ce9968a83ec35c5a849bb18916d6982d1fd05421c891acae2af799ff1e128255`로 일치한다.
+  다음: ZIP/SHA-256/진행 기록 커밋 → `origin/main` 푸시 → 임시 로컬 복제본 제거.
+
 - 2026-09-15 배포 시작: 사용자가 새 ZIP 생성과 Git 푸시를 요청했다. 2026-09-14 최종 전체
   `verify.ps1` exit 0 결과와 현재 변경 목록을 재확인했고 `git diff --check`도 통과했다. 기존
   `internal.7` ZIP과 체크포인트는 보존한다. 다음: 검증된 소스 커밋 → 깨끗한 소스에서
