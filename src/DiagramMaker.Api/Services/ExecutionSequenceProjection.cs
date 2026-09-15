@@ -1,5 +1,7 @@
 using System.Text.RegularExpressions;
 using DiagramMaker.Domain;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace DiagramMaker.Services;
 
@@ -32,6 +34,7 @@ public static class ExecutionSequenceProjection
         var escaped = new HashSet<string>();
         var locals = new HashSet<string>();
         var callIndex = 0;
+        var executionFacts = Flatten(symbol.Execution ?? []).ToDictionary(f => f.Id);
         string Condition(string expression)
         {
             foreach (var (original, value) in replacements.OrderByDescending(p => p.Key.Length))
@@ -100,14 +103,24 @@ public static class ExecutionSequenceProjection
                         if (value == "unknown") values.Remove(fact.Variable);
                         else values[fact.Variable] = value;
                     }
-                    var responseEdge = edges.LastOrDefault(e => e.Type == "response" && e.Call?.AssignedTo == fact.Variable && e.OriginalExpression == fact.Value);
+                    var (assignedValue, conversion) = UnwrapAssignment(fact.Value);
+                    var localMessages = result.Where(b => b.Kind == "message").Select(b => b.EdgeId).ToHashSet();
+                    var responseEdge = fact.Variable is null ? null : edges.LastOrDefault(e => localMessages.Contains(e.Id) &&
+                        e.Type == "response" && e.Call is not null && e.OriginalExpression == assignedValue &&
+                        (e.SourceFactIds ?? []).Any(id => executionFacts.TryGetValue(id, out var callFact) && callFact.Kind == "call" &&
+                            callFact.StartOffset >= fact.StartOffset && callFact.EndOffset <= fact.EndOffset));
                     if (responseEdge is not null)
                     {
                         var position = edges.IndexOf(responseEdge);
-                        edges[position] = responseEdge with { EvidenceIds = responseEdge.EvidenceIds.Concat(fact.EvidenceIds ?? []).Distinct().ToArray(),
+                        var presentation = responseEdge.Call! with { AssignedTo = fact.Variable, ReturnType = fact.ValueType ?? responseEdge.Call!.ReturnType };
+                        edges[position] = responseEdge with { Call = presentation,
+                            Label = CallPresentationBuilder.ReturnLabel(presentation, "반환값") + (conversion ? " · 형 변환" : "") + OutputLabel(presentation),
+                            EvidenceIds = responseEdge.EvidenceIds.Concat(fact.EvidenceIds ?? []).Distinct().ToArray(),
                             SourceFactIds = (responseEdge.SourceFactIds ?? []).Append(fact.Id).Distinct().ToArray() };
+                        replacements[responseEdge.OriginalExpression!] = fact.Variable!;
                     }
-                    else if (fact.Kind != "declare" || fact.Value is not null) result.Add(Block(fact, "note", fact.Expression, []));
+                    else if (fact.Kind != "declare" || fact.Value is not null)
+                        result.Add(Block(fact, "note", AssignmentSummary(fact), []));
                 }
                 else if (fact.Kind is "return" or "throw")
                 {
@@ -195,19 +208,72 @@ public static class ExecutionSequenceProjection
                     if (fact.Kind == "invalidate" && fact.Variable is { } variable)
                     { values.Remove(variable); if (fact.Value == "escaped") escaped.Add(variable); }
                     else values.Clear();
-                    if (!(fact.Kind == "invalidate" && fact.Value == "escaped")) result.Add(Block(fact, "note", fact.Expression, []));
+                    if (!(fact.Kind == "invalidate" && fact.Value == "escaped"))
+                        result.Add(Block(fact, "note", AssignmentSummary(fact), []));
                     if (fact.Kind == "unsupported") notes.Add(fact.Expression);
                 }
             }
             return (result, false);
         }
-        var blocks = Visit(symbol.Execution ?? [], []).Blocks;
+        var blocks = SummarizeNotes(Visit(symbol.Execution ?? [], []).Blocks);
         return new("sequence", symbol.Name, nodes.Values.ToArray(), edges, notes.Distinct().ToArray(),
-            ["code-block", graph.AnalyzerVersion, "execution-facts-v1"], direction,
+            ["code-block", graph.AnalyzerVersion, "execution-facts-v1", DiagramPresentation.Version], direction,
             [new SequenceBlock(StableIds.Create("scenario", symbol.Id), "scenario", symbol.Name, blocks)]);
     }
     private static DiagramNode Participant(string id, string label, IReadOnlyList<string> evidence, IReadOnlyList<string> facts) =>
         new(id, label, "participant", null, "unchanged", Confidence.Exact, evidence, SourceFactIds: facts);
+
+    private static (string? Expression, bool Conversion) UnwrapAssignment(string? value)
+    {
+        if (value is null) return (null, false);
+        var expression = SyntaxFactory.ParseExpression(value);
+        var conversion = false;
+        while (true)
+        {
+            if (expression is ParenthesizedExpressionSyntax parenthesized) expression = parenthesized.Expression;
+            else if (expression is CastExpressionSyntax cast) { conversion = true; expression = cast.Expression; }
+            else if (expression is InvocationExpressionSyntax { Expression: GenericNameSyntax name, ArgumentList.Arguments.Count: 1 } invocation &&
+                name.Identifier.ValueText is "static_cast" or "dynamic_cast" or "reinterpret_cast" or "const_cast")
+            { conversion = true; expression = invocation.ArgumentList.Arguments[0].Expression; }
+            else break;
+        }
+        if (!expression.ContainsDiagnostics) return (expression.ToString(), conversion);
+        var cppCast = Regex.Match(expression.ToString().Trim(), @"^(?:static_cast|dynamic_cast|reinterpret_cast|const_cast)<[^<>]+>\((?<value>.*)\)$", RegexOptions.Singleline);
+        return cppCast.Success ? (cppCast.Groups["value"].Value.Trim(), true) : (value.Trim(), false);
+    }
+
+    private static string AssignmentSummary(ExecutionFact fact)
+    {
+        var name = fact.Variable;
+        if (name is null)
+        {
+            var target = Regex.Match(fact.Expression, @"^\s*(?:\+\+|--)?\s*(?<target>\*?[\w.]+(?:->\w+)*)");
+            name = target.Success ? target.Groups["target"].Value : "내부 값";
+        }
+        var value = fact.Value?.Trim();
+        return value is not null && Regex.IsMatch(value, @"^(?:true|false|null|nullptr|-?\d+(?:\.\d+)?|[\w.]+)$")
+            ? $"{name} 값을 {value}로 설정" : $"{name} 값 갱신";
+    }
+
+    private static IReadOnlyList<SequenceBlock> SummarizeNotes(IReadOnlyList<SequenceBlock> blocks)
+    {
+        var result = new List<SequenceBlock>();
+        for (var i = 0; i < blocks.Count; i++)
+        {
+            var block = blocks[i] with { Children = SummarizeNotes(blocks[i].Children) };
+            if (block.Kind != "note" || block.TerminationTarget is not null) { result.Add(block); continue; }
+            var run = new List<SequenceBlock> { block };
+            while (i + 1 < blocks.Count && blocks[i + 1].Kind == "note" && blocks[i + 1].TerminationTarget is null &&
+                (blocks[i + 1].ParticipantIds ?? []).SequenceEqual(block.ParticipantIds ?? [])) run.Add(blocks[++i]);
+            if (run.Count == 1) { result.Add(block); continue; }
+            // Original statements remain individually available in execution evidence.
+            result.Add(block with { Id = block.Id + "_summary", Label = $"지역 값 준비·갱신 ({run.Count}개 동작)",
+                OriginalExpression = null, SourceFactIds = run.SelectMany(b => b.SourceFactIds ?? []).Distinct().ToArray(),
+                EvidenceIds = run.SelectMany(b => b.EvidenceIds ?? []).Distinct().ToArray(),
+                Children = run.Select(b => b with { Kind = "sequence" }).ToArray() });
+        }
+        return result;
+    }
 
     private static string OutputLabel(CallPresentation call) => string.Join("", call.Outputs.Select(o =>
         " · " + o.Expression + ": " + (o.Description.Length > 80 ? o.Description[..77] + "…" : o.Description)));

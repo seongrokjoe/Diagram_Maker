@@ -86,7 +86,7 @@ public sealed class DiagramReliabilityTests
         var page = projection.Apply(new("부분 검토", "flowchart", [new(item.Id, "검증된 설명", "코드 근거로 확인한 동작입니다")])).Pages["page"];
         Assert.Equal("Incomplete", page.Status);
         Assert.Equal(1, page.Explanation!.Coverage!.VerifiedUnits);
-        Assert.Contains(page.Diagram.Nodes, n => n.Label == "검증된 설명");
+        Assert.Contains(page.Diagram.Nodes, n => n.Label == "검증된 설명\nn<0" && n.OriginalExpression == "n<0");
         Assert.Equal(diagram.Edges.Select(e => (e.Id, e.SourceId, e.TargetId)), page.Diagram.Edges.Select(e => (e.Id, e.SourceId, e.TargetId)));
         Assert.True(diagram.Nodes.SelectMany(n => n.EvidenceIds).ToHashSet().SetEquals(page.Diagram.Nodes.SelectMany(n => n.EvidenceIds)));
     }

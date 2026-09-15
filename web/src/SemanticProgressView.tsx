@@ -23,6 +23,7 @@ export type SemanticProgress = {
   waitingSince?: string; recentFailures?: FailureDiagnostic[];
   lastRequest?: FailureDiagnostic; protocolUpgraded?: boolean;
   lastProgressAt?: string; coverage?: { totalUnits: number; verifiedUnits: number; pendingUnits: number; failedUnits: number };
+  stageMilliseconds?: Record<string, number>;
 };
 
 export function SemanticProgressView({ value, running, diagnosticsUrl }: { value: SemanticProgress; running: boolean; diagnosticsUrl?: string }) {
@@ -66,6 +67,8 @@ export function SemanticProgressView({ value, running, diagnosticsUrl }: { value
       <p>전체 내부 처리 완료 {value.completedUnits}단위 · 이번 실행 새 완료 {value.attemptCompletedUnits ?? value.completedUnits}단위 · 재사용 {value.reusedUnits}단위</p>
       <p>내부 처리 단위는 다이어그램 수나 요청 제한이 아닙니다. 실행 한도 {value.budgetSeconds}초 · 누적 {value.totalElapsedSeconds ?? elapsed}초</p>
       {value.lastRequest && <OutputDiagnostic value={value.lastRequest} />}
+      {value.stageMilliseconds && <ul>{Object.entries(value.stageMilliseconds).map(([stage, milliseconds]) =>
+        <li key={stage}>{stage} · {(milliseconds / 1000).toFixed(2)}초</li>)}</ul>}
     </details>
     {loadError && <p>전체 오류 기록을 불러오지 못했습니다. 진단 다운로드로 확인할 수 있습니다.</p>}
     {!!failures.length && <DiagnosticGrid records={failures} running={running} />}
@@ -79,9 +82,10 @@ function recoveryLabel(failure: FailureDiagnostic, running: boolean) {
 
 function DiagnosticGrid({ records, running }: { records: FailureDiagnostic[]; running: boolean }) {
   const [selectedId, setSelectedId] = useState("");
+  const [open, setOpen] = useState(true);
   const selected = records.find(d => d.id === selectedId) ?? records[0];
-  return <section aria-label="요청 오류 진단" className="diagnostic-panel">
-    <strong>요청 오류 진단 · {records.length}건</strong>
+  return <details aria-label="요청 오류 진단" className="diagnostic-panel request-diagnostics" open={open} onToggle={e => setOpen(e.currentTarget.open)}>
+    <summary>요청 오류 진단 · {records.length}건 · 미해결 {records.filter(r => r.recoveryState !== "Recovered").length}건</summary>
     <div className="diagnostic-layout"><div className="diagnostic-table-scroll" tabIndex={0} aria-label="오류 목록 스크롤">
       <table className="diagnostic-table"><thead><tr><th>시각</th><th>단계</th><th>오류 요약</th><th>복구 상태</th></tr></thead>
         <tbody>{records.map(record => <tr key={record.id} className={selected.id === record.id ? "selected" : ""} aria-selected={selected.id === record.id}>
@@ -102,7 +106,7 @@ function DiagnosticGrid({ records, running }: { records: FailureDiagnostic[]; ru
           {selected.validationDetails && <p>필요 {selected.validationDetails.expectedItems} · 응답 {selected.validationDetails.receivedItems} · 누락 {selected.validationDetails.missingItems} · 중복 {selected.validationDetails.duplicateItems}{selected.validationDetails.field && " · 필드 " + selected.validationDetails.field}</p>}
         </details>
       </div></div>
-  </section>;
+  </details>;
 }
 
 function purpose(value: FailureDiagnostic) { return value.purpose === "execution-plan" ? "함수 실행 의미 계획" :

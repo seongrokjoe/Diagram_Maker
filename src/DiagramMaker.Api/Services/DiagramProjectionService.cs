@@ -103,7 +103,8 @@ public sealed class DiagramProjectionService
                 node.Id, FallbackControlLabel(node), node.Kind, group, MarkerForControl(graph, comparison, flow, node, changes)?.Kind.ToString().ToLowerInvariant() ?? "unchanged",
                 Confidence.Exact, node.EvidenceIds, ShapeForControl(node.Kind),
                 ControlDetails(node, graph, comparison),
-                MarkerForControl(graph, comparison, flow, node, changes), [node.Id], Context: node.Context)));
+                MarkerForControl(graph, comparison, flow, node, changes), [node.Id], Context: node.Context,
+                OriginalExpression: node.Kind is "condition" or "loop" ? node.Label : null)));
             edges.AddRange(flow.Edges.Where(edge => visibleIds.Contains(edge.SourceId) && visibleIds.Contains(edge.TargetId)).Select((edge, index) => new DiagramEdge(
                 StableIds.Create(flow.IdentityId, edge.SourceId, edge.TargetId, edge.Type, index), edge.SourceId, edge.TargetId,
                 edge.Type, edge.Label, "unchanged", Confidence.Exact,
@@ -602,10 +603,7 @@ public sealed class DiagramProjectionService
         if (node.Kind == "break") return "현재 분기 종료";
         if (node.Kind == "continue") return "다음 반복 진행";
         if (node.Kind == "case") return node.Label;
-        if (node.Kind == "condition") return node.Label.TrimStart().StartsWith("switch", StringComparison.Ordinal)
-            ? "값에 따른 case 분기"
-            : "조건에 따른 분기";
-        if (node.Kind == "loop") return "반복 조건 확인";
+        if (node.Kind is "condition" or "loop") return DiagramPresentation.Condition(node.Label);
         if (node.Context is not null) return DiagramCodeLabels.Action(node.Context);
         if (node.Kind == "call")
         {

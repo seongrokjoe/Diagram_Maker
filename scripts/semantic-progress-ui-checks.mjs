@@ -72,12 +72,17 @@ export async function checkSemanticProgress({ page, fixture, run }) {
     const failures = progress.getByLabel('요청 오류 진단', { exact: true });
     await failures.locator('tbody tr').last().waitFor();
     assert.equal(await failures.locator('tbody tr').count(), 14, 'each failed request has its own persistent row');
-    assert.ok(await failures.getByLabel('오류 목록 스크롤', { exact: true }).evaluate(e => e.scrollHeight > e.clientHeight && e.clientHeight <= 410), 'a bounded scroll area retains older errors');
+    assert.ok(await failures.getByLabel('오류 목록 스크롤', { exact: true }).evaluate(e => e.scrollHeight > e.clientHeight && e.clientHeight <= 287), 'a bounded scroll area retains older errors');
     const detail = failures.getByLabel('선택 오류 상세', { exact: true });
+    assert.ok(await detail.evaluate(e => e.clientHeight <= 287), 'details have the same bounded height');
     assert.match(await detail.innerText(), /복구 완료/);
     await detail.locator('summary').click();
     assert.match(await detail.innerText(), /SharedUnknownIds/);
     await failures.locator('tbody tr button').nth(1).click();
+    await failures.locator(':scope > summary').click();
+    assert.equal(await failures.getAttribute('open'), null);
+    await failures.locator(':scope > summary').click();
+    assert.equal(await failures.locator('tbody tr.selected').getAttribute('aria-selected'), 'true', 'selection survives collapse');
     assert.match(await detail.innerText(), /전송 전 검사/);
     assert.match(await detail.innerText(), /60,700자 \/ 56,500/);
     await failures.locator('tbody tr button').nth(2).click();

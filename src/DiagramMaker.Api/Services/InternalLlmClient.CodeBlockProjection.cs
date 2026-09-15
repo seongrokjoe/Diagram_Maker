@@ -15,7 +15,7 @@ public sealed partial class InternalLlmClient
             var returns = originals.Any(n => n.Kind == "return");
             return node with
             {
-                Label = node.Kind is "condition" or "loop" ? element.Condition : element.Summary,
+                Label = node.Kind is "condition" or "loop" ? DiagramPresentation.Condition(node.OriginalExpression ?? node.Label, element.Condition) : element.Summary,
                 QualifiedName = originals[0].Label,
                 Kind = returns ? "return" : node.Kind,
                 Shape = returns ? "return" : node.Shape,

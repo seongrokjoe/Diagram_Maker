@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { checkZoomWheel, checkResultPresentation } from './diagram-presentation-ui-checks.mjs';
+import { checkAnalysisResultUi } from './analysis-result-ui-checks.mjs';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -140,7 +142,7 @@ export async function checkGitVariantUi({ root, origin, fixture, analysis, reque
     await editors.first().locator('.diagram-canvas svg').waitFor();
     await workspace.getByLabel('AI/Code 함께 보기', { exact: true }).check();
     await editors.nth(1).locator('.diagram-canvas svg').waitFor();
-    await workspace.getByLabel('Git 그림 원본', { exact: true }).selectOption('code');
+    await workspace.locator('[role="treeitem"][aria-level="4"][data-row-id$=":code"]').first().click();
     await page.waitForFunction(() => document.querySelector('.analysis-workspace .structured-diagram-editor .diagram-heading')?.textContent.includes('Code_'));
     await editors.nth(1).locator('.diagram-canvas svg').waitFor();
     assert.match(await editors.nth(1).locator('.diagram-heading').innerText(), /AI_/);
@@ -159,7 +161,7 @@ export async function checkGitVariantUi({ root, origin, fixture, analysis, reque
     await editors.first().locator('.diagram-canvas svg').waitFor();
     const detail = flow.document.pages.find(p => p.id !== flow.document.overviewPageId);
     await tree.locator(`[data-row-id="view:${group.groupId}/${flow.viewId}:${detail.id}:code"]`).click();
-    await page.waitForFunction(id => document.querySelector('.analysis-workspace .diagram-pages select')?.value === id, detail.id);
+    await page.waitForFunction(id => document.querySelector('.analysis-workspace .comparison-pane')?.getAttribute('data-page-id') === id, detail.id);
     await editors.first().locator('.diagram-canvas svg').waitFor();
     assert.match(await editors.first().locator('.diagram-heading').innerText(), /Code_/);
     await workspace.getByLabel('AI/Code 함께 보기', { exact: true }).check();
@@ -179,7 +181,13 @@ export async function checkGitVariantUi({ root, origin, fixture, analysis, reque
         });
       }), 'comparison controls wrap without squeezing their labels');
     }
+    await checkZoomWheel(page, editors.first());
+    await checkResultPresentation(page, workspace, fixture, 'git');
+    assert.equal(await workspace.locator('.result-group-selector,.diagram-pages,.analysis-result .diagram-type-tabs').count(), 0,
+      'the result tree is the only group/type/page selector');
     await workspace.locator('.diagram-comparison').screenshot({ path: path.join(fixture, 'git-ai-code-compare.png') });
+    await workspace.getByLabel('AI/Code 함께 보기', { exact: true }).uncheck();
+    await checkAnalysisResultUi({ page, origin, run: fixture, status: requestCount });
     assert.equal(requestCount(), before, 'opening existing Git variants and searching must not generate');
     assert.deepEqual(errors, []);
     return true;

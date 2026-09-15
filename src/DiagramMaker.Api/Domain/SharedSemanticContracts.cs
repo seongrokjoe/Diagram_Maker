@@ -15,4 +15,5 @@ public sealed record SharedSemanticFailure(IReadOnlyList<string> ItemIds, string
     string? Category = null);
 public sealed record SharedDiagramInput(string Key, DiagramIr Diagram, DiagramViewSelection Selection);
 public sealed record SharedDiagramGroup(string Summary, string RecommendedType,
-    IReadOnlyDictionary<string, SemanticGeneration> Pages, ChangeUnderstanding? Understanding = null);
+    IReadOnlyDictionary<string, SemanticGeneration> Pages, ChangeUnderstanding? Understanding = null,
+    IReadOnlySet<string>? ChangedPageKeys = null);

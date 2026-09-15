@@ -3,6 +3,9 @@ import type { DiagramArtifact, DiagramEditDocument } from "./types";
 export type ElementSelection = { kind: "node" | "edge"; id: string };
 export const renderAlias = (id: string) => `n_${id.replace(/[^a-zA-Z0-9_]/g, "_")}`;
 export const clampZoom = (value: number) => Math.min(16, Math.max(0.01, Math.round(value * 10000) / 10000));
+export const steppedZoom = (value: number, direction: number) => clampZoom(value * (direction > 0 ? 1.2 : 1 / 1.2));
+export const zoomPresets = [0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1, 2, 4, 8, 16];
+export const isZoomWheel = (event: Pick<WheelEvent, "ctrlKey" | "deltaY">) => event.ctrlKey && event.deltaY !== 0;
 
 export function deleteDiagramSelection(document: DiagramEditDocument, selected: ElementSelection[]): DiagramEditDocument {
   const nodes = new Set(selected.filter(item => item.kind === "node").map(item => item.id));

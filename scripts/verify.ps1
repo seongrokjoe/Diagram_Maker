@@ -48,6 +48,8 @@ try {
     if (Test-Path -LiteralPath artifacts/ui-check/node_modules/playwright/package.json) {
         node scripts/smoke-svg-safety.mjs
         Assert-LastExitCode 'SVG paint preservation and security regression'
+        node scripts/smoke-sequence-layout.mjs
+        Assert-LastExitCode 'sequence text, fragment layout and exports'
         node scripts/smoke-code-block-ui.mjs
         Assert-LastExitCode 'synthetic code block UI regression'
         node scripts/smoke-design-ui.mjs

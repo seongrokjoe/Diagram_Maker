@@ -5,6 +5,7 @@ import { SemanticProgressView } from "./SemanticProgressView";
 import { CodeBlockComposer } from "./CodeBlockComposer";
 import { codeInputError, defaultCodeBlockLimits, type CodeBlockLimits } from "./codeBlockLimits";
 import { CodeBlockResultTree } from "./CodeBlockResultTree";
+import { ResizableResults } from "./ResizableResults";
 import { diagramName, resultCountsText } from "./diagramOrigin";
 import { initialDraft, normalizeDraft, isSemanticPage, typeLabels, type CodeBlockLocationSelection } from "./codeBlockWorkspaceState";
 import type { DiagramArtifact, DiagramEditPreview, DiagramPreset, DiagramRevisionRecord } from "./types";
@@ -248,13 +249,13 @@ export function CodeBlockWorkspace() {
     <section id="code-panel-results" role="tabpanel" aria-labelledby="code-tab-results" hidden={screen !== "results"} className="code-block-results">
       {!resultsVisible && <div className="panel" role="status"><p>{running ? "모든 상세 페이지를 완성한 뒤 결과를 표시합니다. 완료된 작업은 계속 저장됩니다." : "생성이 중단되었습니다. 저장된 부분 결과를 확인하거나 이어서 생성할 수 있습니다."}</p>
         {!running && run?.results.some(g => g.views.some(v => v.pages.length > 0)) && <button onClick={() => setOpenedPartial(run.id)}>부분 결과 열기</button>}</div>}
-      {resultsVisible && <>
+      {resultsVisible && <ResizableResults>
       <aside className="panel code-block-result-sidebar">
         <label>생성 이력<select aria-label="생성 이력" disabled={busy} value={run?.id ?? ""} onChange={e => selectRun(runs.find(r => r.id === e.target.value) ?? null)}><option value="" disabled>생성 이력 선택</option>
           {runs.map(r => <option key={r.id} value={r.id}>{new Date(r.createdAt).toLocaleString()} · 입력 {r.inputRevision} · {r.state}</option>)}</select></label>
         <label><input type="checkbox" checked={showStatic} onChange={e => { setShowStatic(e.target.checked); if (!e.target.checked && active && (active.variant === "code" || selectedPage && selectedView && !isSemanticPage(selectedView, selectedPage))) setActive({ ...active, page: "" }); }} />Code 다이어그램 보기 (정적 구조)</label>
         <label>선택 실행 내 이름 검색<input type="search" aria-label="다이어그램 이름 검색" value={query} onChange={e => setQuery(e.target.value)} /></label>
-        <label><input type="checkbox" checked={compare} onChange={e => setCompare(e.target.checked)} />AI/Code 함께 보기</label>
+        <label className="checkbox"><input type="checkbox" checked={compare} onChange={e => setCompare(e.target.checked)} /><span>AI/Code 함께 보기</span></label>
         {run ? <CodeBlockResultTree key={run.id} run={run} active={active} showStatic={showStatic} query={query} onSelect={setActive} /> : <p>코드를 입력하고 ‘다이어그램 생성’을 실행하세요.</p>}
       </aside>
       <div className="code-block-result-content">
@@ -284,7 +285,7 @@ export function CodeBlockWorkspace() {
         </div>}
         {!selectedView && <div className="panel empty-state">왼쪽 트리에서 결과를 선택하세요.</div>}
       </div>
-      </>}
+      </ResizableResults>}
     </section>
     {evidence && <section className="panel code-block-evidence" role="region" aria-label="코드 근거"><h3>{evidence.blockTitle} · {evidence.startLine}–{evidence.endLine}행</h3>
       <button onClick={() => setEvidence(null)}>근거 닫기</button><pre>{evidence.content}</pre><small>코드 해시 {evidence.contentHash}</small></section>}

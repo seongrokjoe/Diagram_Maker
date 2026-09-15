@@ -1,10 +1,11 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import type { DiagramArtifact } from "./types";
-import { clampZoom, renderAlias as alias, renderElementMap, zoomScrollDelta } from "./diagramInteraction";
+import { clampZoom, steppedZoom, zoomPresets, renderAlias as alias, renderElementMap, zoomScrollDelta, isZoomWheel } from "./diagramInteraction";
 import { maximumMermaidCharacters, mermaidSafetyError } from "./mermaidSafety";
 import { prepareMermaidDisplay } from "./mermaidDisplay";
 import { sanitizeSvg } from "./svgSafety";
 import { fitZoom } from "./diagramViewSettings";
+import { prepareSequenceLayout } from "./sequenceLayout";
 
 export type DiagramSelection = { kind: "node" | "edge"; id: string };
 export type DiagramInlineEdit = DiagramSelection & { value: string };
@@ -41,9 +42,16 @@ function renderMermaid(mermaid: MermaidApi, id: string, source: string): Promise
   const run = renderQueue.then(async () => {
     try {
       await document.fonts.ready;
-      const parsed = await mermaid.parse(source, { suppressErrors: true });
+      const context = document.createElement("canvas").getContext("2d");
+      if (context) context.font = '16px "Pretendard Variable", "Malgun Gothic", sans-serif';
+      const display = prepareSequenceLayout(source, text => context?.measureText(text).width ?? text.length * 16);
+      // Rendering is serialized: per-diagram dimensions cannot leak into another preview.
+      mermaid.initialize({ startOnLoad: false, securityLevel: "strict", htmlLabels: false, maxEdges: 500,
+        maxTextSize: maximumMermaidCharacters, theme: "base", sequence: display.sequence,
+        themeVariables: { primaryColor: "#e7f0ff", primaryTextColor: "#10213a", primaryBorderColor: "#4b72a9", lineColor: "#52709a", fontFamily: '"Pretendard Variable", "Malgun Gothic", sans-serif' } });
+      const parsed = await mermaid.parse(display.source, { suppressErrors: true });
       if (parsed === false) throw new Error("Invalid Mermaid syntax.");
-      return await mermaid.render(id, source);
+      return await mermaid.render(id, display.source);
     } finally {
       document.getElementById(`d${id}`)?.remove();
       document.querySelectorAll(`[data-mermaid-id="${id}"]`).forEach((element) => element.remove());
@@ -183,19 +191,19 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
   }
 
   function zoomDiagram(event: WheelEvent) {
-    if (!zoomable || compact || !svg) return;
+    if (!zoomable || compact || !svg || !isZoomWheel(event)) return;
     event.preventDefault();
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const next = clampZoom(Math.max(1, zoom + (event.deltaY < 0 ? 0.1 : -0.1)));
+    const next = steppedZoom(zoom, event.deltaY < 0 ? 1 : -1);
     if (next === zoom && !fitting) return;
     zoomAt(next, event.clientX, event.clientY);
   }
 
-  function zoomFromCenter(delta: number) {
+  function zoomFromCenter(value: number) {
     if (!canvasRef.current) return;
     const canvas = canvasRef.current;
-    const next = clampZoom(Math.max(1, zoom + delta));
+    const next = clampZoom(value);
     if (next === zoom && !fitting) return;
     const bounds = canvas.getBoundingClientRect();
     zoomAt(next, bounds.left + canvas.clientWidth / 2, bounds.top + canvas.clientHeight / 2);
@@ -231,10 +239,10 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
   return <>
     {!compact && <div className="diagram-actions">
       {toolbarContent}
-      {zoomable && <><button type="button" className="secondary zoom-button" disabled={zoom <= 1} onClick={() => zoomFromCenter(-0.1)} aria-label="축소">−</button><span className="zoom-status">{fitting ? "맞춤 · " : ""}{Math.round(zoom * 100)}%</span><button type="button" className="secondary zoom-button" disabled={zoom >= 16} onClick={() => zoomFromCenter(0.1)} aria-label="확대">＋</button>
-        <label className="inline-select">원본 기준 확대<select aria-label="원본 기준 확대" value={fitting ? "fit" : String(zoom)} onChange={e => zoomFromCenter(Number(e.target.value) - zoom)}>
-          {fitting && <option value="fit">맞춤</option>}{![1, 2, 4, 8, 16].includes(zoom) && !fitting && <option value={zoom}>{Math.round(zoom * 100)}%</option>}
-          {[1, 2, 4, 8, 16].map(value => <option key={value} value={value}>{value * 100}%</option>)}</select></label>
+      {zoomable && <><button type="button" className="secondary zoom-button" disabled={zoom <= 0.01} onClick={() => zoomFromCenter(steppedZoom(zoom, -1))} aria-label="축소">−</button><span className="zoom-status">{fitting ? "맞춤 · " : ""}{Math.round(zoom * 100)}%</span><button type="button" className="secondary zoom-button" disabled={zoom >= 16} onClick={() => zoomFromCenter(steppedZoom(zoom, 1))} aria-label="확대">＋</button>
+        <label className="inline-select">원본 기준 확대<select aria-label="원본 기준 확대" value={fitting ? "fit" : String(zoom)} onChange={e => zoomFromCenter(Number(e.target.value))}>
+          {fitting && <option value="fit">맞춤</option>}{!zoomPresets.includes(zoom) && !fitting && <option value={zoom}>{Math.round(zoom * 100)}%</option>}
+          {zoomPresets.map(value => <option key={value} value={value}>{value * 100}%</option>)}</select></label>
         <button type="button" className="secondary" onClick={() => { setFitting(true); setZoom(fitZoom(baseSize.width, baseSize.height, (canvasRef.current?.clientWidth ?? baseSize.width) - 40, Math.max(320, window.innerHeight - 300))); canvasRef.current?.scrollTo(0, 0); }}>{fitLabel}</button></>}
       <button type="button" className="secondary" disabled={!svg} onClick={() => downloadSvg(svg, `${downloadName}.svg`)}>SVG 다운로드</button>
       <button type="button" className="secondary" disabled={!svg} onClick={() => void downloadPng(svg, `${downloadName}.png`)}>PNG 다운로드</button>
@@ -245,7 +253,8 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
     {rendering && !svg && <div className="empty-state"><p>Mermaid 렌더러를 불러오는 중…</p></div>}
     {error && <div className={`error-panel ${compact ? "compact-error" : ""}`} role="alert">{error}</div>}
     <div ref={canvasRef} className={`diagram-canvas ${compact ? "compact" : ""} ${interactive ? "interactive" : ""} ${zoomable ? "zoomable" : ""}`}
-      aria-label="생성된 다이어그램" onClick={selectRenderedElement} onDoubleClick={editRenderedElement}>
+      aria-label="생성된 다이어그램" title={zoomable && !compact ? "Ctrl + 마우스 휠: 확대·축소 · 마우스 휠: 스크롤" : undefined}
+      onClick={selectRenderedElement} onDoubleClick={editRenderedElement}>
       <div className="diagram-zoom-layer" style={compact ? undefined : { width: baseSize.width * zoom, height: baseSize.height * zoom } as CSSProperties}>
         <div className="diagram-transform-layer" style={compact ? { width: baseSize.width, height: baseSize.height } : {
           width: baseSize.width, height: baseSize.height, transform: `scale(${zoom})`, transformOrigin: "top left",

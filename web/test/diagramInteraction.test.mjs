@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clampZoom, deleteDiagramSelection, renderElementMap, zoomScrollDelta } from "../src/diagramInteraction.ts";
+import { clampZoom, deleteDiagramSelection, renderElementMap, zoomScrollDelta, isZoomWheel } from "../src/diagramInteraction.ts";
+
+test("ordinary scrolling never zooms; Ctrl and a vertical wheel delta are required", () => {
+  assert.equal(isZoomWheel({ ctrlKey: false, deltaY: 100 }), false);
+  assert.equal(isZoomWheel({ ctrlKey: true, deltaY: 0 }), false);
+  assert.equal(isZoomWheel({ ctrlKey: true, deltaY: -100 }), true);
+  assert.equal(isZoomWheel({ ctrlKey: true, deltaY: 100 }), true);
+});
 
 for (const type of ["flowchart", "sequence", "class", "code-relation", "state"]) {
   test(`${type}: deleting nodes removes every incident edge, including self calls, and permits empty draft`, () => {

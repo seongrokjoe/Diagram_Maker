@@ -7,6 +7,17 @@ internal sealed record SharedValidationProblem(string Code, LlmValidationDetails
 
 internal static class SharedSemanticValidation
 {
+    // Normalize harmless presentation only. Code fences, executable markup,
+    // links and Mermaid directives still fail the security/content checks.
+    public static string PlainText(string value)
+    {
+        value = Regex.Replace(value, @"(?<!`)`([^`\r\n]+)`(?!`)", "$1");
+        return Regex.Replace(value, @"\*\*([^*\r\n]+)\*\*|__([^_\r\n]+)__", "$1$2");
+    }
+
+    public static bool UnsafeText(string text) => Regex.IsMatch(text,
+        @"```|%%\{|\b(?:javascript|data)\s*:|<\s*/?\s*(?:script|iframe|img|svg|style|object|embed|a|div|span|br|p|b|i|strong|em|html|body)\b(?:\s[^<>]*|/)?\s*>|<[^<>]*\bon\w+\s*=|!?(?:\[[^\]]*\])\([^)]*\)",
+        RegexOptions.IgnoreCase);
     public static SharedValidationProblem? Check(SharedSemanticResponse value, IReadOnlySet<string> expected,
         IReadOnlyList<string> available, bool validateText = true)
     {
@@ -41,7 +52,7 @@ internal static class SharedSemanticValidation
             if (string.IsNullOrWhiteSpace(text)) return new("SharedTextEmpty", metadata);
             if (text.Length > maximum) return new("SharedTextTooLong", metadata);
             if (!Regex.IsMatch(text, "[가-힣]")) return new("SharedTextNotKorean", metadata);
-            if (Regex.IsMatch(text, @"```|<\s*/?\s*[a-zA-Z][^>]*>|%%\{|\b(?:javascript|data)\s*:", RegexOptions.IgnoreCase))
+            if (UnsafeText(text))
                 return new("SharedTextCodeSyntax", metadata);
             return null;
         }

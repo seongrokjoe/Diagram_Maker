@@ -42,13 +42,13 @@ export async function checkAnalysisResultUi({ page, origin, run, status }) {
   });
   try {
     await history.selectOption(analysisId);
-    const groups = page.getByRole('navigation', { name: '생성 결과 그룹 선택', exact: true });
-    await groups.getByRole('button', { name: /CSV 검증 그룹/ }).waitFor();
-    assert.equal(await groups.locator('button').count(), 3);
-    assert.equal(await groups.locator('[aria-pressed="true"]').count(), 1);
-    await groups.screenshot({ path: path.join(run, 'result-group-selector.png') });
+    const groups = page.getByRole('tree', { name: '다이어그램 결과 트리', exact: true });
+    const selectGroup = groupId => groups.locator(`[aria-level="4"][data-row-id^="view:${groupId}/"]`).first().click();
+    await groups.getByText('CSV 검증 그룹', { exact: true }).first().waitFor();
+    assert.equal(await groups.locator('[aria-selected="true"]').count(), 1);
+    await groups.screenshot({ path: path.join(run, 'result-tree-selector.png') });
 
-    const warnings = page.locator('.analysis-result > .result-notices');
+    const warnings = page.locator('.analysis-result .result-content > .result-notices');
     assert.equal(await warnings.getAttribute('open'), null);
     assert.equal(await warnings.locator('li').count(), 0);
     await warnings.locator('summary').focus();
@@ -58,17 +58,18 @@ export async function checkAnalysisResultUi({ page, origin, run, status }) {
     await warnings.locator('summary').click();
     assert.equal(await warnings.getAttribute('open'), null);
 
-    await groups.getByRole('button', { name: /CSV 검증 그룹/ }).click();
+    await selectGroup('ui-second-group');
     await page.waitForFunction(() => document.querySelector('.page-behavior')?.textContent?.startsWith('ui-second-group ·'));
     assert.equal(await page.locator('.diagram-result .structured-diagram-editor').count(), 1);
-    assert.match(await groups.locator('[aria-pressed="true"]').textContent(), /CSV 검증 그룹/);
-    assert.equal(await page.locator('.result-group-context').textContent(), '선택한 그룹 2 / 3');
-    const picker = page.getByRole('combobox', { name: '표시 페이지', exact: true });
-    assert.equal(await picker.evaluate(element => getComputedStyle(element).appearance), 'none');
-    const selectBox = await picker.boundingBox();
-    const arrowBox = await page.locator('.page-select-arrow').boundingBox();
-    assert.ok(arrowBox.x > selectBox.x && arrowBox.x + arrowBox.width < selectBox.x + 42, 'dropdown arrow must be on the left');
-    await page.locator('.diagram-pages').screenshot({ path: path.join(run, 'result-page-selector.png') });
+    await page.locator('.code-block-explanation > summary').click();
+    assert.ok((await groups.locator('[aria-selected="true"]').getAttribute('data-row-id')).startsWith('view:ui-second-group/'));
+    const options = page.locator('.result-options-editor');
+    assert.equal(await options.getAttribute('open'), null);
+    await options.locator(':scope > summary').click();
+    await options.getByRole('button', { name: '이 다이어그램 다시 그리기', exact: true }).waitFor();
+    await page.keyboard.press('Escape');
+    assert.equal(await options.getAttribute('open'), null);
+    assert.equal(await options.locator(':scope > summary').evaluate(e => e === document.activeElement), true);
 
     const evidence = page.locator('.page-evidence > .evidence-browser');
     await evidence.waitFor();
@@ -96,17 +97,18 @@ export async function checkAnalysisResultUi({ page, origin, run, status }) {
     await evidence.getByText('검색 결과가 없습니다.', { exact: true }).waitFor();
     assert.ok(await evidence.getByRole('button', { name: '다음 근거', exact: true }).isDisabled());
 
-    await groups.getByRole('button', { name: /알람 내보내기 그룹/ }).click();
+    await selectGroup(originalGroup.groupId);
     await page.waitForFunction(prefix => document.querySelector('.page-behavior')?.textContent?.startsWith(prefix), `${originalGroup.groupId} ·`);
     assert.equal(await page.locator('.diagram-result .structured-diagram-editor').count(), 1);
     assert.equal(await evidence.getAttribute('open'), null);
     assert.equal(await page.getByText('var sample = 603;', { exact: true }).count(), 0);
+    await page.locator('.code-block-explanation > summary').click();
     await evidence.locator('summary').click();
     assert.equal(await evidence.getByRole('searchbox').inputValue(), '');
-    await groups.getByRole('button', { name: /실패한 그룹/ }).click();
+    await groups.locator('[data-row-id^="view:ui-failed-group/"][data-row-id$=":failure"]').first().click();
     await page.getByText('합성 검사: 생성 실패', { exact: true }).first().waitFor();
     assert.equal(await page.locator('.diagram-result .structured-diagram-editor').count(), 0);
-    assert.match(await groups.locator('[aria-pressed="true"]').textContent(), /실패한 그룹/);
+    assert.ok((await groups.locator('[aria-selected="true"]').getAttribute('data-row-id')).startsWith('view:ui-failed-group/'));
     assert.equal(await status(), callsBefore, 'result navigation must not invoke the CLI');
   } finally {
     await page.unroute(analysisUrl);

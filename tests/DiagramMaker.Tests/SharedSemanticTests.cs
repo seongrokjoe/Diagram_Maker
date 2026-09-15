@@ -15,6 +15,29 @@ namespace DiagramMaker.Tests;
 public sealed class SharedSemanticTests(ITestOutputHelper output)
 {
     private static readonly CancellationToken Ct = CancellationToken.None;
+    [Fact]
+    public void ComparisonsAndGenericsSurviveProjectionAndOnlyAffectedPagesChange()
+    {
+        var prepared = new SharedSemanticProjection(true, [new("f1", "symbol", "First", [], [], null), new("f2", "symbol", "Second", [], [], null)]);
+        foreach (var id in new[] { "1", "2" })
+        {
+            var diagram = new DiagramIr("code-relation", "근거 " + id,
+                [new("n" + id, "함수", "method", null, "unchanged", Confidence.Exact, [], SourceFactIds: ["f" + id])], [], [], []);
+            prepared.Add(new("page" + id, diagram, new("view", "code-relation", "balanced")));
+        }
+        var annotations = prepared.Items.Keys.Select(id => new SharedSemanticAnnotation(id, "List<T> 값과 x < 0 조건 검사", "원본 조건을 검사합니다")).ToArray();
+        var response = new SharedSemanticResponse("조건 검사", "code-relation", annotations);
+        var first = prepared.Apply(response);
+        Assert.All(first.Pages.Values, page => Assert.Equal("Semantic", page.Status));
+        var same = prepared.Apply(response);
+        Assert.Empty(same.ChangedPageKeys!);
+        Assert.Same(first.Pages["page2"], same.Pages["page2"]);
+        var key = prepared.Diagrams[0].NodeItems["n1"];
+        var changed = prepared.Apply(response with { Items = annotations.Select(item => item.Id == key ? item with { Description = "해당 함수의 조건을 검사합니다" } : item).ToArray() });
+        Assert.Equal(new[] { "page1" }, changed.ChangedPageKeys);
+        Assert.Same(first.Pages["page2"], changed.Pages["page2"]);
+        Assert.NotSame(first.Pages["page1"], changed.Pages["page1"]);
+    }
     private static InternalLlmClient Client(CodeBlockPipelineTests.CodeTransport transport) => new(
         Options.Create(new LlmOptions { Enabled = true }), new(), new(), transport, new(transport));
 
@@ -332,14 +355,14 @@ public sealed class SharedSemanticTests(ITestOutputHelper output)
         Assert.All(generations, request =>
         {
             using var json = JsonDocument.Parse(request.UserPrompt);
-            Assert.InRange(json.RootElement.GetProperty("items").GetArrayLength(), 1, 20);
+            Assert.InRange(json.RootElement.GetProperty("items").GetArrayLength(), 1, 26);
         });
         Assert.InRange(reviews.Length, generations.Length, 24);
         Assert.All(reviews, request =>
         {
             Assert.Equal(2000, request.MaxOutputTokens);
             using var json = JsonDocument.Parse(request.UserPrompt);
-            Assert.InRange(json.RootElement.GetProperty("context").GetProperty("items").GetArrayLength(), 1, 20);
+            Assert.InRange(json.RootElement.GetProperty("context").GetProperty("items").GetArrayLength(), 1, 26);
         });
         Assert.True(result.Pages.Count > 40);
         Assert.All(result.Pages.Values, page => Assert.Equal("Semantic", page.Status));
@@ -351,6 +374,25 @@ public sealed class SharedSemanticTests(ITestOutputHelper output)
                 .SetEquals(actual.Diagram.Nodes.SelectMany(n => n.SourceFactIds ?? [])));
             Assert.All(actual.Diagram.Nodes, n => Assert.NotEmpty(n.EvidenceIds));
         }
+    }
+
+    [Theory]
+    [InlineData("static_cast<int>(Read())")]
+    [InlineData("(static_cast<int>(Read()))")]
+    [InlineData("(int)(Read())")]
+    public async Task CppCallAssignmentMergesConversionAndKeepsOriginalEvidence(string expression)
+    {
+        var analyzer = new CodeBlockAnalyzer(new(), Options.Create(new GitWorkerOptions
+            { ScriptPath = Path.Combine(Root(), "tools/git-worker/index.mjs") }), Options.Create(new CodeBlockOptions()), new TestEnvironment());
+        var graph = await analyzer.AnalyzeAsync(Guid.NewGuid(),
+            [new("code", "cpp", "code", $"int Read(){{return 1;}} int Run(){{int result={expression}; return result;}}")], Ct);
+        var diagram = ExecutionSequenceProjection.Build(graph.Symbols.Single(s => s.Name == "Run"), graph, "TB");
+        var response = Assert.Single(diagram.Edges, e => e.Type == "response");
+        Assert.Equal("result", response.Call!.AssignedTo);
+        Assert.Contains("형 변환", response.Label);
+        Assert.True(response.SourceFactIds!.Count >= 2);
+        Assert.True(response.EvidenceIds.Count >= 2);
+        Assert.DoesNotContain(SequenceStructure.AnnotatedBlocks(diagram.SequenceBlocks ?? []), b => b.Kind == "note");
     }
 
     private static string Root()

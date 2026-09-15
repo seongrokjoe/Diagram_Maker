@@ -124,7 +124,7 @@ public sealed class SharedReviewRecoveryTests
         var result = await Run(small, 40);
         Assert.Equal(40, result.Response.Items.Count); Assert.Equal(2, small.Generations);
         Assert.True(small.Reviews > 1);
-        Assert.All(small.ReviewSizes, count => Assert.InRange(count, 1, 20));
+        Assert.All(small.ReviewSizes, count => Assert.InRange(count, 1, 26));
         Assert.DoesNotContain(result.Diagnostics, d => d.ErrorCode is not null);
         using var large = new Model("valid");
         var options = Config(); options.ReviewOutputTokens = 10000;
@@ -140,6 +140,18 @@ public sealed class SharedReviewRecoveryTests
         var result = await Run(handler, 1, options);
         Assert.Empty(result.Response.Items); Assert.Equal(1, handler.Generations); Assert.Equal(0, handler.Reviews);
         Assert.Contains(result.Diagnostics, d => d.ErrorCode == "LLM_OUTPUT_BUDGET" && !d.Sent && d.RequiredOutputTokens > 100 && d.RecoveryState == "Exhausted");
+    }
+
+    [Fact]
+    public async Task ThreeHundredThirtyTwoItemsAreAllGeneratedAndReviewedOnceWithinBudgets()
+    {
+        using var model = new Model("valid");
+        var result = await Run(model, 332);
+        Assert.Equal(332, result.Response.Items.Count);
+        Assert.Equal(332, model.ReviewSizes.Sum());
+        Assert.All(model.Counts, item => Assert.Equal(1, item.Value));
+        Assert.All(result.Diagnostics, record => Assert.Null(record.ErrorCode));
+        Assert.InRange(model.Generations + model.Reviews, 2, 28);
     }
 
     [Fact]

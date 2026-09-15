@@ -58,7 +58,9 @@ public sealed partial class InternalLlmClient
         object Sources(IReadOnlyList<SharedSemanticItem> items)
         {
             var ids = items.SelectMany(i => i.FactIds).ToHashSet();
-            var spans = facts.Where(f => ids.Contains(f.Id) && f.Span is not null).Select(f => f.Span!).ToArray();
+            var spans = facts.Where(f => ids.Contains(f.Id) && f.Span is not null).Select(f => f.Span!)
+                .Concat(items.SelectMany(i => i.Contexts).SelectMany(c => (c.Definitions ?? []).Select(d => d.Span).Append(c.Span)))
+                .Distinct().ToArray();
             var excerpts = new List<object>();
             foreach (var block in input.Blocks.Where(b => group.BlockIds.Contains(b.Id)))
             {
@@ -76,7 +78,12 @@ public sealed partial class InternalLlmClient
                 }
             }
             return new { blocks = input.Blocks.Where(b => group.BlockIds.Contains(b.Id)).Select(b => new { b.Id, b.Language, b.Title, b.Description }),
-                excerpts, facts = facts.Where(f => ids.Contains(f.Id)).Select(f => new
+                excerpts, owners = spans.Select(span => graph.Symbols.Where(s => s.BlockId == span.FilePath &&
+                    s.Location.StartOffset <= span.StartOffset && s.Location.EndOffset >= span.EndOffset)
+                    .OrderBy(s => s.Location.EndOffset - s.Location.StartOffset).FirstOrDefault())
+                    .OfType<CodeBlockSymbol>().DistinctBy(s => s.Id).Select(s => new
+                    { s.Id, s.Name, s.Signature, s.BlockId, s.Location.StartOffset, s.Location.EndOffset }),
+                facts = facts.Where(f => ids.Contains(f.Id)).Select(f => new
                 { f.Id, f.Kind, blockId = f.Span?.FilePath, start = f.Span?.StartOffset, end = f.Span?.EndOffset,
                     description = f.Span is null ? f.Label : null }) };
         }
@@ -102,13 +109,22 @@ public sealed partial class InternalLlmClient
         object Sources(IReadOnlyList<SharedSemanticItem> items)
         {
             var ids = items.SelectMany(i => i.FactIds).ToHashSet();
-            var changes = items.SelectMany(i => i.ChangeIds).ToHashSet();
+            var changes = items.Where(i => i.Kind == "change").SelectMany(i => i.ChangeIds).ToHashSet();
             // Old and new code for a selected change always travel together.
-            var facts = bundle.Facts.Where(f => ids.Contains(f.Id) || f.Kind == "source" && f.ChangeIds.Any(changes.Contains)).ToArray();
+            var requested = bundle.Facts.Where(f => ids.Contains(f.Id)).ToArray();
+            var spans = requested.Select(f => f.Span).OfType<SourceSpan>()
+                .Concat(items.SelectMany(i => i.Contexts).SelectMany(c => (c.Definitions ?? []).Select(d => d.Span).Append(c.Span))).ToArray();
+            bool Overlaps(SourceSpan? span) => span is not null && spans.Any(s => s.RevisionSha == span.RevisionSha &&
+                s.FilePath == span.FilePath && s.StartLine <= span.EndLine && s.EndLine >= span.StartLine);
+            var facts = bundle.Facts.Where(f => ids.Contains(f.Id) || f.Kind == "source" &&
+                (f.ChangeIds.Any(changes.Contains) || Overlaps(f.Span))).DistinctBy(f => f.Id).ToArray();
+            var owners = spans.Select(span => bundle.Facts.Where(f => f.Kind == "symbol" && f.Span is { } s &&
+                s.RevisionSha == span.RevisionSha && s.FilePath == span.FilePath && s.StartLine <= span.StartLine && s.EndLine >= span.EndLine)
+                .OrderBy(f => f.Span!.EndLine - f.Span.StartLine).FirstOrDefault()).OfType<SourceFact>().DistinctBy(f => f.Id);
             // Evidence IDs, blob IDs and full CodeContext objects stay in the
             // server-owned graph. Repeating those on every source line makes
             // overlapping type/method changes dominate the prompt.
-            return new { bundle.BaseSha, bundle.TargetSha, facts = facts.Select(f => new
+            return new { bundle.BaseSha, bundle.TargetSha, owners = owners.Select(f => new { f.Id, f.Label, f.Span }), facts = facts.Select(f => new
                 { f.Id, f.Kind, f.ChangeIds, label = f.Kind == "source" ? null : f.Label,
                     revision = f.Span?.RevisionSha, file = f.Span?.FilePath,
                     startLine = f.Span?.StartLine, endLine = f.Span?.EndLine,

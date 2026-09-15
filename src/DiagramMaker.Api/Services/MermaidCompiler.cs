@@ -112,6 +112,9 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
 
         void Append(SequenceBlock block)
         {
+            // Keep the source-owned tree (and its evidence) intact. Mermaid cannot
+            // lay out empty control fragments: their width collapses to zero.
+            if (!SequenceStructure.HasVisibleContent(block)) return;
             if (block.Kind == "message")
             {
                 if (block.EdgeId is null || !edgeMap.TryGetValue(block.EdgeId, out var edge))
@@ -130,6 +133,16 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
             }
             if (block.Kind == "alt")
             {
+                var visible = block.Children.Where(SequenceStructure.HasVisibleContent).ToArray();
+                if (block.Children.Count == 2 && visible.Length == 1 &&
+                    block.Children[0].Label == "then" && block.Children[1].Label == "else")
+                {
+                    var condition = visible[0] == block.Children[0] ? block.Label : "!(" + block.Label + ")";
+                    builder.Append("    opt ").Append(EscapeSequence(condition)).Append('\n');
+                    foreach (var child in visible[0].Children) Append(child);
+                    builder.AppendLine("    end");
+                    return;
+                }
                 foreach (var (branch, index) in block.Children.Select((item, index) => (item, index)))
                 {
                     var branchLabel = branch.Label switch { "then" => "참일 때", "else" => "거짓일 때", _ => branch.Label };
@@ -142,10 +155,8 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
             }
             if (block.Kind == "unordered")
             {
-                foreach (var branch in block.Children)
+                foreach (var branch in block.Children.Where(SequenceStructure.HasVisibleContent))
                 {
-                    if (diagram.Nodes.Count > 0) builder.Append("    Note over ").Append(aliases[diagram.Nodes[0].Id])
-                        .Append(": ").Append(EscapeSequence(branch.Label)).Append('\n');
                     foreach (var child in branch.Children) Append(child);
                 }
                 return;
@@ -181,6 +192,10 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
                 builder.Append("    ").Append(aliases[edge.TargetId]).Append(" <|.. ").Append(aliases[edge.SourceId]);
             else if (edge.Type.Equals("depends", StringComparison.OrdinalIgnoreCase))
                 builder.Append("    ").Append(aliases[edge.SourceId]).Append(" ..> ").Append(aliases[edge.TargetId]);
+            else if (edge.Type.Equals("composition", StringComparison.OrdinalIgnoreCase))
+                builder.Append("    ").Append(aliases[edge.SourceId]).Append(" *-- ").Append(aliases[edge.TargetId]);
+            else if (edge.Type.Equals("aggregation", StringComparison.OrdinalIgnoreCase))
+                builder.Append("    ").Append(aliases[edge.SourceId]).Append(" o-- ").Append(aliases[edge.TargetId]);
             else
                 builder.Append("    ").Append(aliases[edge.SourceId]).Append(edge.IsIndirect ? " ..> " : " --> ").Append(aliases[edge.TargetId]);
             if (!string.IsNullOrWhiteSpace(edge.Label))
@@ -198,9 +213,11 @@ public sealed partial class MermaidCompiler(DiagramValidator validator)
     {
         var direction = diagram.Direction?.Equals("LR", StringComparison.OrdinalIgnoreCase) == true ? "LR" : "TB";
         var builder = new StringBuilder($"stateDiagram-v2\n    direction {direction}\n");
-        var aliases = diagram.Nodes.ToDictionary(static node => node.Id, static node => Alias(node.Id));
+        var aliases = diagram.Nodes.ToDictionary(static node => node.Id,
+            static node => node.Kind is "initial" or "final" ? "[*]" : Alias(node.Id));
         foreach (var node in diagram.Nodes)
         {
+            if (node.Kind is "initial" or "final") continue;
             builder.Append("    state \"").Append(Escape(DisplayLabel(node.Label, node.ChangeMarker))).Append("\" as ").Append(aliases[node.Id]).Append('\n');
         }
 

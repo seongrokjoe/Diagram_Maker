@@ -84,10 +84,32 @@ public sealed class NaturalDiagramServiceTests
         Assert.Equal(expected, NaturalDiagramTypeResolver.Resolve("auto", prompt));
     }
 
+    [Fact]
+    public async Task CompactViewKeepsAllNodesAndFailedRegenerationPreservesReviewedSource()
+    {
+        var llm = new FakeLlm { NodeCount = 45 };
+        var store = new InMemoryAppStore();
+        using var cache = new NaturalDiagramSessionCache();
+        var service = new NaturalDiagramService(llm, new(new()), store, cache, new(),
+            Options.Create(new LlmOptions()), new TestEnvironment());
+        var view = new DiagramViewSelection("flow", "flowchart", "balanced", new(DetailLevel: "compact"));
+        var first = await service.GenerateAsync(new("동작 설계", Views: [view]), "owner", CancellationToken.None);
+        Assert.Equal(45, first.Diagram.Ir.Nodes.Count);
+        Assert.Equal(44, first.Diagram.Ir.Edges.Count);
+        Assert.NotNull((await store.GetNaturalDiagramAsync(first.Id, CancellationToken.None))!.Views![0].Diagram);
+        llm.Fail = true;
+        var failed = await service.ReviseViewsAsync(first, first.Request.EffectiveViews(), new HashSet<string> { "flow" }, "owner", CancellationToken.None);
+        Assert.Equal("Failed", failed.Views![0].State);
+        Assert.Equal(first.Diagram.Id, failed.Diagram.Id);
+        Assert.Equal(first.Diagram.Id, failed.Views[0].LastSuccessfulDiagram!.Id);
+    }
+
     private sealed class FakeLlm : IInternalLlmClient
     {
         public bool IsEnabled => true;
         public int CallCount { get; private set; }
+        public int NodeCount { get; init; } = 2;
+        public bool Fail { get; set; }
 
         public Task<DiagramIr?> GenerateNaturalDiagramAsync(
             string prompt,
@@ -98,6 +120,7 @@ public sealed class NaturalDiagramServiceTests
             CancellationToken cancellationToken)
         {
             CallCount++;
+            if (Fail) throw new LlmClientException("NATURAL_REQUIREMENTS_REVIEW", "검토 실패");
             DiagramIr result = new(
                 requestedType,
                 "Stable",
@@ -108,6 +131,11 @@ public sealed class NaturalDiagramServiceTests
                 [new DiagramEdge("e1", "a", "b", "flow", "요청", "unchanged", Confidence.Inferred, [], requestedType == "sequence" ? 1 : null)],
                 [],
                 []);
+            if (NodeCount > 2) result = result with
+            {
+                Nodes = Enumerable.Range(0, NodeCount).Select(i => new DiagramNode("n" + i, "동작 " + i, "operation", null, "unchanged", Confidence.Inferred, [])).ToArray(),
+                Edges = Enumerable.Range(1, NodeCount - 1).Select(i => new DiagramEdge("e" + i, "n" + (i - 1), "n" + i, "flow", "다음", "unchanged", Confidence.Inferred, [])).ToArray()
+            };
             return Task.FromResult<DiagramIr?>(result);
         }
 

@@ -290,9 +290,9 @@ export function DiagramEditor({ artifact, downloadName, variant, zoomable = fals
       .filter(node => node?.detailPageId).map(node => <button type="button" className="secondary" key={node!.id}
         onClick={() => onOpenDetail(node!.detailPageId!)}>{node!.label} · 세부 보기</button>)}
     {editing && draft.nodes.length === 0 ? <div className="empty-state">모든 노드를 삭제했습니다. 실행 취소하거나 새 노드를 추가하세요. 저장하려면 노드가 하나 이상 필요합니다.</div> : <MermaidPreview source={withViewDirection(currentArtifact.mermaidDsl, viewDirection, currentArtifact.type)} artifact={currentArtifact} downloadName={`${downloadName}-v${displayed.version}`}
-      toolbarContent={<>{canvasToolbar && !editing && <button className="secondary" disabled={!editingLatest && revisions.length > 0} onClick={beginEdit}>구조 편집</button>}
-        <label className="inline-select">보기 방향<select aria-label="보기 방향" disabled={artifact.type === "sequence"} value={viewDirection} onChange={e => setViewDirection(e.target.value as ViewDirection)}>
-          <option value="original">원본</option><option value="LR">가로</option><option value="TB">세로</option></select></label>{artifact.type === "sequence" && <span className="help">시퀀스는 세로 시간순</span>}</>}
+      toolbarContent={<><div className="diagram-direction-controls"><label className="inline-select">보기 방향<select aria-label="보기 방향" disabled={artifact.type === "sequence"} value={viewDirection} onChange={e => setViewDirection(e.target.value as ViewDirection)}>
+          <option value="original">원본</option><option value="LR">가로</option><option value="TB">세로</option></select></label>{artifact.type === "sequence" && <span className="help">시퀀스는 세로 시간순</span>}</div>
+        {canvasToolbar && !editing && <button className="secondary" disabled={!editingLatest && revisions.length > 0} onClick={beginEdit}>구조 편집</button>}</>}
       fitLabel={canvasToolbar ? "맞춤 보기" : undefined}
       zoomable={zoomable} interactive={editing || Boolean(onOpenDetail)} selected={selection} inlineEdit={inlineEdit} onSelect={selectItem} onEditRequest={editing ? requestInlineEdit : undefined}
       onInlineEditChange={(value) => setInlineEdit((current) => current ? { ...current, value } : null)}

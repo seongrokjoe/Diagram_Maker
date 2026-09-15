@@ -15,6 +15,10 @@ public sealed class SemanticExecution : IDisposable
     private readonly CancellationTokenSource budget;
     private readonly CancellationToken parent;
     private readonly Stopwatch watch = Stopwatch.StartNew();
+    private readonly Dictionary<string, long> stageMilliseconds = new();
+    private long stageStartedAt;
+    private int preflightTokenizationRequests;
+    private readonly int initialPreflightTokenizationRequests;
     private readonly string fingerprint;
     private readonly Func<Task>? persist;
     private readonly List<SemanticCheckpoint> checkpoints;
@@ -36,7 +40,12 @@ public sealed class SemanticExecution : IDisposable
     public bool BudgetExpired => budget.IsCancellationRequested && !parent.IsCancellationRequested;
     public LlmClientException? RequestFailure { get; private set; }
     public void StopRequests(LlmClientException error) => RequestFailure ??= error;
-    internal const string SharedPolicyVersion = "shared-requests-v7";
+    public async Task RecordPreflightTokenizationAsync()
+    {
+        preflightTokenizationRequests++;
+        await NotifyAsync();
+    }
+    internal const string SharedPolicyVersion = "shared-requests-v8";
     private DateTimeOffset lastProgressAt = DateTimeOffset.UtcNow;
     private readonly Dictionary<string, SemanticCoverage> coverage = new();
     private Func<SharedDiagramGroup, Task>? sharedProgress;
@@ -46,9 +55,34 @@ public sealed class SemanticExecution : IDisposable
         sharedProgress = callback;
         return new RequestScope(() => sharedProgress = before);
     }
-    public Task ReportSharedProjectionAsync(SharedDiagramGroup value) => sharedProgress?.Invoke(value) ?? Task.CompletedTask;
+    public async Task ReportSharedProjectionAsync(SharedDiagramGroup value)
+    {
+        if (sharedProgress is null || value.ChangedPageKeys is { Count: 0 }) return;
+        using var timing = BeginStage("projection-and-save");
+        await sharedProgress(value);
+    }
+    private IDisposable BeginStage(string stage)
+    {
+        var before = Stage;
+        CommitStageTime();
+        Stage = stage;
+        return new RequestScope(() => { CommitStageTime(); Stage = before; });
+    }
+    private void CommitStageTime()
+    {
+        var now = watch.ElapsedMilliseconds;
+        stageMilliseconds[Stage] = stageMilliseconds.GetValueOrDefault(Stage) + now - stageStartedAt;
+        stageStartedAt = now;
+    }
+    private IReadOnlyDictionary<string, long> StageTimes()
+    {
+        var result = new Dictionary<string, long>(stageMilliseconds);
+        result[Stage] = result.GetValueOrDefault(Stage) + watch.ElapsedMilliseconds - stageStartedAt;
+        return result;
+    }
     public async Task ReportCoverageAsync(string key, SemanticCoverage value)
     {
+        if (coverage.TryGetValue(key, out var previousValue) && previousValue == value) return;
         coverage[key] = value;
         await NotifyAsync();
     }
@@ -66,10 +100,10 @@ public sealed class SemanticExecution : IDisposable
         completedThisAttempt.Count, diagnostics.Count - initialRequests,
         previousElapsed + (long)watch.Elapsed.TotalSeconds, attemptNumber, startedAt,
         diagnostics.Sum(d => d.TransportAttempts > 0 ? d.TransportAttempts : d.Sent ? 1 + d.Retries : 0),
-        diagnostics.Sum(d => d.TokenizationRequests), checkpoints.Count(c => Counted(c) && c.State == "Failed"),
+        diagnostics.Sum(d => d.TokenizationRequests) + preflightTokenizationRequests, checkpoints.Count(c => Counted(c) && c.State == "Failed"),
         diagnostics.Count(d => !d.Sent && d.State == "Failed"),
         diagnostics.Skip(initialRequests).Sum(d => d.TransportAttempts > 0 ? d.TransportAttempts : d.Sent ? 1 + d.Retries : 0),
-        diagnostics.Skip(initialRequests).Sum(d => d.TokenizationRequests),
+        diagnostics.Skip(initialRequests).Sum(d => d.TokenizationRequests) + preflightTokenizationRequests - initialPreflightTokenizationRequests,
         diagnostics.Sum(d => d.ElapsedMilliseconds), diagnostics.Skip(initialRequests).Sum(d => d.ElapsedMilliseconds),
         diagnostics.LastOrDefault(d => d.State == "Running")?.StartedAt,
         diagnostics.Where(d => d.ErrorCode is not null).Take(1)
@@ -77,7 +111,7 @@ public sealed class SemanticExecution : IDisposable
             .Concat(diagnostics.Where(d => d.ErrorCode is not null).TakeLast(3)).DistinctBy(d => d.Id).ToArray(),
         diagnostics.LastOrDefault(), protocolUpgraded, lastProgressAt,
         coverage.Count == 0 ? null : new(coverage.Values.Sum(c => c.TotalUnits), coverage.Values.Sum(c => c.VerifiedUnits),
-            coverage.Values.Sum(c => c.PendingUnits), coverage.Values.Sum(c => c.FailedUnits)));
+            coverage.Values.Sum(c => c.PendingUnits), coverage.Values.Sum(c => c.FailedUnits)), StageTimes(), preflightTokenizationRequests);
 
     public SemanticExecution(LlmOptions options, IReadOnlyList<SemanticCheckpoint>? saved, CancellationToken cancellationToken, Func<Task>? onProgress = null,
         IReadOnlyList<LlmDiagnostic>? savedDiagnostics = null, SemanticProgress? savedProgress = null)
@@ -94,7 +128,9 @@ public sealed class SemanticExecution : IDisposable
         diagnostics = (savedDiagnostics ?? []).Select(d => d.State is "Running" or "Preparing"
             ? d with { State = "Interrupted", ErrorCode = "PROCESS_INTERRUPTED" } : d).ToList();
         initialRequests = diagnostics.Count;
+        preflightTokenizationRequests = initialPreflightTokenizationRequests = savedProgress?.PreflightTokenizationRequests ?? 0;
         previousElapsed = savedProgress?.TotalElapsedSeconds is > 0 ? savedProgress.TotalElapsedSeconds : savedProgress?.ElapsedSeconds ?? 0;
+        foreach (var entry in savedProgress?.StageMilliseconds ?? new Dictionary<string, long>()) stageMilliseconds[entry.Key] = entry.Value;
         attemptNumber = savedProgress is null ? 1 : savedProgress.AttemptNumber + 1;
         fingerprint = PolicyFingerprint(options);
     }
@@ -104,12 +140,13 @@ public sealed class SemanticExecution : IDisposable
         var current = Current;
         if (current is null) return await work();
         current.Token.ThrowIfCancellationRequested();
-        var oldStage = current.Stage; var oldUnit = current.UnitId;
+        var oldUnit = current.UnitId;
         var unitKey = Hash(current.fingerprint + stage + key);
         foreach (var parent in current.activeDependencies) parent.Add(unitKey);
         var dependencies = new HashSet<string>();
         current.activeDependencies.Add(dependencies);
-        current.Stage = stage; current.UnitId = unitKey[..16];
+        using var timing = current.BeginStage(stage);
+        current.UnitId = unitKey[..16];
         try
         {
             var cached = current.checkpoints.FirstOrDefault(c => c.Key == unitKey);
@@ -163,7 +200,7 @@ public sealed class SemanticExecution : IDisposable
             }
             throw;
         }
-        finally { current.activeDependencies.Remove(dependencies); current.Stage = oldStage; current.UnitId = oldUnit; }
+        finally { current.activeDependencies.Remove(dependencies); current.UnitId = oldUnit; }
     }
 
     public async Task RecordAsync(LlmDiagnostic record)
@@ -174,6 +211,7 @@ public sealed class SemanticExecution : IDisposable
         if (record.ProtocolVersion is not null && record.ErrorCode is not null && record.RecoveryState is null)
             record = record with { RecoveryState = "Retrying" };
         var index = diagnostics.FindIndex(d => d.Id == record.Id);
+        if (index >= 0 && diagnostics[index] == record) return;
         if (index >= 0) diagnostics[index] = record; else diagnostics.Add(record);
         await NotifyAsync();
     }

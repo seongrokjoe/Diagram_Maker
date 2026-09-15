@@ -217,7 +217,7 @@ public sealed partial class InternalLlmClient
         foreach (var element in plan.Elements)
         {
             if (string.IsNullOrWhiteSpace(element.Id) || !elementIds.Add(element.Id) || string.IsNullOrWhiteSpace(element.Summary) ||
-                element.Summary.Length > 80 || element.Summary.IndexOfAny(['<', '>', '`']) >= 0 || element.NodeIds is not { Count: > 0 }) return "InvalidElement";
+                element.Summary.Length > 80 || SharedSemanticValidation.UnsafeText(element.Summary) || element.NodeIds is not { Count: > 0 }) return "InvalidElement";
             foreach (var id in element.NodeIds) if (!nodes.ContainsKey(id) || !covered.Add(id)) return "UnknownOrDuplicateNode";
             if (candidate.Type == "flowchart" && element.NodeIds.Any(id => HasGenericLabel(nodes[id].Context, element.Summary))) return "GenericActionLabel";
             if (element.NodeIds.Count <= 1) continue;
@@ -299,7 +299,8 @@ public sealed partial class InternalLlmClient
             if (marker is not null && values.Length > 1) marker = marker with
             { Kind = DiagramChangeKind.Modified, Precision = DiagramChangePrecision.Symbol,
                 StartLine = null, EndLine = null, EvidenceIds = values.SelectMany(value => value.EvidenceIds).Distinct().ToArray() };
-            return node with { Id = id, Label = preserveName || node.Kind is "entry" or "exit" ? node.Label : element.Summary,
+            return node with { Id = id, Label = preserveName || node.Kind is "entry" or "exit" ? node.Label :
+                    node.OriginalExpression is { } expression ? DiagramPresentation.Condition(expression, element.Summary) : element.Summary,
                 Status = changed.Length == 0 ? node.Status : changed.Select(value => value.Status).Distinct().Count() == 1 ? changed[0].Status : "modified",
                 ChangeMarker = marker,
                 EvidenceIds = values.SelectMany(value => value.EvidenceIds).Distinct().ToArray(),

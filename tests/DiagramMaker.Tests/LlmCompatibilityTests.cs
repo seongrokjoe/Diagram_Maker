@@ -87,7 +87,7 @@ public sealed class LlmCompatibilityTests
         using var client = new VllmClient(options, handler: handler);
         using var execution = new SemanticExecution(options, null, CancellationToken.None);
         var schema = Schema("result");
-        var limit = schema.GetRawText().Length + "systemuser".Length + 1;
+        var limit = LlmRequestBudget.Measure("system", "user", schema).Characters + 1;
         var error = await Assert.ThrowsAsync<LlmClientException>(() => client.CompleteAsync(new("system", "user", 100, false,
             schema, InputCharacterLimit: limit), CancellationToken.None));
         Assert.Equal("LLM_INPUT_CHARACTERS", error.Code); Assert.Equal(2, calls);
@@ -119,7 +119,7 @@ public sealed class LlmCompatibilityTests
         using var client = new VllmClient(options, handler: handler);
         using var execution = new SemanticExecution(options, null, CancellationToken.None);
         var schema = Schema("result");
-        var inputLimit = System.Text.Encoding.UTF8.GetByteCount("systemuser" + schema.GetRawText()) + 257;
+        var inputLimit = LlmRequestBudget.Measure("system", "user", schema).Tokens + 1;
         var error = await Assert.ThrowsAsync<LlmClientException>(() => client.CompleteAsync(new("system", "user", 100, false,
             schema, InputTokenLimit: inputLimit), CancellationToken.None));
         Assert.Equal("LLM_INPUT_LIMIT", error.Code); Assert.Equal(2, calls);

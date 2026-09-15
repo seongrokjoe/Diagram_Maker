@@ -425,7 +425,8 @@ public sealed record DiagramNode(
     string? DetailPageId = null,
     string? AbstractionKind = null,
     CodeContext? Context = null,
-    string? QualifiedName = null);
+    string? QualifiedName = null,
+    string? OriginalExpression = null);
 
 public sealed record DiagramEdge(
     string Id,
@@ -718,7 +719,8 @@ public sealed record NaturalDiagramViewResult(
     string? ErrorCode = null,
     string? ErrorMessage = null,
     DiagramArtifact? LastSuccessfulDiagram = null,
-    bool Reused = false);
+    bool Reused = false,
+    NaturalDesignQuality? DesignQuality = null);
 
 public sealed record NaturalDiagramRecord(
     Guid Id,
@@ -732,7 +734,8 @@ public sealed record NaturalDiagramRecord(
     string GeneratorVersion = "natural-v1",
     bool Reused = false,
     IReadOnlyList<NaturalDiagramViewResult>? Views = null,
-    int Revision = 1);
+    int Revision = 1,
+    NaturalRequirements? Requirements = null);
 
 public sealed record SaveDiagramDslRevisionRequest(string MermaidDsl);
 

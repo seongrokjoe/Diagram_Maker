@@ -17,7 +17,7 @@ public sealed class NaturalDiagramService(
     IOptions<LlmOptions> options,
     IWebHostEnvironment environment)
 {
-    public const string GeneratorVersion = "natural-v4";
+    public const string GeneratorVersion = "natural-v5";
     private readonly LlmOptions _options = options.Value;
 
     public async Task<NaturalDiagramRecord> GenerateAsync(NaturalDiagramRequest request, string ownerUserId, CancellationToken cancellationToken)
@@ -122,6 +122,10 @@ public sealed class NaturalDiagramService(
         var previous = EffectiveResults(parent).ToDictionary(static view => view.ViewId, StringComparer.Ordinal);
         var results = new List<NaturalDiagramViewResult>();
         Exception? firstFailure = null;
+        var requirements = parent?.Request.Prompt == request.Prompt && parent.GeneratorVersion == GeneratorVersion
+            ? parent.Requirements : null;
+        var requirementsAttempted = requirements is not null;
+        Exception? requirementsFailure = null;
         foreach (var view in request.EffectiveViews())
         {
             if (!regenerateViewIds.Contains(view.Id) && previous.TryGetValue(view.Id, out var unchanged) && unchanged.Selection == view)
@@ -132,8 +136,15 @@ public sealed class NaturalDiagramService(
             previous.TryGetValue(view.Id, out var prior);
             try
             {
-                var artifact = await GenerateViewAsync(request, view, (prior?.Diagram?.Version ?? 0) + 1, cancellationToken);
-                results.Add(new NaturalDiagramViewResult(view.Id, view, artifact));
+                if (!requirementsAttempted)
+                {
+                    requirementsAttempted = true;
+                    try { requirements = await llm.ExtractNaturalRequirementsAsync(request.Prompt, request.EnableThinking, cancellationToken); }
+                    catch (LlmClientException error) { requirementsFailure = error; throw; }
+                }
+                if (requirementsFailure is not null) throw requirementsFailure;
+                var generated = await GenerateViewAsync(request, view, (prior?.Diagram?.Version ?? 0) + 1, requirements, cancellationToken);
+                results.Add(new NaturalDiagramViewResult(view.Id, view, generated.Artifact, DesignQuality: generated.Quality));
             }
             catch (Exception exception) when (exception is LlmClientException or InvalidOperationException or DiagramValidationException)
             {
@@ -141,7 +152,7 @@ public sealed class NaturalDiagramService(
                 var fallback = prior?.Diagram ?? prior?.LastSuccessfulDiagram;
                 results.Add(new NaturalDiagramViewResult(view.Id, view, fallback, "Failed",
                     exception is LlmClientException llmException ? llmException.Code : "DIAGRAM_GENERATION_FAILED",
-                    exception.Message, fallback));
+                    exception.Message, fallback, DesignQuality: prior?.DesignQuality));
             }
         }
         var primaryArtifact = results.Select(static result => result.Diagram).FirstOrDefault(static diagram => diagram is not null);
@@ -150,23 +161,24 @@ public sealed class NaturalDiagramService(
         var recordId = Guid.NewGuid();
         var rootId = parent?.RootDiagramId ?? parent?.Id ?? recordId;
         return new NaturalDiagramRecord(recordId, request with { ForceRegenerate = false }, primaryArtifact, now,
-            ownerUserId, rootId, parent?.Id, "generated", GeneratorVersion, false, results, (parent?.Revision ?? 0) + 1);
+            ownerUserId, rootId, parent?.Id, "generated", GeneratorVersion, false, results, (parent?.Revision ?? 0) + 1, requirements);
     }
 
-    private async Task<DiagramArtifact> GenerateViewAsync(
+    private async Task<(DiagramArtifact Artifact, NaturalDesignQuality? Quality)> GenerateViewAsync(
         NaturalDiagramRequest request,
         DiagramViewSelection view,
         int version,
+        NaturalRequirements? requirements,
         CancellationToken cancellationToken)
     {
         _ = environment; // Constructor retained for existing integrations.
         var preset = presets.Resolve(view.DiagramType, view.PresetId);
-        DiagramIr? ir = null;
+        NaturalDesignedDiagram? generated = null;
         if (llm.IsEnabled)
-            ir = await llm.GenerateNaturalDiagramAsync(request.Prompt, view.DiagramType, request.EnableThinking, preset, view.Overrides, cancellationToken);
-        if (ir is null) throw new LlmClientException("LLM_DISABLED", "The internal LLM is unavailable; generation requires the approved internal server.");
-        ir = ApplyPreset(ir, preset, view.Overrides);
-        return new DiagramArtifact(Guid.NewGuid(), ir.Type, version, ir, compiler.Compile(ir), DateTimeOffset.UtcNow);
+            generated = await llm.GenerateDesignedNaturalAsync(request.Prompt, view.DiagramType, request.EnableThinking, preset, view.Overrides, requirements, cancellationToken);
+        if (generated is null) throw new LlmClientException("LLM_DISABLED", "The internal LLM is unavailable; generation requires the approved internal server.");
+        var ir = ApplyPreset(generated.Diagram, preset, view.Overrides);
+        return (new DiagramArtifact(Guid.NewGuid(), ir.Type, version, ir, compiler.Compile(ir), DateTimeOffset.UtcNow), generated.Quality);
     }
 
     private static IReadOnlyList<NaturalDiagramViewResult> EffectiveResults(NaturalDiagramRecord? record)
@@ -194,26 +206,7 @@ public sealed class NaturalDiagramService(
             : style?.Direction?.Equals("LR", StringComparison.OrdinalIgnoreCase) == true
                 ? "LR"
                 : preset.Direction;
-        var detail = style?.DetailLevel?.ToLowerInvariant() ?? preset.DetailLevel;
-        var maximumNodes = detail switch
-        {
-            "compact" => Math.Min(preset.MaximumNodes, 20),
-            "detailed" => Math.Max(preset.MaximumNodes, 40),
-            _ => preset.MaximumNodes
-        };
-        var maximumEdges = detail switch
-        {
-            "compact" => Math.Min(preset.MaximumEdges, 30),
-            "detailed" => Math.Max(preset.MaximumEdges, 60),
-            _ => preset.MaximumEdges
-        };
-        var nodes = ir.Nodes.Take(maximumNodes).ToArray();
-        var nodeIds = nodes.Select(static node => node.Id).ToHashSet(StringComparer.Ordinal);
-        var edges = ir.Edges
-            .Where(edge => nodeIds.Contains(edge.SourceId) && nodeIds.Contains(edge.TargetId))
-            .Take(maximumEdges)
-            .ToArray();
-        return ir with { Direction = direction, Nodes = nodes, Edges = edges };
+        return ir with { Direction = direction };
     }
 
 }

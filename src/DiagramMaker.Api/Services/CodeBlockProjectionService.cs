@@ -138,10 +138,12 @@ public sealed class CodeBlockProjectionService(DiagramPresetCatalog presets)
         {
             var selected = items.Where(s => s.Steps.Count > 0).ToArray();
             var nodes = selected.SelectMany(s => s.Steps.Select(step => new DiagramNode(step.Id,
-                step.Kind == "entry" ? $"{s.Name} 시작" : step.Kind == "exit" ? "종료" : step.Label,
+                step.Kind == "entry" ? $"{s.Name} 시작" : step.Kind == "exit" ? "종료" :
+                    step.Kind is "condition" or "loop" ? DiagramPresentation.Condition(step.Label) : step.Label,
                 step.Kind, $"{s.Name} · 블럭 {Array.IndexOf(group.BlockIds.ToArray(), s.BlockId) + 1}, {s.Location.StartLine}행", "unchanged", Confidence.Exact, step.EvidenceIds,
                 Shape: step.Kind switch { "entry" or "exit" => "terminal", "condition" or "loop" => "decision", "call" => "call", "return" => "return", _ => null },
-                SourceFactIds: [step.Id], DetailPageId: Detail(s.Id), Context: step.Kind is "entry" or "exit" ? null : Context(step)))).ToArray();
+                SourceFactIds: [step.Id], DetailPageId: Detail(s.Id), Context: step.Kind is "entry" or "exit" ? null : Context(step),
+                OriginalExpression: step.Kind is "condition" or "loop" ? step.Label : null))).ToArray();
             var edges = selected.SelectMany(s => s.FlowEdges.Select((e, i) => Edge(StableIds.Create(s.Id, "flow", i), e.SourceId, e.TargetId,
                 e.Type, e.Label, s.EvidenceIds, [s.Id], "code"))).ToList();
             foreach (var relation in links.Where(r => r.Origin == "code" && r.Kind == "calls"))

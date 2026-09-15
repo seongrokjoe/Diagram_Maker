@@ -70,7 +70,10 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
     private readonly ILogger<VllmClient>? _logger;
     private readonly HttpClient? _client;
     private readonly Uri? _endpoint;
+    private readonly SemaphoreSlim completionGate = new(1, 1);
     private int tokenizationSupport;
+    private DateTimeOffset tokenizationRetryAfter;
+    private readonly ConcurrentDictionary<string, (int Tokens, bool Exact)> tokenCounts = new();
     private readonly ConcurrentDictionary<string, (string Mode, bool Relaxed)> compatibility = new();
 
     public VllmClient(LlmOptions options, ILogger<VllmClient>? logger = null, HttpMessageHandler? handler = null,
@@ -100,6 +103,13 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
 
     public async Task<VllmCompletionResult> CompleteAsync(VllmCompletionRequest request, CancellationToken cancellationToken)
     {
+        await completionGate.WaitAsync(cancellationToken);
+        try { return await CompleteSerialAsync(request, cancellationToken); }
+        finally { completionGate.Release(); }
+    }
+
+    private async Task<VllmCompletionResult> CompleteSerialAsync(VllmCompletionRequest request, CancellationToken cancellationToken)
+    {
         var execution = SemanticExecution.Current;
         if (execution?.RequestFailure is { } stopped) throw stopped;
         var watch = Stopwatch.StartNew();
@@ -107,7 +117,7 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
             "Preparing", DateTimeOffset.UtcNow, OutputLimit: request.MaxOutputTokens,
             Purpose: request.Purpose ?? (execution?.Stage.Contains("Review", StringComparison.Ordinal) == true ? "review" : "generation"),
             InputCharacters: request.UserPrompt.Length, InputCharacterLimit: request.InputCharacterLimit,
-            InputTokenLimit: Math.Min(_options.MaxInputTokens, request.InputTokenLimit ?? _options.MaxInputTokens),
+            InputTokenLimit: LlmRequestBudget.InputLimit(_options, request.MaxOutputTokens, request.InputTokenLimit),
             ContextTokenLimit: _options.MaxContextTokens);
         try
         {
@@ -115,7 +125,7 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
             var result = await CompleteCoreAsync(request, cancellationToken, async (prepared, mode, relaxed, ct) =>
             {
                 diagnostic = diagnostic with { State = "Preparing", OutputMode = mode, SchemaRelaxed = relaxed,
-                    InputCharacters = prepared.SystemPrompt.Length + prepared.UserPrompt.Length + (prepared.StructuredSchema?.GetRawText().Length ?? 0),
+                    InputCharacters = LlmRequestBudget.Measure(prepared.SystemPrompt, prepared.UserPrompt, prepared.StructuredSchema).Characters,
                     InputTokens = null };
                 if (diagnostic.InputCharacters > (request.InputCharacterLimit ?? _options.MaxInputCharacters))
                     throw new LlmClientException("LLM_INPUT_CHARACTERS", "The prepared messages and schema exceed the character budget.");
@@ -155,10 +165,15 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
         }
     }
 
-    private async Task<(int Tokens, bool Exact)> CountInputTokensAsync(VllmCompletionRequest request, CancellationToken cancellationToken,
+    internal async Task<(int Tokens, bool Exact)> CountInputTokensAsync(VllmCompletionRequest request, CancellationToken cancellationToken,
         Func<Task>? onTokenize = null)
     {
-        if (SemanticExecution.Current is not null && _options.UseServerTokenization && tokenizationSupport >= 0 && _client is not null && _endpoint is not null)
+        var key = SemanticExecution.Hash(JsonSerializer.Serialize(new { _options.Model, request.SystemPrompt, request.UserPrompt,
+            request.StructuredSchema, request.EnableThinking }));
+        if (tokenCounts.TryGetValue(key, out var cached)) return cached;
+        var estimate = LlmRequestBudget.Measure(request.SystemPrompt, request.UserPrompt, request.StructuredSchema).Tokens;
+        var limit = LlmRequestBudget.InputLimit(_options, request.MaxOutputTokens, request.InputTokenLimit);
+        if ((SemanticExecution.Current is not null || estimate > limit) && _options.UseServerTokenization && tokenizationSupport >= 0 && DateTimeOffset.UtcNow >= tokenizationRetryAfter && _client is not null && _endpoint is not null)
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(10));
@@ -173,6 +188,7 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
                     add_generation_prompt = true, chat_template_kwargs = new { enable_thinking = request.EnableThinking }
                 }) };
                 if (onTokenize is not null) await onTokenize();
+                else if (SemanticExecution.Current is { } execution) await execution.RecordPreflightTokenizationAsync();
                 using var response = await _client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
                 if (response.IsSuccessStatusCode)
                 {
@@ -181,21 +197,24 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
                     {
                         tokenizationSupport = 1;
                         // Schemas may be included by the serving template; reserve their bytes.
-                        return (tokens + Encoding.UTF8.GetByteCount(request.StructuredSchema?.GetRawText() ?? ""), !request.StructuredSchema.HasValue);
+                        var result = ((int)Math.Min(int.MaxValue, (long)tokens + Encoding.UTF8.GetByteCount(request.StructuredSchema?.GetRawText() ?? "")), !request.StructuredSchema.HasValue);
+                        if (tokenCounts.Count >= 256) tokenCounts.Clear();
+                        tokenCounts[key] = result;
+                        return result;
                     }
                 }
                 // A transient tokenizer error must not disable it for all later requests.
                 if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed or HttpStatusCode.NotImplemented)
                     tokenizationSupport = -1;
+                else tokenizationRetryAfter = DateTimeOffset.UtcNow.AddSeconds(60);
             }
             catch (Exception e) when (e is HttpRequestException or JsonException or OperationCanceledException or LlmClientException)
-            { cancellationToken.ThrowIfCancellationRequested(); }
+            { cancellationToken.ThrowIfCancellationRequested(); tokenizationRetryAfter = DateTimeOffset.UtcNow.AddSeconds(60); }
         }
         // The tokenizer sees message content, not JSON's escaped wire encoding.
         // Reserve one token per UTF-8 byte plus template overhead; never call the
         // fallback exact or count escaped quotes/Unicode as model input twice.
-        return (Encoding.UTF8.GetByteCount(request.SystemPrompt) + Encoding.UTF8.GetByteCount(request.UserPrompt) +
-            Encoding.UTF8.GetByteCount(request.StructuredSchema?.GetRawText() ?? "") + 256, false);
+        return (estimate, false);
     }
 
     private async Task<VllmCompletionResult> CompleteCoreAsync(VllmCompletionRequest request, CancellationToken cancellationToken,

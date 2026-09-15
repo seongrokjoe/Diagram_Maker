@@ -47,11 +47,12 @@ public sealed class CodeBlockSemanticTests
         Assert.Equal(ir.Nodes.Count - 4, result.Nodes.Count);
         Assert.Equal(ir.Nodes.Count(n => n.Kind == "condition"), result.Nodes.Count(n => n.Kind == "condition"));
         Assert.Equal(2, result.Nodes.Count(n => n.Label == "403 오류 응답을 보내고 종료" && n.Kind == "return"));
-        Assert.DoesNotContain(result.Nodes, n => n.Label.Contains("return;") || n.Label.Contains("&&") || n.Label == "데이터 처리");
+        Assert.DoesNotContain(result.Nodes, n => n.Label.Contains("return;") || n.Label == "데이터 처리");
+        Assert.All(result.Nodes.Where(n => n.Kind == "condition"), n => Assert.EndsWith("\n" + n.OriginalExpression, n.Label));
         Assert.All(result.Nodes, n => Assert.All(n.EvidenceIds, id => Assert.Contains(graph.Evidence, e => e.Id == id)));
         Assert.True(ir.Nodes.SelectMany(n => n.SourceFactIds!).ToHashSet().SetEquals(result.Nodes.SelectMany(n => n.SourceFactIds!)));
         Assert.Contains(result.Nodes, n => n.Label.Contains("2,000,000"));
-        var request = Assert.Single(result.Nodes, n => n.Label == "코드 블럭 요청인가요?");
+        var request = Assert.Single(result.Nodes, n => n.Label == "코드 블럭 요청인가요?\nIsCodeBlockPath(context.Request.Path)");
         Assert.Equal(2, result.Edges.Count(e => e.SourceId == request.Id));
     }
 

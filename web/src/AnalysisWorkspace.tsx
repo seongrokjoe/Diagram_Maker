@@ -1,7 +1,9 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, request } from "./api";
 import { SemanticProgressView } from "./SemanticProgressView";
+import { assignChange } from "./analysisSelection";
 import { diagramName, originOf, originOfPage, resultCountsText, type DiagramVariant } from "./diagramOrigin";
+import { ResizableResults } from "./ResizableResults";
 import { CodeBlockResultTree } from "./CodeBlockResultTree";
 import type { CodeBlockLocationSelection } from "./codeBlockWorkspaceState";
 import type { CodeBlockRun } from "./codeBlockTypes";
@@ -131,6 +133,10 @@ export function AnalysisWorkspace({ repositories, reportError }: {
     groups.forEach((group) => group.changeIds.forEach((changeId) => result.set(changeId, group.id)));
     return result;
   }, [groups]);
+  useEffect(() => { setMergeIds(current => {
+    const next = current.filter(id => groups.some(group => group.id === id));
+    return next.length === current.length ? current : next;
+  }); }, [groups]);
   const selectedRepository = repositories.find((repository) => repository.id === repositoryId);
   const revisionsMatch = advancedBase && Boolean(baseRevision) && baseRevision === targetRevision;
 
@@ -162,7 +168,7 @@ export function AnalysisWorkspace({ repositories, reportError }: {
 
   function toggleCandidate(changeId: string, checked: boolean) {
     setGroups((current) => {
-      if (!checked) return current.map((group) => ({ ...group, changeIds: group.changeIds.filter((id) => id !== changeId) }));
+      if (!checked) return assignChange(current, changeId);
       if (current.length === 0) {
         const id = crypto.randomUUID();
         const view = createView("flowchart", presets);
@@ -174,12 +180,7 @@ export function AnalysisWorkspace({ repositories, reportError }: {
   }
 
   function moveCandidate(changeId: string, destinationId: string) {
-    setGroups((current) => current.map((group) => ({
-      ...group,
-      changeIds: group.id === destinationId
-        ? [...group.changeIds.filter((id) => id !== changeId), changeId]
-        : group.changeIds.filter((id) => id !== changeId),
-    })));
+    setGroups(current => assignChange(current, changeId, destinationId));
   }
 
   function updateGroup(id: string, patch: Partial<AnalysisGroupSelection>) {
@@ -434,7 +435,7 @@ export function AnalysisWorkspace({ repositories, reportError }: {
       {currentStep === 2 && plan?.state === "Ready" && <section className="plan-editor">
         <div className="panel plan-toolbar">
           <div><p className="section-label">STEP 2 · EVIDENCE-BOUND GROUPS</p><h2>표시할 변경점과 그룹 확인</h2></div>
-          <div className="button-row"><button type="button" className="secondary" onClick={() => setCurrentStep(1)}>커밋 다시 선택</button><button type="button" className="secondary" onClick={addGroup}>그룹 추가</button><button type="button" className="primary" disabled={busy} onClick={() => void saveAndGenerate()}>{elapsedLabel("선택대로 다이어그램 생성", busyAction === "diagram-generate", busySeconds)}</button></div>
+          <div className="button-row"><button type="button" className="secondary" onClick={() => setCurrentStep(1)}>커밋 다시 선택</button><button type="button" className="secondary" onClick={addGroup}>그룹 추가</button><button type="button" className="primary" disabled={busy || !groups.some(group => group.changeIds.length > 0)} onClick={() => void saveAndGenerate()}>{elapsedLabel("선택대로 다이어그램 생성", busyAction === "diagram-generate", busySeconds)}</button></div>
         </div>
         {plan.warnings.filter((warning) => !isCppDiagnostic(warning)).map((warning) => <p className="warning" key={warning}>{warning}</p>)}
         {((plan.notices?.length ?? 0) > 0 || plan.warnings.some(isCppDiagnostic)) && <details className="panel diagnostic-panel">
@@ -581,56 +582,63 @@ export function AnalysisResultView({ analysis, activeGroup, setActiveGroup, acti
   sampleRefinements?: Array<{ id: string; label: string; instruction: string }>;
 }) {
   const [query, setQuery] = useState("");
-  const [location, setLocation] = useState<CodeBlockLocationSelection | null>(null);
-  useEffect(() => { setQuery(""); setLocation(null); }, [analysis.id]);
+  const [selection, setSelection] = useState<{ analysisId: string; location: CodeBlockLocationSelection } | null>(null);
+  const [compare, setCompare] = useState(false);
+  useEffect(() => { setQuery(""); setCompare(false); }, [analysis.id]);
   if (!analysis.result) return null;
+  const location = selection?.analysisId === analysis.id ? selection.location : null;
   const groups = analysis.result.diagramGroups ?? [];
-  const selected = groups.find((group) => group.groupId === activeGroup) ??
-    groups.find((group) => effectiveResultViews(group).some((view) => view.diagram)) ?? groups[0];
+  const selected = groups.find(group => group.groupId === (location?.group ?? activeGroup)) ??
+    groups.find(group => effectiveResultViews(group).some(view => view.diagram)) ?? groups[0];
   const views = selected ? effectiveResultViews(selected) : [];
-  const selectedView = views.find((view) => view.viewId === activeView) ??
-    views.find((view) => view.diagram) ?? views[0];
-  const selectedPreset = selectedView ? presets.find((preset) => preset.id === selectedView.selection.presetId && preset.type === selectedView.selection.diagramType) : undefined;
+  const selectedView = views.find(view => view.viewId === (location?.view ?? activeView)) ?? views.find(view => view.diagram) ?? views[0];
+  const pages = selectedView?.document?.pages ?? [];
+  const page = pages.find(p => p.id === location?.page) ?? pages.find(p => p.id === selectedView?.document?.overviewPageId) ?? pages[0];
+  const sameView = location?.group === selected?.groupId && location?.view === selectedView?.viewId;
+  const originalVariant = page ? originOfPage(page) : selectedView?.diagram ? originOf(selectedView.diagram) : "code";
+  const active: CodeBlockLocationSelection | null = selected && selectedView ? {
+    group: selected.groupId, view: selectedView.viewId,
+    page: sameView && location?.page === "" || !selectedView.diagram ? "" : page?.id ?? "overview",
+    variant: sameView && location?.variant === "code" && (page?.codeDiagram || originalVariant === "code") ? "code" : originalVariant
+  } : null;
+  function select(next: CodeBlockLocationSelection) {
+    setSelection({ analysisId: analysis.id, location: next }); setActiveGroup(next.group); setActiveView(next.view);
+  }
   return <div className="analysis-result">
-    <label>선택 실행 내 이름 검색<input type="search" aria-label="Git 다이어그램 이름 검색" value={query} onChange={e => setQuery(e.target.value)} /></label>
-    <CodeBlockResultTree key={analysis.id} query={query} showStatic active={location} onSelect={next => {
-      setLocation(next); setActiveGroup(next.group); setActiveView(next.view);
-    }} run={{ id: analysis.id, results: groups.map(group => ({ groupId: group.groupId, title: group.title, blockIds: [], availability: [],
-      views: effectiveResultViews(group).map(view => ({ viewId: view.viewId, selection: view.selection, state: view.state, warnings: view.warnings,
-        reused: view.reused, llmStatus: view.generationMetadata?.llmStatus ?? "", pages: (view.document?.pages ?? (view.diagram ? [{ id: "overview", title: view.diagram.ir.title, diagram: view.diagram }] : [])).map(page => ({
-          id: page.id, title: page.title, artifactId: page.diagram.id, resultKind: originOfPage(page) === "ai" ? "semantic" : "static",
-          codeArtifactId: "codeDiagram" in page ? page.codeDiagram?.id : undefined
-        })) }))
-    })) } satisfies Pick<CodeBlockRun, "id" | "results">} />
-    <div className="summary-card"><strong>전체 요약</strong><p>{analysis.result.narrative.summary}</p></div>
-    <ResultNotices key={analysis.id} notices={analysis.result.narrative.warnings} title="파일별 분석 안내·주의사항" />
-    {groups.length > 0 && <nav className="result-group-selector" aria-label="생성 결과 그룹 선택">
-      <div className="result-group-heading"><strong>그룹 선택 <span className="result-count">{groups.length}개</span></strong><span>그룹을 선택한 뒤 다이어그램 형식과 페이지를 선택하세요.</span></div>
-      <div className="result-group-grid">{groups.map((group, index) => {
-        const groupViews = effectiveResultViews(group);
-        const active = selected?.groupId === group.groupId;
-        return <button type="button" className={`result-group-card ${active ? "active" : ""}`} aria-pressed={active} key={group.groupId}
-          onClick={() => { setActiveGroup(group.groupId); setActiveView((groupViews.find(view => view.diagram) ?? groupViews[0])?.viewId ?? ""); }}>
-          <span className="result-group-number">{index + 1}</span><span className="result-group-info"><strong>{group.title}</strong>
-            <span>변경 {group.changeIds.length}개 · 다이어그램 {groupViews.length}개</span>
-            <span>{groupViews.map(view => `${formatDiagramType(view.selection.diagramType)}${view.state === "Failed" ? " (실패)" : ""}`).join(" · ")}</span>
-          </span><span className="result-group-state">{active ? "선택됨" : "선택"}</span>
-        </button>;
-      })}</div>
-    </nav>}
-    {selected && <article className="diagram-result">
-      <div className="summary-card"><span className="result-group-context">선택한 그룹 {groups.indexOf(selected) + 1} / {groups.length}</span><strong>{selected.title}</strong><p>{selected.narrative.summary}</p><small>{selected.narrative.intent}</small></div>
-      {views.length > 0 && <><p className="tab-label">다이어그램 형식</p><div className="diagram-type-tabs">{views.map((view) => <button type="button" className={selectedView?.viewId === view.viewId ? "active" : ""} aria-pressed={selectedView?.viewId === view.viewId} key={view.viewId} onClick={() => setActiveView(view.viewId)}>{formatDiagramType(view.selection.diagramType)}{view.state === "Failed" ? " · 실패" : ""}</button>)}</div></>}
-      {selectedView && <div className="effective-options"><span>적용 옵션</span><span>{selectedPreset?.name ?? selectedView.selection.presetId}</span><span>{selectedView.selection.overrides?.direction ?? selectedPreset?.direction ?? "LR"}</span><span>{selectedView.selection.overrides?.detailLevel ?? selectedPreset?.detailLevel ?? "balanced"}</span><span>Caller {selectedView.selection.overrides?.callerDepth ?? selectedPreset?.callerDepth ?? 1}</span><span>Callee {selectedView.selection.overrides?.calleeDepth ?? selectedPreset?.calleeDepth ?? 1}</span><span>관계 {selectedView.selection.overrides?.relationDepth ?? selectedPreset?.relationDepth ?? 1}</span>{selectedView.selection.focusOnChanges && <span className="override-chip">요약</span>}<span>{selectedView.generationMetadata?.llmStatus === "Semantic" ? "LLM 설계·의미 검토 통과" : "정적 결과 또는 기존 생성본"}</span><span>{selectedView.reused ? "이전 결과 재사용" : "새로 생성"}</span></div>}
-      {selectedView && <ResultViewOptionsEditor group={selected} view={selectedView} siblingViews={views.map((item) => item.selection)} presets={presets}
-        busy={Boolean(regeneratingViewId)} sampleRefinements={sampleRefinements} onApply={(selection) => onRegenerateView(selected.groupId, selection)} />}
-      {selectedView?.errorMessage && <p className="warning">{selectedView.errorMessage}</p>}
-      {selectedView?.diagram ? <AnalysisDiagramPane key={`${analysis.id}/${selected.groupId}/${selectedView.viewId}`} artifact={selectedView.diagram} analysis={analysis} groupId={selected.groupId}
-        view={selectedView} reportError={reportError} busy={Boolean(regeneratingViewId)} location={location?.group === selected.groupId && location.view === selectedView.viewId ? location : null}
-        onRegenerate={() => onRegenerateView(selected.groupId, selectedView.selection)} /> : <EmptyState text={selectedView?.warnings[0] ?? selected.warnings[0] ?? "이 그룹의 다이어그램을 생성하지 못했습니다."} />}
-    </article>}
-    {groups.length === 0 && analysis.result.diagrams[0] && <MermaidPreview source={analysis.result.diagrams[0].mermaidDsl} downloadName="git-analysis" zoomable />}
-    <h3>변경 파일</h3><ul className="file-list">{analysis.result.changedFiles.map((file) => <li key={`${file.path}-${file.changeKind}`}><span className={`change ${file.changeKind.toLowerCase()}`}>{file.changeKind}</span><code>{file.previousPath ? `${file.previousPath} → ${file.path}` : file.path}</code></li>)}</ul>
+    <ResizableResults preference="diagram-maker.git-results-width" label="Git 결과 목록 너비">
+      <aside className="panel result-sidebar">
+        <label>선택 실행 내 이름 검색<input type="search" aria-label="Git 다이어그램 이름 검색" value={query} onChange={e => setQuery(e.target.value)} /></label>
+        <label className="checkbox"><input type="checkbox" checked={compare} onChange={e => setCompare(e.target.checked)} /><span>AI/Code 함께 보기</span></label>
+        <CodeBlockResultTree key={analysis.id} query={query} showStatic active={active} onSelect={select}
+          run={{ id: analysis.id, results: groups.map(group => ({ groupId: group.groupId, title: group.title, blockIds: [], availability: [],
+            views: effectiveResultViews(group).map(view => ({ viewId: view.viewId, selection: view.selection, state: view.state, warnings: view.warnings,
+              reused: view.reused, llmStatus: view.generationMetadata?.llmStatus ?? "", pages: (view.document?.pages ?? (view.diagram ? [{ id: "overview", title: view.diagram.ir.title, diagram: view.diagram }] : [])).map(page => ({
+                id: page.id, title: page.title, artifactId: page.diagram.id, resultKind: originOfPage(page) === "ai" ? "semantic" : "static",
+                codeArtifactId: "codeDiagram" in page ? page.codeDiagram?.id : undefined
+              })) }))
+          })) } satisfies Pick<CodeBlockRun, "id" | "results">} />
+      </aside>
+      <div className="result-content">
+        {selected && selectedView && active && <article className="diagram-result">
+          <div className="result-toolbar">
+            <div className="result-heading"><h3>{selected.title}</h3><span>{formatDiagramType(selectedView.selection.diagramType)} · {active.variant === "ai" ? "AI" : "Code"}{page && " · " + (pages.indexOf(page) + 1) + "/" + pages.length + " 페이지"}</span></div>
+            <ResultViewOptionsEditor group={selected} view={selectedView} siblingViews={views.map(item => item.selection)} presets={presets}
+              busy={Boolean(regeneratingViewId)} sampleRefinements={sampleRefinements} onApply={selection => onRegenerateView(selected.groupId, selection)} />
+          </div>
+          {selectedView.errorMessage && <p className="warning" role="alert">{selectedView.errorMessage}</p>}
+          {selectedView.diagram && active.page ? <AnalysisDiagramPane key={analysis.id + "/" + selected.groupId + "/" + selectedView.viewId}
+            artifact={selectedView.diagram} analysis={analysis} groupId={selected.groupId} view={selectedView} reportError={reportError}
+            busy={Boolean(regeneratingViewId)} location={active} compare={compare} onSelect={select}
+            onRegenerate={() => onRegenerateView(selected.groupId, selectedView.selection)} /> :
+            <EmptyState text={selectedView.warnings[0] ?? selected.warnings[0] ?? "이 그룹의 다이어그램을 생성하지 못했습니다."} />}
+          <details className="result-summary"><summary>그룹 요약</summary><p>{selected.narrative.summary}</p><p>{selected.narrative.intent}</p></details>
+        </article>}
+        {groups.length === 0 && analysis.result.diagrams[0] && <MermaidPreview source={analysis.result.diagrams[0].mermaidDsl} downloadName="git-analysis" zoomable />}
+        <details className="result-summary"><summary>전체 요약</summary><p>{analysis.result.narrative.summary}</p></details>
+        <ResultNotices key={analysis.id} notices={analysis.result.narrative.warnings} title="파일별 분석 안내·주의사항" />
+        <details className="result-summary"><summary>변경 파일</summary><ul className="file-list">{analysis.result.changedFiles.map(file => <li key={file.path + "-" + file.changeKind}><span className={"change " + file.changeKind.toLowerCase()}>{file.changeKind}</span><code>{file.previousPath ? file.previousPath + " → " + file.path : file.path}</code></li>)}</ul></details>
+      </div>
+    </ResizableResults>
   </div>;
 }
 
@@ -650,8 +658,9 @@ function ResultViewOptionsEditor({ group, view, siblingViews, presets, busy, onA
     id: group.groupId, title: group.title, changeIds: group.changeIds,
     diagramType: draft.diagramType, presetId: draft.presetId, overrides: draft.overrides, views: [draft],
   };
-  return <details className="result-options-editor">
-    <summary>적용 옵션 수정</summary>
+  return <details className="result-options-editor" onKeyDown={e => { if (e.key === "Escape") { e.currentTarget.open = false; e.currentTarget.querySelector("summary")?.focus(); } }}>
+    <summary>옵션 수정</summary>
+    <div className="result-options-body">
     <GroupViewEditor group={editorGroup} view={draft} index={0} presets={presets}
       siblingViews={siblingViews.map((item) => item.id === draft.id ? draft : item)} allowRemove={false}
       onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))} onRemove={() => undefined} />
@@ -668,11 +677,14 @@ function ResultViewOptionsEditor({ group, view, siblingViews, presets, busy, onA
       <button type="button" className="secondary" disabled={!changed || busy} onClick={() => setDraft(view.selection)}>변경 취소</button>
       <button type="button" className="primary" disabled={busy} onClick={() => void onApply(draft)}>{busy ? "다시 생성 중…" : "이 다이어그램 다시 그리기"}</button>
     </div>
+    </div>
   </details>;
 }
 
-function AnalysisDiagramPane({ artifact, analysis, groupId, view, reportError, onRegenerate, busy, location }: {
-  location?: CodeBlockLocationSelection | null;
+function AnalysisDiagramPane({ artifact, analysis, groupId, view, reportError, onRegenerate, busy, location, compare, onSelect }: {
+  location: CodeBlockLocationSelection;
+  compare: boolean;
+  onSelect: (location: CodeBlockLocationSelection) => void;
   onRegenerate: () => Promise<void>;
   busy: boolean;
   artifact?: AnalysisDiagramView["diagram"];
@@ -681,11 +693,10 @@ function AnalysisDiagramPane({ artifact, analysis, groupId, view, reportError, o
   view: AnalysisDiagramView;
   reportError: (message: string) => void;
 }) {
-  const [pageId, setPageId] = useState(location?.page || view.document?.overviewPageId || "overview");
-  const [variant, setVariant] = useState<DiagramVariant | undefined>(location?.variant);
-  const [compare, setCompare] = useState(false);
+  const pageId = location.page;
+  const variant = location.variant;
   const [paired, setPaired] = useState<DiagramArtifact | null>(null);
-  useEffect(() => { if (location?.page) { setPageId(location.page); setVariant(location.variant); } }, [location]);
+  function setPageId(page: string) { onSelect({ ...location, page }); }
 
   const [loadedPage, setLoaded] = useState<{ key: string; value: DiagramArtifact } | null>(null);
   const requestKey = `${analysis.id}/${groupId}/${view.viewId}/${pageId}/${artifact?.id}/${variant}`;
@@ -725,29 +736,7 @@ function AnalysisDiagramPane({ artifact, analysis, groupId, view, reportError, o
     api.previewAnalysisDiagramEdit(analysis.id, groupId, view.viewId, input, signal, pageId, variant), [analysis.id, groupId, view.viewId, pageId, variant]);
   const metadata = view.generationMetadata;
   const selectedPage = view.document?.pages.find(p => p.id === pageId);
-  const selectedOrigin = selectedPage ? originOfPage(selectedPage) : loaded ? originOf(loaded) : "code";
-  return <section className="comparison-pane">
-    <div className="form-row"><label>그림 원본<select aria-label="Git 그림 원본" value={variant ?? selectedOrigin} onChange={e => setVariant(e.target.value as DiagramVariant)}>
-      {selectedOrigin === "ai" && <option value="ai">AI 다이어그램</option>}
-      {(selectedPage?.codeDiagram || selectedOrigin === "code") && <option value="code">Code 다이어그램</option>}
-    </select></label><label><input type="checkbox" checked={compare} onChange={e => setCompare(e.target.checked)} />AI/Code 함께 보기</label></div>
-    {view.document && <nav className="diagram-pages" aria-label="요약과 상세 페이지">
-      <label>표시 페이지<span className="page-select-control"><span className="page-select-arrow" aria-hidden="true">▾</span><select value={pageId} onChange={event => { setPageId(event.target.value); setSnippet(null); }}>
-        {view.document.pages.map(page => <option key={page.id} value={page.id}>{page.title}</option>)}
-      </select></span></label>
-      <span className="page-position">{Math.max(0, view.document.pages.findIndex(page => page.id === pageId)) + 1} / {view.document.pages.length} 페이지</span>
-      {pageId !== view.document.overviewPageId && <button type="button" className="secondary" onClick={() => setPageId(view.document!.overviewPageId)}>핵심 요약으로</button>}
-    </nav>}
-    {metadata && <details className="generation-evidence"><summary>생성 근거 · 요청 반영 · 변경 커버리지</summary>
-      <p>{metadata.llmStatus === "Semantic" ? "LLM 설계·의미 검토 통과" : "정적 결과 또는 기존 생성본"} · LLM 시도 {metadata.attempts ?? 0}회</p>
-      <p>코드 범위: {analysis.baseSha?.slice(0, 8)} → {analysis.targetSha?.slice(0, 8)} · {metadata.analyzerVersion ?? "기존 분석기"}</p>
-      <small>입력 식별자: {metadata.bundleHash ?? "기존 결과에 기록되지 않음"}</small>
-      {metadata.effectiveOptions && <p>적용 옵션: {JSON.stringify(metadata.effectiveOptions)}</p>}
-      {metadata.refinementInstruction && <p>요청: {metadata.refinementInstruction}</p>}
-      {(metadata.instructionResults ?? []).map((result, index) => <p key={index}>{result}</p>)}
-      {view.document?.coverage.map(item => <p key={item.changeId}><code>{item.changeId}</code> · {item.state === "Overview" ? "요약 표시" : item.state === "Detail" ? "상세 표시" : item.state === "Partial" ? "일부 표시" : "미제공"}{item.reason && ` · ${item.reason}`}</p>)}
-      <ResultNotices notices={[...view.warnings, ...metadata.warnings]} title="생성 과정 안내" />
-    </details>}
+  return <section className="comparison-pane" data-page-id={pageId} data-variant={variant}>
     {pageError && <p className="warning">{pageError}</p>}
     {loaded ? <>
       {loaded.explanation?.status !== "Semantic" && <button type="button" className="secondary" disabled={busy}
@@ -762,6 +751,16 @@ function AnalysisDiagramPane({ artifact, analysis, groupId, view, reportError, o
           onOpenDetail={setPageId} showExplanation collapsibleExplanation onEvidence={showEvidence} />}
         {compare && !paired && <p>대응하는 AI/Code 그림이 모두 완료되면 함께 표시됩니다.</p>}
       </div>
+    {metadata && <details className="generation-evidence"><summary>생성 근거 · 요청 반영 · 변경 커버리지</summary>
+      <p>{metadata.llmStatus === "Semantic" ? "LLM 설계·의미 검토 통과" : "정적 결과 또는 기존 생성본"} · LLM 시도 {metadata.attempts ?? 0}회</p>
+      <p>코드 범위: {analysis.baseSha?.slice(0, 8)} → {analysis.targetSha?.slice(0, 8)} · {metadata.analyzerVersion ?? "기존 분석기"}</p>
+      <small>입력 식별자: {metadata.bundleHash ?? "기존 결과에 기록되지 않음"}</small>
+      {metadata.effectiveOptions && <p>적용 옵션: {JSON.stringify(metadata.effectiveOptions)}</p>}
+      {metadata.refinementInstruction && <p>요청: {metadata.refinementInstruction}</p>}
+      {(metadata.instructionResults ?? []).map((result, index) => <p key={index}>{result}</p>)}
+      {view.document?.coverage.map(item => <p key={item.changeId}><code>{item.changeId}</code> · {item.state === "Overview" ? "요약 표시" : item.state === "Detail" ? "상세 표시" : item.state === "Partial" ? "일부 표시" : "미제공"}{item.reason && ` · ${item.reason}`}</p>)}
+      <ResultNotices notices={[...view.warnings, ...metadata.warnings]} title="생성 과정 안내" />
+    </details>}
       {sequenceDetailReferences(loaded.ir.sequenceBlocks ?? []).map(reference => <button type="button" className="secondary" key={reference.id}
         onClick={() => setPageId(reference.detailPageId!)}>{reference.label} · 세부 보기</button>)}
       <ResultNotices key={`notes-${loaded.id}`} notices={loaded.ir.notes} title="페이지 분석 메모" />

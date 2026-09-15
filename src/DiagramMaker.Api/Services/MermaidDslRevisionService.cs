@@ -27,7 +27,8 @@ public sealed partial class MermaidDslRevisionService(
         var id = Guid.NewGuid();
         var artifact = new DiagramArtifact(id, ir.Type, parent.Diagram.Version + 1, ir, compiler.Compile(ir), now);
         var views = parent.Views?.Select(view => view.Diagram?.Id == parent.Diagram.Id
-            ? view with { Diagram = artifact, LastSuccessfulDiagram = artifact, State = "Completed", ErrorCode = null, ErrorMessage = null }
+            ? view with { Diagram = artifact, LastSuccessfulDiagram = artifact, State = "Completed", ErrorCode = null, ErrorMessage = null,
+                DesignQuality = view.DesignQuality is null ? null : view.DesignQuality with { Status = "EditedAfterReview" } }
             : view).ToArray();
         var record = new NaturalDiagramRecord(
             id,
@@ -41,7 +42,8 @@ public sealed partial class MermaidDslRevisionService(
             NaturalDiagramService.GeneratorVersion,
             false,
             views,
-            parent.Revision + 1);
+            parent.Revision + 1,
+            parent.Requirements);
         await store.SaveNaturalDiagramAsync(record, cancellationToken);
         return record;
     }

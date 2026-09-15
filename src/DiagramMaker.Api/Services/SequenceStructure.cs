@@ -4,6 +4,11 @@ namespace DiagramMaker.Services;
 
 public static class SequenceStructure
 {
+    public static bool HasVisibleContent(SequenceBlock block) => block.Kind is "message" or "note" ||
+        block.Children.Any(HasVisibleContent);
+
+    public static IEnumerable<SequenceBlock> AnnotatedBlocks(IEnumerable<SequenceBlock> blocks) => blocks.SelectMany(b =>
+        (b.Kind is "alt" or "loop" or "break" or "opt" or "note" ? new[] { b } : []).Concat(AnnotatedBlocks(b.Children)));
     public static IEnumerable<string> MessageIds(IEnumerable<SequenceBlock> blocks) => blocks.SelectMany(block =>
         (block.Kind == "message" && block.EdgeId is not null ? new[] { block.EdgeId } : []).Concat(MessageIds(block.Children)));
 

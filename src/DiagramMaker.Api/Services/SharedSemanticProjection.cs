@@ -9,7 +9,8 @@ internal sealed record SharedPreparedDiagram(SharedDiagramInput Input, DiagramIr
 
 internal sealed class SharedSemanticProjection
 {
-    public const string Version = "shared-semantic-v4";
+    public const string Version = "shared-semantic-v6";
+    private readonly Dictionary<string, (string Signature, SemanticGeneration Value)> pageCache = new();
     internal static bool Improves(DiagramArtifact saved, SemanticGeneration incoming) =>
         incoming.Status == "Semantic" || saved.Explanation?.Status != "Semantic" &&
             (incoming.Explanation?.Coverage?.VerifiedUnits ?? 0) >= (saved.Explanation?.Coverage?.VerifiedUnits ?? 0);
@@ -62,7 +63,7 @@ internal sealed class SharedSemanticProjection
                 edgeItems[edge.Id] = Item("message", edge.Label, edge.SourceFactIds ?? [], edge.Context is null ? [] : [edge.Context],
                     edge.Call is null ? [] : [JsonSerializer.Serialize(edge.Call, PromptJson.Options)]);
         var controlItems = new Dictionary<string, string>();
-        foreach (var block in CodeBlockPlanValidation.ControlBlocks(candidate.SequenceBlocks ?? []))
+        foreach (var block in SequenceStructure.AnnotatedBlocks(candidate.SequenceBlocks ?? []).Where(SequenceStructure.HasVisibleContent))
         {
             // Branch polarity belongs to the annotation identity as well as the
             // immutable sequence tree. Equal-looking branches must not collide.
@@ -94,9 +95,22 @@ internal sealed class SharedSemanticProjection
     {
         var annotations = semantics.Items.ToDictionary(i => i.Id);
         var results = new Dictionary<string, SemanticGeneration>();
+        var changed = new HashSet<string>();
         foreach (var prepared in Diagrams)
         {
             var candidate = prepared.Candidate;
+            var relevantChanges = candidate.Nodes.SelectMany(n => n.SourceFactIds ?? [])
+                .Concat(candidate.Edges.SelectMany(e => e.SourceFactIds ?? [])).Where(facts.ContainsKey)
+                .SelectMany(id => facts[id].ChangeIds).Distinct();
+            var requiredKeys = prepared.NodeItems.Values.Concat(prepared.EdgeItems.Values).Concat(prepared.ControlItems.Values)
+                .Concat(codeBlocks ? [] : relevantChanges.Select(id => "change-" + id)).Distinct().Order().ToArray();
+            var signature = JsonSerializer.Serialize(new { annotations = requiredKeys.Select(id => annotations.GetValueOrDefault(id)),
+                failures = (semantics.Failures ?? []).Where(f => f.ItemIds.Any(id => requiredKeys.Contains(id) && !annotations.ContainsKey(id))) });
+            if (pageCache.TryGetValue(prepared.Input.Key, out var cached) && cached.Signature == signature)
+            { results[prepared.Input.Key] = cached.Value; continue; }
+            changed.Add(prepared.Input.Key);
+            var pageSummary = string.Join(" · ", requiredKeys.Where(annotations.ContainsKey).Select(id => annotations[id].Summary).Distinct()).TruncateSummary();
+            if (pageSummary.Length == 0) pageSummary = candidate.Title;
             try
             {
             var missing = prepared.NodeItems.Values.Concat(prepared.EdgeItems.Values).Concat(prepared.ControlItems.Values)
@@ -128,7 +142,7 @@ internal sealed class SharedSemanticProjection
                 facts.Values.Where(f => f.ChangeIds.Contains(id)).Select(f => f.Id).ToArray(),
                 candidate.Nodes.Where(n => (n.SourceFactIds ?? []).Any(f => facts.TryGetValue(f, out var value) && value.ChangeIds.Contains(id))).Select(n => n.Id).ToArray(),
                 candidate.Edges.Where(e => (e.SourceFactIds ?? []).Any(f => facts.TryGetValue(f, out var value) && value.ChangeIds.Contains(id))).Select(e => e.Id).ToArray())).ToArray();
-            var plan = new DiagramPlan(semantics.Summary, elements, messages, [], changeExplanations);
+            var plan = new DiagramPlan(pageSummary, elements, messages, [], changeExplanations);
             if (InternalLlmClient.ValidatePlan(candidate, plan) is not null ||
                 !codeBlocks && !missing && InternalLlmClient.ValidateChanges(candidate, plan, facts.Values.ToArray()) is not null)
             {
@@ -156,8 +170,9 @@ internal sealed class SharedSemanticProjection
                 annotations[prepared.NodeItems[n.Id]].Description,
                 n.SourceFactIds ?? [], [n.Id], [])).ToArray();
             var evidence = projected.Nodes.SelectMany(n => n.EvidenceIds).Concat(projected.Edges.SelectMany(e => e.EvidenceIds))
+                .Concat(SequenceStructure.AnnotatedBlocks(projected.SequenceBlocks ?? []).SelectMany(b => b.EvidenceIds ?? []))
                 .Concat(changeExplanations.SelectMany(c => c.FactIds).Where(facts.ContainsKey).SelectMany(id => facts[id].EvidenceIds)).Distinct().ToArray();
-            var explanation = new DiagramExplanation(semantics.Summary, changeExplanations,
+            var explanation = new DiagramExplanation(pageSummary, changeExplanations,
                 pageFacts.Concat(changeExplanations.SelectMany(c => c.FactIds)).Distinct().ToArray(), evidence, missing ? "Incomplete" : "Semantic", warnings,
                 Behaviors: codeBlocks ? behaviors : null, Coverage: new(required.Length, required.Count(annotations.ContainsKey),
                     required.Count(id => !annotations.ContainsKey(id)), required.Count(id => !annotations.ContainsKey(id) &&
@@ -172,10 +187,11 @@ internal sealed class SharedSemanticProjection
                 results[prepared.Input.Key] = new(candidate, "Incomplete", ["이 페이지의 구조 검증을 완료하지 못했습니다. Code 다이어그램을 확인하세요."], [], 0,
                     FailureStage: "projection");
             }
+            pageCache[prepared.Input.Key] = (signature, results[prepared.Input.Key]);
         }
         return new(semantics.Summary, semantics.RecommendedType, results,
             codeBlocks ? null : new ChangeUnderstanding(semantics.Summary, Items.Values.Where(i => i.Kind == "change" && annotations.ContainsKey(i.Id))
-                .Select(i => new ChangeExplanation(i.ChangeIds.Single(), annotations[i.Id].Description, i.FactIds)).ToArray()));
+                .Select(i => new ChangeExplanation(i.ChangeIds.Single(), annotations[i.Id].Description, i.FactIds)).ToArray()), changed);
     }
 
     private DiagramIr Compact(DiagramIr candidate, DiagramViewSelection selection)

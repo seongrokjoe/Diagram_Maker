@@ -394,7 +394,7 @@ public sealed class AnalysisJobProcessor(
                             var views = (saved.Views ?? []).Select(view =>
                             {
                                 if (view.Document is null) return view;
-                                var pages = view.Document.Pages.Select(page => partial.Pages.TryGetValue(view.ViewId + "/" + page.Id, out var generated) && SharedSemanticProjection.Improves(page.Diagram, generated)
+                                var pages = view.Document.Pages.Select(page => (partial.ChangedPageKeys is null || partial.ChangedPageKeys.Contains(view.ViewId + "/" + page.Id)) && partial.Pages.TryGetValue(view.ViewId + "/" + page.Id, out var generated) && SharedSemanticProjection.Improves(page.Diagram, generated)
                                     ? DiagramVariants.Apply(page, generated, compiler) : page).ToArray();
                                 return view with { Document = view.Document with { Pages = pages },
                                     Diagram = pages.First(p => p.Id == view.Document.OverviewPageId).Diagram };

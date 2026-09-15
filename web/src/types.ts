@@ -73,6 +73,7 @@ export type DiagramViewSelection = {
 };
 
 export type DiagramNode = {
+  originalExpression?: string;
   qualifiedName?: string;
   context?: CodeContext;
   sourceFactIds?: string[];
@@ -182,6 +183,7 @@ export type NaturalDiagramRecord = {
   reused: boolean;
   views?: NaturalDiagramViewResult[];
   revision: number;
+  requirements?: { title: string; entities: string[]; requirements: Array<{ id: string; text: string; kind: string; origin: string; sourceQuote: string }> };
 };
 
 export type NaturalDiagramViewResult = {
@@ -193,6 +195,7 @@ export type NaturalDiagramViewResult = {
   errorMessage?: string;
   lastSuccessfulDiagram?: DiagramArtifact;
   reused: boolean;
+  designQuality?: { protocol: string; status: string; reviewedRequirementIds: string[]; assumptionElementIds: string[]; repairUsed: boolean };
 };
 
 export type LlmConnectionTestResult = {

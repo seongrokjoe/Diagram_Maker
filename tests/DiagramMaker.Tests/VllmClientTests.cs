@@ -282,34 +282,34 @@ public sealed class VllmClientTests
     [Fact]
     public async Task NaturalDiagramThinkingUsesThinkingBudget()
     {
-        const string intent = """
-            {"title":"Synthetic Diagram","nodes":["Client","Service"],"flows":[{"source":"Client","target":"Service","label":"request","type":"flow"}],"notes":[]}
-            """;
-        var handler = new QueueHandler(Response(intent));
+        var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        var handler = new QueueHandler(Response(JsonSerializer.Serialize(NaturalDesignTests.Requirements(), jsonOptions)),
+            Response(JsonSerializer.Serialize(NaturalDesignTests.Design("flowchart"), jsonOptions)),
+            Response("{\"accepted\":true,\"reviewedRequirementIds\":[\"r1\"],\"issues\":[]}"));
         var options = Options();
         options.ThinkingOutputTokens = 1_750;
         using var transport = new VllmClient(options, handler: handler);
         var llm = CreateInternalClient(options, transport);
 
         var diagram = await llm.GenerateNaturalDiagramAsync(
-            "synthetic request", "flowchart", enableThinking: true,
+            NaturalDesignTests.Prompt, "flowchart", enableThinking: true,
             new DiagramPresetCatalog().Resolve("flowchart", "balanced"), null, CancellationToken.None);
 
         Assert.NotNull(diagram);
-        using var payload = JsonDocument.Parse(Assert.Single(handler.Requests).Body);
+        using var payload = JsonDocument.Parse(handler.Requests[1].Body);
         Assert.Equal(1_750, payload.RootElement.GetProperty("max_tokens").GetInt32());
         Assert.Equal(0, payload.RootElement.GetProperty("temperature").GetDouble());
         Assert.True(payload.RootElement.GetProperty("chat_template_kwargs").GetProperty("enable_thinking").GetBoolean());
         var properties = payload.RootElement.GetProperty("structured_outputs").GetProperty("json").GetProperty("properties");
         Assert.True(properties.TryGetProperty("nodes", out _));
-        Assert.True(properties.TryGetProperty("flows", out _));
-        Assert.False(properties.TryGetProperty("edges", out _));
+        Assert.True(properties.TryGetProperty("edges", out _));
+        Assert.Equal(3, handler.Requests.Count);
     }
 
     [Fact]
-    public async Task NaturalDiagram_InvalidIntentDoesNotIssueRepairCall()
+    public async Task NaturalDiagram_InvalidRequirementsStopAfterOneContractRepair()
     {
-        var handler = new QueueHandler(Response(ValidDiagramContent));
+        var handler = new QueueHandler(Response(ValidDiagramContent), Response(ValidDiagramContent));
         var options = Options();
         using var transport = new VllmClient(options, handler: handler);
         var llm = CreateInternalClient(options, transport);
@@ -319,8 +319,8 @@ public sealed class VllmClientTests
             new DiagramPresetCatalog().Resolve("flowchart", "balanced"), null, CancellationToken.None));
 
         Assert.Equal("LLM_SCHEMA_INVALID", error.Code);
-        Assert.False(error.RepairAttempted);
-        Assert.Single(handler.Requests);
+        Assert.True(error.RepairAttempted);
+        Assert.Equal(2, handler.Requests.Count);
     }
 
     [Fact]

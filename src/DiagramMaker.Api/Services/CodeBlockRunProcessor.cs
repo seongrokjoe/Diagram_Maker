@@ -117,7 +117,7 @@ public sealed class CodeBlockRunProcessor(IAppStore store, CodeBlockAnalyzer ana
                             var savedGroup = run.Results!.Single(g => g.GroupId == group.Id);
                             var updated = savedGroup with { Views = savedGroup.Views.Select(view => view with
                             {
-                                Pages = view.Pages.Select(page => partial.Pages.TryGetValue(view.ViewId + "/" + page.Id, out var generated) && SharedSemanticProjection.Improves(page.Diagram, generated)
+                                Pages = view.Pages.Select(page => (partial.ChangedPageKeys is null || partial.ChangedPageKeys.Contains(view.ViewId + "/" + page.Id)) && partial.Pages.TryGetValue(view.ViewId + "/" + page.Id, out var generated) && SharedSemanticProjection.Improves(page.Diagram, generated)
                                     ? DiagramVariants.Apply(page, generated, compiler) : page).ToArray()
                             }).ToArray() };
                             if (!await Save(run with { Results = [updated], StageMessage = "검토된 의미 설명과 정적 구조를 저장하며 생성 중" }))
@@ -225,7 +225,7 @@ public sealed class CodeBlockRunProcessor(IAppStore store, CodeBlockAnalyzer ana
     }
     private string CacheKey(CodeBlockRun run, CodeBlockGroupSelection group, DiagramViewSelection selection, IReadOnlyList<CodeBlockRelation> relations) =>
         CodeBlockWorkspaceService.Hash(JsonSerializer.Serialize(new { run.OwnerUserId,
-            run.GenerationVersion,
+            run.GenerationVersion, presentationVersion = DiagramPresentation.Version,
             blocks = run.Snapshot.Blocks.Where(b => group.BlockIds.Contains(b.Id)), group.Id, group.Title, group.BlockIds, selection,
             relations = relations.Where(r => group.BlockIds.Contains(r.FromBlockId) || group.BlockIds.Contains(r.ToBlockId)), run.Answers,
             groupOptionsVersion = 1, enableThinking = group.EnableThinking ?? run.Snapshot.EnableThinking,

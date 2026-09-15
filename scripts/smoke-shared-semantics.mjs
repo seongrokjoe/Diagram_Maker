@@ -11,6 +11,7 @@ import { assertLocalPath, gitEnvironment } from '../tools/git-worker/local-secur
 import { executionMeaningFixture } from './execution-meaning-fixture.mjs';
 import { reliabilitySource as source } from './reliability-fixture.mjs';
 import { checkVariants, checkVariantUi, checkGitVariantUi } from './ai-code-variant-checks.mjs';
+import { naturalDesignFixture, checkNaturalDesign } from './natural-design-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 assertLocalPath(root);
@@ -54,11 +55,11 @@ const llm = createServer(async (request, response) => {
     if (properties.items) batches.push({ source: context.sourceKind, reviewing, outputLimit: payload.max_tokens, items: context.items.length,
       kinds: context.items.map(item => item.kind), characters: payload.messages[1].content.length,
       facts: context.sources.facts.length, sourceCharacters: context.sources.facts.reduce((n, f) => n + (f.content?.length ?? 0), 0) });
-    const result = properties.steps ? executionMeaningFixture(context) : properties.accepted ? { accepted: true, issues: [] } :
+    const result = naturalDesignFixture(context, properties, testMode) ?? (properties.steps ? executionMeaningFixture(context) : properties.accepted ? { accepted: true, issues: [] } :
       reviewing ? { items: context.items.map(item => ({ id: item.id, issues: [] })) } : {
       summary: '원본 코드의 입력값을 가공하고 결과를 반환합니다', recommendedType: context.available[0],
       items: context.items.map(item => ({ id: item.id, summary: '입력값을 누적하고 반환합니다', description: '원본 근거에 표시된 값을 누적하고 호출한 곳으로 반환합니다' })),
-    };
+    });
     requestCount++;
     response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
       choices: [{ message: { content: JSON.stringify(result) }, finish_reason: 'stop' }],
@@ -125,9 +126,9 @@ try {
     const requests = requestCount - before;
     const generationRequests = batches.slice(beforeBatch).filter(b => !b.reviewing).length;
     assert.ok(generationRequests <= 10, 'Adaptive batches share annotations across all selected views');
-    assert.ok(batches.slice(beforeBatch).filter(b => !b.reviewing).every(b => b.items <= 20));
+    assert.ok(batches.slice(beforeBatch).filter(b => !b.reviewing).every(b => b.items <= 26));
     assert.ok(requests > 0 && requests <= 20, `C++ ${selected.length} formats: ${requests} requests (shared annotation generation and review)`);
-    assert.ok(batches.filter(b => b.reviewing).every(b => b.items <= 20 && b.outputLimit === 2000), 'Reviews must fit the default output budget');
+    assert.ok(batches.filter(b => b.reviewing).every(b => b.items <= 26 && b.outputLimit === 2000), 'Reviews must fit the default output budget');
     const diagnostic = await request(`/code-block-runs/${run.id}/diagnostics`);
     assert.equal(diagnostic.version, 2); assert.equal(diagnostic.execution.transportRequests, requests);
     let pages = 0;
@@ -214,6 +215,7 @@ try {
     }
   }
   checks.push({ name: 'git-five-formats', formats: 5, modifiedStateTransitions: 1, calls: 2, returns: ['false', 'true'] });
+  checks.push(await checkNaturalDesign(request, () => requestCount, value => { testMode = value; }, root, origin, fixture));
   const settings = await request('/llm/tests/code-diagram-settings');
   assert.equal(settings.reviewOutputTokens, 2000);
   assert.ok(!JSON.stringify(settings).includes(llmOrigin) && !('model' in settings));
