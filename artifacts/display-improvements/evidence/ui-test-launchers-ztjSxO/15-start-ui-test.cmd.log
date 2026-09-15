@@ -1,0 +1,11 @@
+An administrator-approved network-policy.json is required.
+��ġ C:\Users\������\AppData\Local\Temp\DiagramMaker-internal7-e67b3047\artifacts\ui-test-launchers-ztjSxO\UI �׽�Ʈ so
+urce\scripts\offline-common.ps1:49 ����:59
++ ... ditPath)) { throw 'An administrator-approved network-policy.json is r ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (An administrato...on is required.:String) [], RuntimeException
+    + FullyQualifiedErrorId : An administrator-approved network-policy.json is required.
+ 
+
+[ERROR] See the message above and UI_TEST_KO.md.
+����Ϸ��� �ƹ� Ű�� �����ʽÿ� . . . 

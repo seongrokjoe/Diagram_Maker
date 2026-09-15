@@ -1,0 +1,11 @@
+Work directory is outside the approved local roots.
+��ġ C:\Users\������\AppData\Local\Temp\DiagramMaker-internal7-e67b3047\artifacts\ui-test-launchers-ztjSxO\UI �׽�Ʈ so
+urce\scripts\offline-common.ps1:57 ����:44
++ ... nt -eq 0) { throw 'Work directory is outside the approved local roots ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (Work directory ...ed local roots.:String) [], RuntimeException
+    + FullyQualifiedErrorId : Work directory is outside the approved local roots.
+ 
+
+[ERROR] See the message above and UI_TEST_KO.md.
+����Ϸ��� �ƹ� Ű�� �����ʽÿ� . . . 

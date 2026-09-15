@@ -1,0 +1,6 @@
+Checking the current project and local build tools...
+[ERROR] UI build failed (exit 1). Check the build log; the previous UI server was kept.
+[ERROR] Current-project UI build failed. Existing UI server/data were kept. Build logs: C:\Users\������\AppData\Local\Temp\DiagramMaker-internal7-e67b3047\artifacts\ui-test-launchers-ztjSxO\local\DiagramMaker\UiTest\80628a6cc2d6\logs
+
+[ERROR] See the message above and UI_TEST_KO.md.
+����Ϸ��� �ƹ� Ű�� �����ʽÿ� . . . 

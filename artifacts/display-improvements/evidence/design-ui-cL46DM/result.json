@@ -1,0 +1,11 @@
+{
+  "status": "passed",
+  "checks": [
+    "natural sample rows",
+    "bundled font",
+    "Git commit popup keyboard/search/paging/SHA/stale requests",
+    "Git grouping and results",
+    "five viewport widths",
+    "no external requests"
+  ]
+}

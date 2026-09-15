@@ -1,0 +1,13 @@
+Fixed synthetic C#/C++ code diagram test; Thinking OFF
+Settings: {"protocol":"shared-requests-v8","Enabled":true,"DiagramOutputTokens":8000,"ReviewOutputTokens":2000,"ThinkingOutputTokens":60000,"OutputHardLimit":60000,"MaxInputTokens":200000,"MaxContextTokens":200000,"MaxInputCharacters":60000,"SemanticJobBudgetSeconds":900,"RequestTimeoutSeconds":300,"UseServerTokenization":false}
+csharp: Partial; semantic pages: 0/3
+cpp: Skipped; semantic pages: 0/0
+DiagramMaker generation diagnostics / shared-requests-v8
+State: Partial; stop: unknown
+Requests: 1; HTTP: 1; completed: 0; reused: 0; elapsed: 0s
+2026-09-15T08:16:31.3561852+00:00 generation / llm-SharedSemanticResponse: Failed; LLM_HTTP_400; unknown
+HTTP: 400; category: unknown; action: check-server-error; recovery: RequiresAction
+Mode: structured_outputs; compatible schema: True; finish: unknown; sent: True; attempts: 1
+Characters: 5864/60000; input tokens: 6176/190976; estimated: True; context: 200000; output requested: 8000; output used: 
+Batch: a4635ed45de33ea1; parent: unknown; attempt: 1; protocol: shared-requests-v8; elapsed: 1ms
+Source, prompts, model responses, endpoint and authentication values are excluded.

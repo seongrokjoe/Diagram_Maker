@@ -1,0 +1,80 @@
+{
+  "status": "passed",
+  "syntheticOnly": true,
+  "packageRoot": null,
+  "checks": [
+    {
+      "name": "code-ai-code-originals-edits",
+      "ui": true
+    },
+    {
+      "name": "code-block",
+      "lines": 1212,
+      "functions": 40,
+      "formats": 1,
+      "requests": 8,
+      "generationRequests": 4,
+      "functionRequests": 0,
+      "reviewRequests": 4,
+      "pages": 41
+    },
+    {
+      "name": "code-block",
+      "lines": 1212,
+      "functions": 40,
+      "formats": 3,
+      "requests": 10,
+      "generationRequests": 5,
+      "functionRequests": 0,
+      "reviewRequests": 5,
+      "pages": 43
+    },
+    {
+      "name": "git-ai-code-originals-edits",
+      "ui": true
+    },
+    {
+      "name": "git",
+      "lines": 1212,
+      "functions": 40,
+      "formats": 3,
+      "requests": 20,
+      "generationRequests": 10,
+      "functionRequests": 0,
+      "reviewRequests": 10,
+      "pages": 51
+    },
+    {
+      "name": "git-five-formats",
+      "formats": 5,
+      "modifiedStateTransitions": 1,
+      "calls": 2,
+      "returns": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "name": "natural-design",
+      "formats": 4,
+      "requests": 13,
+      "sharedRequirements": 1,
+      "rejectedRepairPreservesSource": true
+    },
+    {
+      "name": "self-test-valid",
+      "success": true,
+      "requests": 4
+    },
+    {
+      "name": "self-test-schema-compatibility",
+      "success": true,
+      "requests": 6
+    },
+    {
+      "name": "self-test-http-error",
+      "success": false,
+      "requests": 1
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+[
+  {
+    "name": "nested",
+    "overlap": [],
+    "cuts": [],
+    "clipped": [],
+    "verticalCharacters": 0
+  },
+  {
+    "name": "note",
+    "overlap": [],
+    "cuts": [],
+    "clipped": [],
+    "verticalCharacters": 0
+  },
+  {
+    "name": "loop",
+    "overlap": [],
+    "cuts": [],
+    "clipped": [],
+    "verticalCharacters": 0
+  },
+  {
+    "name": "token",
+    "overlap": [],
+    "cuts": [],
+    "clipped": [],
+    "verticalCharacters": 0
+  }
+]

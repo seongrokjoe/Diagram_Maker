@@ -1,0 +1,13 @@
+Checking the current project and local build tools...
+
+Installed SDKs:
+
+Install the [99.0.100] .NET SDK or update [C:\Users\������\AppData\Local\Temp\DiagramMaker-internal7-e67b3047\artifacts\ui-test-launchers-ztjSxO\local\DiagramMaker\UiTest\80628a6cc2d6\builds\9fc2f99d\source\global.json] to match an installed SDK.
+
+Learn about SDK resolution:
+https://aka.ms/dotnet/sdk-not-found
+[ERROR] Project .NET SDK check failed (exit 2147516561). Check the build log; the previous UI server was kept.
+[ERROR] Current-project UI build failed. Existing UI server/data were kept. Build logs: C:\Users\������\AppData\Local\Temp\DiagramMaker-internal7-e67b3047\artifacts\ui-test-launchers-ztjSxO\local\DiagramMaker\UiTest\80628a6cc2d6\logs
+
+[ERROR] See the message above and UI_TEST_KO.md.
+����Ϸ��� �ƹ� Ű�� �����ʽÿ� . . . 

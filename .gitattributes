@@ -2,3 +2,6 @@
 packaging/licenses/** -text
 web/src/assets/fonts/LICENSE.txt -text
 web/src/assets/fonts/*.woff2 -text
+
+# Keep captured verification evidence byte-for-byte, including console spacing.
+artifacts/display-improvements/** -text -whitespace
