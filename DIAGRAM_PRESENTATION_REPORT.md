@@ -43,6 +43,7 @@
 - 공유 의미 기본/60,000자 두 조건도 exit 0이다. 1,212행·40함수의 요청 수 8/10/20회와 페이지 41/43/51개를 보존했고 Git 다섯 형식·자연어 설계·오류 복구를 확인했다.
 - 7개 픽스처의 패키지 증적 101개를 [증적 목록](artifacts/display-improvements/package-evidence-manifest.json)에 기록했다. 직접 확인한 [코드 데스크톱](artifacts/display-improvements/package-evidence/code-block-ui-F8rI2f/code-results-1440.png), [코드 모바일](artifacts/display-improvements/package-evidence/code-block-ui-F8rI2f/code-results-390.png), [Git 결과](artifacts/display-improvements/package-evidence/shared-semantics-JVG2ZK/git-results-1440.png), [Sequence](artifacts/display-improvements/package-evidence/offline-preview-MdZB9A/code-sequence-3.png)를 보존했다.
 - [최종 ZIP](artifacts/release/DiagramMaker-0.1.0-internal.9-win-x64.zip)과 [SHA-256](artifacts/release/DiagramMaker-0.1.0-internal.9-win-x64.zip.sha256)을 전달하고 이전 internal.7/8 ZIP·해시 두 쌍을 정리했다. 의존성 캐시와 과거 검증 증적은 보존했다.
-- 검증 이후 실행 소스는 동일하다. 변경한 `scripts/ui-test-package.json`의 배포 버전·ZIP 해시·웹 자산 해시는 최종 패키지와 대조했다. `.gitattributes`에는 이 배포의 검증 증적만 원본 바이트·공백을 보존하도록 규칙을 추가했다. 미해결 로컬 실패는 없다. 원격 반영 결과는 push 후 기록한다.
+- 검증 이후 실행 소스는 동일하다. 변경한 `scripts/ui-test-package.json`의 배포 버전·ZIP 해시·웹 자산 해시는 최종 패키지와 대조했다. `.gitattributes`에는 이 배포의 검증 증적만 원본 바이트·공백을 보존하도록 규칙을 추가했고 증적 267개의 Git 저장 바이트 일치를 확인했다. 미해결 로컬 실패는 없다.
+- 구현 `75bf8e4`와 배포 `686d865`를 `origin/main`에 정상 push했다. 원격 조회에서 배포 커밋 `686d865f7927c29f77b76deef8e73c023266ca16` 일치를 확인했다. 이전 구현 체크포인트는 보존했다.
 
 합성 loopback LLM은 계약·검토·복구·UI 검증에 사용한다. 실제 사내 LLM 의미 품질·처리 시간과 PostgreSQL 연결은 이번 로컬 검증에 포함하지 않는다.
