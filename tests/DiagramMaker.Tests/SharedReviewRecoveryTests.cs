@@ -216,6 +216,20 @@ public sealed class SharedReviewRecoveryTests
         Assert.Contains(result.Diagnostics, d => d.ValidationCode == "SharedTextCodeSyntax" && d.RecoveryState == "Recovered");
     }
 
+    [Fact]
+    public async Task ExhaustedItemReviewRetainsApprovedItemsAndStructuredCorrection()
+    {
+        using var handler = new Model("reject-always");
+        var result = await Run(handler, 3);
+
+        Assert.Equal(2, result.Response.Items.Count);
+        var failure = Assert.Single(result.Response.Failures!);
+        Assert.Equal("semantic-review", failure.Stage);
+        Assert.Equal("LLM_SEMANTIC_REVIEW", failure.Code);
+        Assert.Equal(new[] { "reversed_condition" }, failure.IssueCodes);
+        Assert.NotEmpty(failure.CorrectionInstructions!);
+    }
+
     [Theory]
     [InlineData("http-generation", "generation", 1, 0)]
     [InlineData("http-review", "semantic-review", 1, 1)]
@@ -285,7 +299,7 @@ public sealed class SharedReviewRecoveryTests
                 if (mode == "http-review") return new(HttpStatusCode.BadRequest) { Content = new StringContent("PRIVATE response") };
                 if ((mode == "truncate-review" || mode == "four-errors") && Reviews == 1) reason = "length";
                 result = new SharedSemanticReview(items.Select(i => new SharedItemReview(i.GetProperty("id").GetString()!,
-                    (mode == "reject-once" && Counts[i.GetProperty("label").GetString()!] == 1 || mode == "four-errors") &&
+                    ((mode == "reject-once" && Counts[i.GetProperty("label").GetString()!] == 1) || mode == "reject-always" || mode == "four-errors") &&
                     i.GetProperty("label").GetString() == "work0" ? ["reversed_condition"] : [])).ToArray());
                 if (mode == "invalid-review" && Reviews == 1 || mode == "four-errors" && Reviews == 3 || mode == "always-invalid-review")
                     result = new { accepted = true, issues = new[] { "contradiction" } };

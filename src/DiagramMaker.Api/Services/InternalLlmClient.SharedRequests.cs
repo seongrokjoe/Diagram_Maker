@@ -99,9 +99,13 @@ public sealed partial class InternalLlmClient
         var failures = new List<SharedSemanticFailure>();
         var consecutiveFailures = 0;
         LlmClientException? stopped = SemanticExecution.Current?.RequestFailure;
-        void Fail(IReadOnlyList<SharedSemanticItem> batch, string stage, LlmClientException error)
+        void Fail(IReadOnlyList<SharedSemanticItem> batch, string stage, LlmClientException error,
+            IReadOnlyList<string>? fields = null, IReadOnlyList<string>? issueCodes = null,
+            IReadOnlyList<string>? correctionInstructions = null)
         {
-            failures.Add(new(batch.Select(i => i.Id).ToArray(), stage, error.Code, error.ServerErrorCategory));
+            failures.Add(new(batch.Select(i => i.Id).ToArray(), stage, error.Code, error.ServerErrorCategory,
+                fields?.Distinct(StringComparer.Ordinal).ToArray(), issueCodes?.Distinct(StringComparer.Ordinal).ToArray(),
+                correctionInstructions?.Distinct(StringComparer.Ordinal).ToArray()));
             if (LlmFailure.StopsRequests(error)) { stopped = error; SemanticExecution.Current?.StopRequests(error); }
         }
         await Publish(new("의미 설명 생성 중", recommendation, []));
@@ -177,8 +181,16 @@ public sealed partial class InternalLlmClient
                         rejected = planned.Value; issues = new { review = SharedReviewValidation.RepairIssues(review.Rejected),
                             fields = invalid.Select(i => new { i.Id, code = i.Problem!.Code, details = i.Problem.Details,
                                 instruction = SharedSemanticValidation.RepairInstruction(i.Problem.Code) }) };
-                        if (attempt == 1) Fail(remaining, invalid.Length > 0 ? "plan-validation" : "semantic-review",
-                            new(invalid.Length > 0 ? "LLM_SCHEMA_INVALID" : "LLM_SEMANTIC_REVIEW", "Annotation repair exhausted."));
+                        if (attempt == 1)
+                        {
+                            var issueCodes = review.Rejected.SelectMany(i => i.Issues).Distinct(StringComparer.Ordinal).ToArray();
+                            var fields = invalid.Select(i => i.Problem!.Details.Field).OfType<string>().Distinct(StringComparer.Ordinal).ToArray();
+                            var corrections = invalid.Select(i => SharedSemanticValidation.RepairInstruction(i.Problem!.Code))
+                                .Concat(issueCodes.Select(SharedReviewValidation.RepairInstruction)).Distinct(StringComparer.Ordinal).ToArray();
+                            Fail(remaining, invalid.Length > 0 ? "plan-validation" : "semantic-review",
+                                new(invalid.Length > 0 ? "LLM_SCHEMA_INVALID" : "LLM_SEMANTIC_REVIEW", "Annotation repair exhausted."),
+                                fields, issueCodes, corrections);
+                        }
                     }
                     catch (LlmClientException error) when (SharedLimit(error))
                     {
@@ -201,7 +213,9 @@ public sealed partial class InternalLlmClient
                         rejected = ParseRejected(error.RejectedContent);
                         issues = new { code = error.FailureKind, details = error.ValidationDetails,
                             instruction = SharedSemanticValidation.RepairInstruction(error.FailureKind ?? "") };
-                        if (attempt == 1) Fail(remaining, "plan-validation", error);
+                        if (attempt == 1) Fail(remaining, "plan-validation", error,
+                            error.ValidationDetails?.Field is { } field ? [field] : null,
+                            correctionInstructions: [SharedSemanticValidation.RepairInstruction(error.FailureKind ?? "")]);
                     }
                     catch (LlmClientException error) { Fail(remaining, "generation", error); break; }
                 }

@@ -44,7 +44,7 @@ export function CodeBlockWorkspace() {
   const [query, setQuery] = useState("");
   const [evidence, setEvidence] = useState<CodeBlockEvidence | null>(null);
   const [screen, setScreen] = useState<"compose" | "results">("compose");
-  const [showStatic, setShowStatic] = useState(false);
+  const [showStatic, setShowStatic] = useState(true);
   const [ready, setReady] = useState(false);
   const epoch = useRef(0);
   const mergeRun = useRef<string | null>(null);
@@ -122,7 +122,7 @@ export function CodeBlockWorkspace() {
   }, [run, dirty, workspace?.revision]);
   function change(value: CodeBlockDraft) { setDraft(value); setDirty(true); }
   function selectRun(value: CodeBlockRun | null, location: CodeBlockLocationSelection | null = null) {
-    setRun(value); setAnswers({}); setMerges({}); setActive(location); setArtifact(null); setPairedArtifact(null); setEvidence(null); setShowStatic(false); setQuery("");
+    setRun(value); setAnswers({}); setMerges({}); setActive(location); setArtifact(null); setPairedArtifact(null); setEvidence(null); setShowStatic(true); setQuery("");
     if (location?.page) { const v = value?.results.find(g => g.groupId === location.group)?.views.find(v => v.viewId === location.view);
       const p = v?.pages.find(p => p.id === location.page); if (v && p) setShowStatic(location.variant === "code" || !isSemanticPage(v, p)); }
   }

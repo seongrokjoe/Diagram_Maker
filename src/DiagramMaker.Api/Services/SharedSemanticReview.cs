@@ -70,19 +70,21 @@ internal static class SharedReviewValidation
 
     internal static string Expand(string code) => Array.IndexOf(Aliases, code) is var index && index >= 0 ? Codes[index] : code;
 
+    internal static string RepairInstruction(string code) => code switch
+    {
+        "missing_action" => "Include every observed core action and assertion in this item's evidence.",
+        "incorrect_outcome" => "Correct arguments, assignments, return values and outcomes using this item's source.",
+        "reversed_condition" => "Preserve the exact predicate polarity, branch, early return and loop conditions.",
+        "invented_call" => "Remove calls and execution order unsupported by the supplied source and facts.",
+        "unsupported_role" => "Describe only the observed role; remove invented business purpose.",
+        "mixed_scope" => "Keep this annotation inside its own function and control scope.",
+        "incorrect_change" => "Compare both Git revisions and distinguish added, removed and retained behavior.",
+        _ => "State the evidence limitation instead of asserting an unsupported meaning."
+    };
+
     public static object RepairIssues(IReadOnlyList<SharedItemReview> rejected) => rejected.Select(item => new
     {
         item.Id, item.Issues,
-        instructions = item.Issues.Select(code => code switch
-        {
-            "missing_action" => "Include every observed core action and assertion in this item's evidence.",
-            "incorrect_outcome" => "Correct arguments, assignments, return values and outcomes using this item's source.",
-            "reversed_condition" => "Preserve the exact predicate polarity, branch, early return and loop conditions.",
-            "invented_call" => "Remove calls and execution order unsupported by the supplied source and facts.",
-            "unsupported_role" => "Describe only the observed role; remove invented business purpose.",
-            "mixed_scope" => "Keep this annotation inside its own function and control scope.",
-            "incorrect_change" => "Compare both Git revisions and distinguish added, removed and retained behavior.",
-            _ => "State the evidence limitation instead of asserting an unsupported meaning."
-        }).ToArray()
+        instructions = item.Issues.Select(RepairInstruction).ToArray()
     }).ToArray();
 }

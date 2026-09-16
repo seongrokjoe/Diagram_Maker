@@ -90,9 +90,9 @@ public sealed partial class DiagramRevisionService(
     {
         var existingNodes = basis.Nodes.ToDictionary(static node => node.Id, StringComparer.Ordinal);
         var nodes = document.Nodes.Select(node => existingNodes.TryGetValue(node.Id, out var existing)
-            ? existing with { Label = node.Label.Trim() }
+            ? existing with { Label = node.Label.Trim(), Details = node.Details?.Select(detail => detail.Trim()).ToArray() ?? existing.Details }
             : new DiagramNode(node.Id.Trim(), node.Label.Trim(), NodeKind(basis.Type), null,
-                "unchanged", Confidence.Inferred, [])).ToArray();
+                "unchanged", Confidence.Inferred, [], Details: node.Details?.Select(detail => detail.Trim()).ToArray())).ToArray();
         var existingEdges = basis.Edges.ToDictionary(static edge => edge.Id, StringComparer.Ordinal);
         var edges = document.Edges.Select((edge, index) => existingEdges.TryGetValue(edge.Id, out var existing)
             ? existing with
@@ -114,6 +114,8 @@ public sealed partial class DiagramRevisionService(
                     ControlPath = null, OriginalExpression = null, ReturnValue = null, TerminationTarget = null, Call = null,
                     Label = edge.Label.StartsWith("사용자 제공:", StringComparison.Ordinal) ? edge.Label : "사용자 제공: " + edge.Label }
                 : edge).ToArray();
+        var annotatedSequence = basis.SequenceBlocks is null ? null : ApplySequenceAnnotations(basis.SequenceBlocks,
+            document.SequenceAnnotations);
         return basis with
         {
             Title = document.Title.Trim(),
@@ -122,10 +124,31 @@ public sealed partial class DiagramRevisionService(
             Edges = edges,
             Notes = basis.Notes.Concat([$"사용자 편집본: 원본 대비 노드 {basis.Nodes.Count(node => nodes.All(item => item.Id != node.Id))}개 삭제. 생성 당시 의미·커버리지 검증과 다를 수 있습니다."])
                 .Distinct(StringComparer.Ordinal).ToArray(),
-            SequenceBlocks = basis.SequenceBlocks is null ? null : SequenceStructure.ApplyEdit(basis.SequenceBlocks,
+            SequenceBlocks = annotatedSequence is null ? null : SequenceStructure.ApplyEdit(annotatedSequence,
                 edges, nodes.Select(node => node.Id).ToHashSet())
         };
     }
+
+    private static IReadOnlyList<SequenceBlock> ApplySequenceAnnotations(IReadOnlyList<SequenceBlock> blocks,
+        IReadOnlyList<EditableSequenceAnnotation>? annotations)
+    {
+        if (annotations is null) return blocks;
+        var values = annotations.ToDictionary(annotation => annotation.Id, StringComparer.Ordinal);
+        var known = SequenceAnnotations(blocks).ToDictionary(block => block.Id, StringComparer.Ordinal);
+        if (values.Keys.Any(id => !known.ContainsKey(id)) || values.Any(item => known[item.Key].Kind != item.Value.Kind))
+            throw new ArgumentException("Sequence annotations must reference an existing condition or note.");
+        return blocks.Select(Apply).ToArray();
+
+        SequenceBlock Apply(SequenceBlock block) => block with
+        {
+            Label = values.TryGetValue(block.Id, out var annotation) ? annotation.Label.Trim() : block.Label,
+            Children = block.Children.Select(Apply).ToArray()
+        };
+    }
+
+    private static IEnumerable<SequenceBlock> SequenceAnnotations(IEnumerable<SequenceBlock> blocks) =>
+        blocks.SelectMany(block => (block.Kind is "alt" or "loop" or "break" or "opt" or "note" or "scenario"
+            ? new[] { block } : []).Concat(SequenceAnnotations(block.Children)));
 
     private static void ValidateDocument(DiagramEditDocument document)
     {
@@ -139,12 +162,21 @@ public sealed partial class DiagramRevisionService(
             throw new ArgumentException("A diagram may contain at most 500 edges.");
         if (document.Nodes.Any(static node => string.IsNullOrWhiteSpace(node.Id) || !SafeId().IsMatch(node.Id) || string.IsNullOrWhiteSpace(node.Label) || node.Label.Trim().Length > DiagramValidator.MaximumNodeLabelLength))
             throw new ArgumentException($"Node IDs and labels must be valid and no longer than {DiagramValidator.MaximumNodeLabelLength} characters.");
+        if (document.Nodes.Any(static node => node.Details is { Count: > 200 } || node.Details?.Any(detail =>
+                string.IsNullOrWhiteSpace(detail) || detail.Trim().Length > 500) == true))
+            throw new ArgumentException("A class may contain at most 200 non-empty members of up to 500 characters.");
         if (document.Edges.Any(static edge => string.IsNullOrWhiteSpace(edge.Id) || !SafeId().IsMatch(edge.Id) || string.IsNullOrWhiteSpace(edge.SourceId) || string.IsNullOrWhiteSpace(edge.TargetId) || edge.Label is null || edge.Label.Length > 240))
             throw new ArgumentException("Edge IDs, endpoints, and labels must be valid and no longer than 240 characters.");
         if (document.Nodes.Select(static node => node.Id).Distinct(StringComparer.Ordinal).Count() != document.Nodes.Count)
             throw new ArgumentException("Node IDs must be unique.");
         if (document.Edges.Select(static edge => edge.Id).Distinct(StringComparer.Ordinal).Count() != document.Edges.Count)
             throw new ArgumentException("Edge IDs must be unique.");
+        if (document.SequenceAnnotations is { } annotations &&
+            (annotations.Select(annotation => annotation.Id).Distinct(StringComparer.Ordinal).Count() != annotations.Count ||
+             annotations.Any(annotation => string.IsNullOrWhiteSpace(annotation.Id) || !SafeId().IsMatch(annotation.Id) ||
+                annotation.Kind is not ("alt" or "loop" or "break" or "opt" or "note" or "scenario") ||
+                string.IsNullOrWhiteSpace(annotation.Label) || annotation.Label.Trim().Length > 1000)))
+            throw new ArgumentException("Sequence conditions and notes must be unique, valid, and no longer than 1,000 characters.");
         var nodeIds = document.Nodes.Select(static node => node.Id).ToHashSet(StringComparer.Ordinal);
         if (document.Edges.Any(edge => !nodeIds.Contains(edge.SourceId) || !nodeIds.Contains(edge.TargetId)))
             throw new ArgumentException("Every edge must reference an existing node.");

@@ -104,12 +104,130 @@ public sealed class NaturalDiagramServiceTests
         Assert.Equal(first.Diagram.Id, failed.Views[0].LastSuccessfulDiagram!.Id);
     }
 
+    [Fact]
+    public async Task GenerateAsync_CreatesOnePagePerPromptScenarioInsideTheSelectedView()
+    {
+        const string prompt = "사용자가 요청을 등록한다.\n\n관리자가 요청을 승인한다.";
+        var llm = new FakeLlm
+        {
+            ExtractedRequirements = new("요청 승인", ["사용자", "관리자"],
+            [
+                new("r1", "요청 등록", "action", "explicit", "사용자가 요청을 등록한다."),
+                new("r2", "요청 승인", "action", "explicit", "관리자가 요청을 승인한다.")
+            ])
+        };
+        var store = new InMemoryAppStore();
+        using var cache = new NaturalDiagramSessionCache();
+        var service = new NaturalDiagramService(llm, new(new()), store, cache, new(),
+            Options.Create(new LlmOptions()), new TestEnvironment());
+
+        var result = await service.GenerateAsync(new(prompt, "flowchart"), "owner", CancellationToken.None);
+
+        var view = Assert.Single(result.Views!);
+        Assert.Equal("Completed", view.State);
+        Assert.Equal(2, view.Pages!.Count);
+        Assert.Equal(2, llm.CallCount);
+        Assert.Equal(2, result.Requirements!.Scenarios!.Count);
+        Assert.Equal(result.Requirements.Scenarios.Select(scenario => scenario.Id),
+            view.Pages.Select(page => page.ScenarioId));
+        Assert.All(view.Pages, page =>
+        {
+            Assert.NotNull(page.Diagram);
+            Assert.Equal(1, page.Diagram!.Version);
+        });
+    }
+
+    [Fact]
+    public async Task ExecuteRunAsync_ReportsEveryFailedScenarioBeforeReturningTheFailure()
+    {
+        const string prompt = "첫 작업을 실행한다.\n\n두 번째 작업을 실행한다.";
+        var llm = new FakeLlm
+        {
+            Fail = true,
+            ExtractedRequirements = new("실패 보존", ["작업"],
+            [
+                new("r1", "첫 작업", "action", "explicit", "첫 작업을 실행한다."),
+                new("r2", "두 번째 작업", "action", "explicit", "두 번째 작업을 실행한다.")
+            ])
+        };
+        var store = new InMemoryAppStore();
+        using var cache = new NaturalDiagramSessionCache();
+        var service = new NaturalDiagramService(llm, new(new()), store, cache, new(),
+            Options.Create(new LlmOptions()), new TestEnvironment());
+        var now = DateTimeOffset.UtcNow;
+        var run = new NaturalDiagramRun(Guid.NewGuid(), "owner", new(prompt, "flowchart"),
+            NaturalDiagramRunState.Generating, now, now);
+        NaturalGenerationProgress? last = null;
+
+        var error = await Assert.ThrowsAsync<LlmClientException>(() => service.ExecuteRunAsync(run,
+            (progress, _) => { last = progress; return Task.CompletedTask; }, CancellationToken.None));
+
+        Assert.Equal("NATURAL_REQUIREMENTS_REVIEW", error.Code);
+        var view = Assert.Single(last!.Views);
+        Assert.Equal("Failed", view.State);
+        Assert.Equal(2, view.Pages!.Count);
+        Assert.All(view.Pages, page =>
+        {
+            Assert.Equal("Failed", page.State);
+            Assert.Equal("NATURAL_REQUIREMENTS_REVIEW", page.ErrorCode);
+            Assert.Null(page.Diagram);
+        });
+    }
+
+    [Fact]
+    public async Task InterruptedRunRetainsExtractionBeforeTheFirstDiagramAndResumeReusesIt()
+    {
+        const string prompt = "첫 작업을 실행한다.";
+        var llm = new FakeLlm { ExtractedRequirements = new("작업", [],
+            [new("r1", "첫 작업", "action", "explicit", prompt)]) };
+        using var cache = new NaturalDiagramSessionCache();
+        var service = new NaturalDiagramService(llm, new(new()), new InMemoryAppStore(), cache, new(),
+            Options.Create(new LlmOptions()), new TestEnvironment());
+        var now = DateTimeOffset.UtcNow;
+        var run = new NaturalDiagramRun(Guid.NewGuid(), "owner", new(prompt, "flowchart"),
+            NaturalDiagramRunState.Generating, now, now);
+        NaturalGenerationProgress? saved = null;
+        await Assert.ThrowsAsync<OperationCanceledException>(() => service.ExecuteRunAsync(run, (progress, _) =>
+        {
+            saved = progress;
+            throw new OperationCanceledException();
+        }, CancellationToken.None));
+        Assert.NotNull(saved!.Requirements);
+        Assert.Equal(0, llm.CallCount);
+        var result = await service.ExecuteRunAsync(run with { Requirements = saved.Requirements, Views = saved.Views },
+            (_, _) => Task.CompletedTask, CancellationToken.None);
+        Assert.Equal(1, llm.ExtractionCount);
+        Assert.Equal(1, llm.CallCount);
+        Assert.Equal("Completed", Assert.Single(result.Views!).State);
+    }
+
+    [Fact]
+    public async Task CacheKeepsDistinctWhitespaceForOriginalSourceOffsets()
+    {
+        var llm = new FakeLlm();
+        using var cache = new NaturalDiagramSessionCache();
+        var service = new NaturalDiagramService(llm, new(new()), new InMemoryAppStore(), cache, new(),
+            Options.Create(new LlmOptions()), new TestEnvironment());
+        var first = await service.GenerateAsync(new("첫 작업\n\n두 번째 작업", "flowchart"), "owner", CancellationToken.None);
+        var second = await service.GenerateAsync(new("첫 작업 두 번째 작업", "flowchart"), "owner", CancellationToken.None);
+        Assert.NotEqual(first.Id, second.Id);
+        Assert.Equal("첫 작업 두 번째 작업", second.Request.Prompt);
+    }
+
     private sealed class FakeLlm : IInternalLlmClient
     {
         public bool IsEnabled => true;
         public int CallCount { get; private set; }
+        public int ExtractionCount { get; private set; }
         public int NodeCount { get; init; } = 2;
         public bool Fail { get; set; }
+        public NaturalRequirements? ExtractedRequirements { get; init; }
+
+        public Task<NaturalRequirements?> ExtractNaturalRequirementsAsync(string prompt, bool thinking, CancellationToken ct)
+        {
+            ExtractionCount++;
+            return Task.FromResult(ExtractedRequirements);
+        }
 
         public Task<DiagramIr?> GenerateNaturalDiagramAsync(
             string prompt,

@@ -87,6 +87,7 @@ public sealed partial class PostgresAppStore : IAppStore
 
         await using var command = _dataSource.CreateCommand(sql);
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await InitializeNaturalRunsAsync(cancellationToken);
         await InitializeCodeBlocksAsync(cancellationToken);
     }
 

@@ -90,6 +90,62 @@ public sealed class DiagramRevisionServiceTests
         Assert.Contains("int value20 = 20;", preview.MermaidDsl, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task PreviewAsync_EditsClassMembersWithoutLosingTheClassIdentity()
+    {
+        await using var store = new InMemoryAppStore();
+        var validator = new DiagramValidator();
+        var service = new DiagramRevisionService(store, validator, new MermaidCompiler(validator));
+        var original = new DiagramIr("class", "장비", [new DiagramNode("machine", "Machine", "class", null,
+            "unchanged", Confidence.Exact, [], Details: ["+Run() void", "-doorOpen bool"])], [], [], []);
+        var artifact = new DiagramArtifact(Guid.NewGuid(), "class", 1, original,
+            new MermaidCompiler(validator).Compile(original), DateTimeOffset.UtcNow);
+        var document = new DiagramEditDocument("장비", "LR",
+            [new EditableDiagramNode("machine", "Machine", ["+Start() void", "-doorClosed bool"])], []);
+
+        var preview = await service.PreviewAsync(artifact,
+            new SaveDiagramEditRequest(artifact.Id, null, 1, document), "reviewer", CancellationToken.None);
+
+        Assert.Equal(new[] { "+Start() void", "-doorClosed bool" }, Assert.Single(preview.Ir.Nodes).Details);
+        Assert.Contains("Start() void", preview.MermaidDsl, StringComparison.Ordinal);
+        Assert.Contains("doorClosed bool", preview.MermaidDsl, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_EditsSequenceConditionAndNoteByStableBlockId()
+    {
+        await using var store = new InMemoryAppStore();
+        var validator = new DiagramValidator();
+        var service = new DiagramRevisionService(store, validator, new MermaidCompiler(validator));
+        var nodes = new[]
+        {
+            new DiagramNode("user", "사용자", "participant", null, "unchanged", Confidence.Exact, []),
+            new DiagramNode("service", "서비스", "participant", null, "unchanged", Confidence.Exact, [])
+        };
+        var edge = new DiagramEdge("call", "user", "service", "message", "요청", "unchanged", Confidence.Exact, [], 1);
+        var blocks = new[]
+        {
+            new SequenceBlock("condition", "opt", "기존 조건", [new("message", "message", "요청", [], "call")]),
+            new SequenceBlock("memo", "note", "기존 메모", [], ParticipantIds: ["user", "service"])
+        };
+        var original = new DiagramIr("sequence", "호출", nodes, [edge], [], [], SequenceBlocks: blocks);
+        var artifact = new DiagramArtifact(Guid.NewGuid(), "sequence", 1, original,
+            new MermaidCompiler(validator).Compile(original), DateTimeOffset.UtcNow);
+        var document = new DiagramEditDocument("호출", "LR",
+            nodes.Select(node => new EditableDiagramNode(node.Id, node.Label)).ToArray(),
+            [new EditableDiagramEdge("call", "user", "service", "요청", "message")],
+            [new("condition", "opt", "승인된 경우"), new("memo", "note", "재시도하지 않음")]);
+
+        var preview = await service.PreviewAsync(artifact,
+            new SaveDiagramEditRequest(artifact.Id, null, 1, document), "reviewer", CancellationToken.None);
+
+        Assert.Contains("opt 승인된 경우", preview.MermaidDsl, StringComparison.Ordinal);
+        Assert.Contains("Note over", preview.MermaidDsl, StringComparison.Ordinal);
+        Assert.Contains("재시도하지 않음", preview.MermaidDsl, StringComparison.Ordinal);
+        Assert.Equal("승인된 경우", preview.Ir.SequenceBlocks![0].Label);
+        Assert.Equal("재시도하지 않음", preview.Ir.SequenceBlocks[1].Label);
+    }
+
     private static DiagramArtifact Artifact()
     {
         var ir = new DiagramIr(

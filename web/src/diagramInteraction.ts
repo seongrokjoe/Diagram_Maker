@@ -1,7 +1,17 @@
 import type { DiagramArtifact, DiagramEditDocument } from "./types";
 
-export type ElementSelection = { kind: "node" | "edge"; id: string };
+export type ElementSelection = { kind: "node" | "edge" | "member" | "annotation"; id: string };
 export const renderAlias = (id: string) => `n_${id.replace(/[^a-zA-Z0-9_]/g, "_")}`;
+export const memberSelectionId = (nodeId: string, index: number) => `${nodeId}::member:${index}`;
+export function parseMemberSelectionId(id: string) {
+  const match = id.match(/^(.*)::member:(\d+)$/);
+  return match ? { nodeId: match[1], index: Number(match[2]) } : null;
+}
+export function canStartCanvasPan(input: { zoomable: boolean; compact: boolean; editMode: boolean;
+  spaceHeld: boolean; overDiagramElement: boolean; button: number }) {
+  return input.zoomable && !input.compact && input.button === 0 &&
+    (!input.editMode || !input.overDiagramElement || input.spaceHeld);
+}
 export const clampZoom = (value: number) => Math.min(16, Math.max(0.01, Math.round(value * 10000) / 10000));
 export const steppedZoom = (value: number, direction: number) => clampZoom(value * (direction > 0 ? 1.2 : 1 / 1.2));
 export const zoomPresets = [0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1, 2, 4, 8, 16];

@@ -12,7 +12,8 @@ public sealed record SharedSemanticResponse(string Summary, string RecommendedTy
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<SharedSemanticFailure>? Failures = null);
 public sealed record SharedSemanticFailure(IReadOnlyList<string> ItemIds, string Stage, string Code,
-    string? Category = null);
+    string? Category = null, IReadOnlyList<string>? Fields = null,
+    IReadOnlyList<string>? IssueCodes = null, IReadOnlyList<string>? CorrectionInstructions = null);
 public sealed record SharedDiagramInput(string Key, DiagramIr Diagram, DiagramViewSelection Selection);
 public sealed record SharedDiagramGroup(string Summary, string RecommendedType,
     IReadOnlyDictionary<string, SemanticGeneration> Pages, ChangeUnderstanding? Understanding = null,

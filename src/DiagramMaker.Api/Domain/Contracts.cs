@@ -498,8 +498,12 @@ public sealed record PageChangeExplanation(string ChangeId, string Summary,
 public sealed record DiagramExplanation(string Summary, IReadOnlyList<PageChangeExplanation> Changes,
     IReadOnlyList<string> FactIds, IReadOnlyList<string> EvidenceIds, string Status,
     IReadOnlyList<string> Warnings, string Basis = "GeneratedSource",
-    IReadOnlyList<CodeBlockBehavior>? Behaviors = null, SemanticCoverage? Coverage = null);
+    IReadOnlyList<CodeBlockBehavior>? Behaviors = null, SemanticCoverage? Coverage = null,
+    IReadOnlyList<SemanticFailureDetail>? Failures = null);
 public sealed record SemanticCoverage(int TotalUnits, int VerifiedUnits, int PendingUnits, int FailedUnits = 0);
+public sealed record SemanticFailureDetail(IReadOnlyList<string> ItemIds, string Stage, string Code,
+    IReadOnlyList<string> FactIds, IReadOnlyList<string> CorrectionInstructions,
+    IReadOnlyList<string>? Fields = null, IReadOnlyList<string>? IssueCodes = null, string? Category = null);
 public sealed record DiagramPlanReview(bool Accepted, IReadOnlyList<string> Issues);
 public sealed record SemanticGeneration(DiagramIr Diagram, string Status, IReadOnlyList<string> Warnings,
     IReadOnlyList<string> InstructionResults, int Attempts, DiagramExplanation? Explanation = null, string? FailureStage = null);
@@ -558,7 +562,8 @@ public sealed record AnalysisDiagramViewResult(
     string? ErrorMessage = null,
     bool Reused = false,
     DiagramGenerationMetadata? GenerationMetadata = null,
-    DiagramViewDocument? Document = null);
+    DiagramViewDocument? Document = null,
+    string? FailureStage = null);
 
 public sealed record DiagramSourceRange(
     string FilePath,
@@ -720,6 +725,19 @@ public sealed record NaturalDiagramViewResult(
     string? ErrorMessage = null,
     DiagramArtifact? LastSuccessfulDiagram = null,
     bool Reused = false,
+    NaturalDesignQuality? DesignQuality = null,
+    IReadOnlyList<NaturalDiagramPageResult>? Pages = null);
+
+public sealed record NaturalDiagramPageResult(
+    string Id,
+    string ScenarioId,
+    string Title,
+    DiagramArtifact? Diagram,
+    string State = "Completed",
+    string? ErrorCode = null,
+    string? ErrorMessage = null,
+    DiagramArtifact? LastSuccessfulDiagram = null,
+    bool Reused = false,
     NaturalDesignQuality? DesignQuality = null);
 
 public sealed record NaturalDiagramRecord(
@@ -737,9 +755,60 @@ public sealed record NaturalDiagramRecord(
     int Revision = 1,
     NaturalRequirements? Requirements = null);
 
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum NaturalDiagramRunState
+{
+    Queued,
+    Generating,
+    Completed,
+    Partial,
+    Failed,
+    Cancelled
+}
+
+public sealed record NaturalDiagramRun(
+    Guid Id,
+    string OwnerUserId,
+    NaturalDiagramRequest Request,
+    NaturalDiagramRunState State,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    int Revision = 1,
+    int Progress = 0,
+    string StageMessage = "Queued",
+    Guid? SourceDiagramId = null,
+    IReadOnlyList<string>? RegenerateViewIds = null,
+    IReadOnlyList<string>? RegeneratePageIds = null,
+    NaturalRequirements? Requirements = null,
+    IReadOnlyList<NaturalDiagramViewResult>? Views = null,
+    Guid? ResultDiagramId = null,
+    string? ErrorCode = null,
+    string? ErrorMessage = null,
+    Guid? LeaseId = null,
+    DateTimeOffset? LeaseUntil = null)
+{
+    public bool IsTerminal => State is NaturalDiagramRunState.Completed or NaturalDiagramRunState.Partial or
+        NaturalDiagramRunState.Failed or NaturalDiagramRunState.Cancelled;
+}
+
+public sealed record CreateNaturalDiagramRunRequest(
+    NaturalDiagramRequest Request,
+    Guid? SourceDiagramId = null,
+    IReadOnlyList<string>? RegenerateViewIds = null,
+    IReadOnlyList<string>? RegeneratePageIds = null);
+
+public sealed record NaturalDiagramRunActionRequest(int ExpectedRevision);
+
+public sealed record NaturalGenerationProgress(
+    NaturalRequirements? Requirements,
+    IReadOnlyList<NaturalDiagramViewResult> Views,
+    int CompletedUnits,
+    int TotalUnits,
+    string StageMessage);
+
 public sealed record SaveDiagramDslRevisionRequest(string MermaidDsl);
 
-public sealed record EditableDiagramNode(string Id, string Label);
+public sealed record EditableDiagramNode(string Id, string Label, IReadOnlyList<string>? Details = null);
 
 public sealed record EditableDiagramEdge(
     string Id,
@@ -748,11 +817,14 @@ public sealed record EditableDiagramEdge(
     string Label,
     string? Type = null);
 
+public sealed record EditableSequenceAnnotation(string Id, string Kind, string Label);
+
 public sealed record DiagramEditDocument(
     string Title,
     string? Direction,
     IReadOnlyList<EditableDiagramNode> Nodes,
-    IReadOnlyList<EditableDiagramEdge> Edges);
+    IReadOnlyList<EditableDiagramEdge> Edges,
+    IReadOnlyList<EditableSequenceAnnotation>? SequenceAnnotations = null);
 
 public sealed record SaveDiagramEditRequest(
     Guid RootArtifactId,

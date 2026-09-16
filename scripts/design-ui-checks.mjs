@@ -28,6 +28,10 @@ export async function checkDesignUi({ page, origin, fixture }) {
     await page.waitForFunction(expected => [...document.querySelectorAll('.preset-description > strong')].map(e => e.textContent).join('|') === expected.join('|'), names);
     const cards = page.locator('.preset-list .preset-card');
     assert.equal(await cards.count(), names.length);
+    await page.waitForFunction(() => [...document.querySelectorAll('.preset-list .preset-card')].every(card => {
+      const canvas = card.querySelector('.diagram-canvas');
+      return canvas?.getAttribute('aria-busy') === 'false' && canvas.querySelector('svg');
+    }));
     const boxes = await cards.evaluateAll(elements => elements.map(e => {
       const card = e.getBoundingClientRect(), image = e.querySelector('.diagram-canvas').getBoundingClientRect(), text = e.querySelector('.preset-description').getBoundingClientRect();
       return { x: card.x, y: card.y, bottom: card.bottom, imageRight: image.right, textLeft: text.left };
@@ -161,12 +165,16 @@ export async function checkDesignUi({ page, origin, fixture }) {
     await page.locator('.plan-editor .candidate-row').last().waitFor();
     await captureWidths(page, fixture, 'git-grouping');
     const candidateRows = page.locator('.candidate-row');
+    const originalGroupId = await candidateRows.nth(0).getByRole('combobox').inputValue();
     await candidateRows.nth(0).getByRole('checkbox').uncheck();
     await candidateRows.nth(1).getByRole('checkbox').uncheck();
     assert.equal(await page.locator('.group-card').count(), 1, 'last removal deletes the emptied Git group');
-    await page.getByRole('button', { name: '그룹 추가', exact: true }).click();
-    const draftId = await candidateRows.nth(2).getByRole('combobox').locator('option').last().getAttribute('value');
-    await candidateRows.nth(2).getByRole('combobox').selectOption(draftId);
+    await candidateRows.nth(0).getByRole('checkbox').check();
+    assert.equal(await candidateRows.nth(0).getByRole('combobox').inputValue(), originalGroupId, 'reselection restores its remembered group');
+    await candidateRows.nth(0).getByRole('checkbox').uncheck();
+    await candidateRows.nth(2).getByRole('combobox').selectOption('__new_group__');
+    const draftId = await candidateRows.nth(2).getByRole('combobox').inputValue();
+    assert.notEqual(draftId, '__new_group__', 'the create-group option assigns the change to a real group');
     await candidateRows.nth(3).getByRole('combobox').selectOption(draftId);
     assert.equal(await page.locator('.group-card').count(), 1, 'moving the last change also deletes the emptied group');
     await page.getByRole('button', { name: '그룹 추가', exact: true }).click();

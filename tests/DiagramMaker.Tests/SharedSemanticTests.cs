@@ -38,6 +38,36 @@ public sealed class SharedSemanticTests(ITestOutputHelper output)
         Assert.Same(first.Pages["page2"], changed.Pages["page2"]);
         Assert.NotSame(first.Pages["page1"], changed.Pages["page1"]);
     }
+
+    [Fact]
+    public void ApprovedAnnotationsRemainVisibleWhenAnotherItemFailsReview()
+    {
+        var facts = new[] { new SourceFact("f1", "symbol", "First", [], ["e1"], null),
+            new SourceFact("f2", "symbol", "Second", [], ["e2"], null) };
+        var projection = new SharedSemanticProjection(true, facts);
+        var diagram = new DiagramIr("flowchart", "부분 의미",
+            [new("n1", "First()", "method", null, "unchanged", Confidence.Exact, ["e1"], SourceFactIds: ["f1"]),
+             new("n2", "Second()", "method", null, "unchanged", Confidence.Exact, ["e2"], SourceFactIds: ["f2"])], [], [], []);
+        projection.Add(new("view/overview", diagram, new("view", "flowchart", "balanced")));
+        var approvedKey = projection.Diagrams[0].NodeItems["n1"];
+        var failedKey = projection.Diagrams[0].NodeItems["n2"];
+        var response = new SharedSemanticResponse("부분 검토", "flowchart",
+            [new(approvedKey, "검토된 첫 동작", "첫 함수의 원본 동작을 검토했습니다.")],
+            [new([failedKey], "semantic-review", "LLM_SEMANTIC_REVIEW", Fields: ["items.description"],
+                IssueCodes: ["reversed_condition"], CorrectionInstructions: ["조건 방향을 원본과 맞춥니다."])]);
+
+        var result = projection.Apply(response).Pages["view/overview"];
+
+        Assert.Equal("Incomplete", result.Status);
+        Assert.Equal("검토된 첫 동작", result.Diagram.Nodes.Single(node => node.Id == "n1").Label);
+        Assert.Equal("Second()", result.Diagram.Nodes.Single(node => node.Id == "n2").Label);
+        Assert.Equal(new SemanticCoverage(2, 1, 1, 1), result.Explanation!.Coverage);
+        var failure = Assert.Single(result.Explanation.Failures!);
+        Assert.Equal(new[] { failedKey }, failure.ItemIds);
+        Assert.Equal(new[] { "f2" }, failure.FactIds);
+        Assert.Equal(new[] { "items.description" }, failure.Fields);
+        Assert.Equal(new[] { "reversed_condition" }, failure.IssueCodes);
+    }
     private static InternalLlmClient Client(CodeBlockPipelineTests.CodeTransport transport) => new(
         Options.Create(new LlmOptions { Enabled = true }), new(), new(), transport, new(transport));
 

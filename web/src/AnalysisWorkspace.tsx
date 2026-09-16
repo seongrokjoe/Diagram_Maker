@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, request } from "./api";
 import { SemanticProgressView } from "./SemanticProgressView";
-import { assignChange } from "./analysisSelection";
+import { assignChange, emptyGroupMemory, rememberGroups, restoreChange, forgetGroups, type GroupMemory } from "./analysisSelection";
 import { diagramName, originOf, originOfPage, resultCountsText, type DiagramVariant } from "./diagramOrigin";
 import { ResizableResults } from "./ResizableResults";
 import { CodeBlockResultTree } from "./CodeBlockResultTree";
@@ -53,6 +53,8 @@ export function AnalysisWorkspace({ repositories, reportError }: {
   const [plan, setPlan] = useState<AnalysisPlan | null>(null);
   const [recentPlans, setRecentPlans] = useState<AnalysisPlan[]>([]);
   const [groups, setGroups] = useState<AnalysisGroupSelection[]>([]);
+  const groupMemory = useRef<GroupMemory>(emptyGroupMemory());
+  const groupPlan = useRef("");
   const [mergeIds, setMergeIds] = useState<string[]>([]);
   const [presets, setPresets] = useState<DiagramPreset[]>([]);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
@@ -91,8 +93,31 @@ export function AnalysisWorkspace({ repositories, reportError }: {
   }, [plan, reportError]);
 
   useEffect(() => {
-    if (plan?.state === "Ready") setGroups(plan.selections.map(normalizeGroup));
+    if (plan?.state !== "Ready") return;
+    const key = `git-groups:${plan.id}`;
+    const signature = `${plan.id}:${plan.revision}`;
+    if (groupPlan.current === signature) return;
+    let selected = plan.selections.map(normalizeGroup);
+    let memory = groupPlan.current.startsWith(plan.id + ":") ? groupMemory.current : emptyGroupMemory();
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(key) ?? "null");
+      if (saved?.revision === plan.revision && Array.isArray(saved.groups) && saved.memory?.groups &&
+        saved.memory?.assignments && Array.isArray(saved.memory?.order)) {
+        selected = saved.groups.map(normalizeGroup);
+        memory = saved.memory;
+      }
+    } catch { /* A missing or invalid browser draft must not block the server plan. */ }
+    groupMemory.current = rememberGroups(memory, selected);
+    groupPlan.current = signature;
+    setGroups(selected);
   }, [plan?.id, plan?.state, plan?.revision]);
+
+  useEffect(() => {
+    if (!plan || groupPlan.current !== `${plan.id}:${plan.revision}`) return;
+    groupMemory.current = rememberGroups(groupMemory.current, groups);
+    try { sessionStorage.setItem(`git-groups:${plan.id}`, JSON.stringify({ revision: plan.revision, groups, memory: groupMemory.current })); }
+    catch { /* Browser storage is optional. */ }
+  }, [groups]);
 
   useEffect(() => {
     if (!analysis || terminalStates.has(analysis.state)) return;
@@ -168,19 +193,34 @@ export function AnalysisWorkspace({ repositories, reportError }: {
 
   function toggleCandidate(changeId: string, checked: boolean) {
     setGroups((current) => {
+      groupMemory.current = rememberGroups(groupMemory.current, current);
       if (!checked) return assignChange(current, changeId);
-      if (current.length === 0) {
-        const id = crypto.randomUUID();
-        const view = createView("flowchart", presets);
-        return [{ id, title: "선택한 변경점", changeIds: [changeId], diagramType: view.diagramType, presetId: view.presetId, views: [view] }];
-      }
-      if (current.some((group) => group.changeIds.includes(changeId))) return current;
-      return current.map((group, index) => index === 0 ? { ...group, changeIds: [...group.changeIds, changeId] } : group);
+      const view = createView("flowchart", presets);
+      return restoreChange(current, changeId, groupMemory.current, { id: crypto.randomUUID(), title: "선택한 변경점",
+        changeIds: [], diagramType: view.diagramType, presetId: view.presetId, views: [view] });
     });
   }
 
   function moveCandidate(changeId: string, destinationId: string) {
-    setGroups(current => assignChange(current, changeId, destinationId));
+    setGroups(current => {
+      groupMemory.current = rememberGroups(groupMemory.current, current);
+      let destination = destinationId;
+      let next = current;
+      if (destinationId === "__new_group__") {
+        const view = createView("flowchart", presets);
+        destination = crypto.randomUUID();
+        next = [...current, { id: destination, title: `새 그룹 ${current.length + 1}`, changeIds: [],
+          diagramType: view.diagramType, presetId: view.presetId, views: [view] }];
+      }
+      next = assignChange(next, changeId, destination);
+      groupMemory.current = rememberGroups(groupMemory.current, next);
+      return next;
+    });
+  }
+
+  function deleteGroup(id: string) {
+    groupMemory.current = forgetGroups(groupMemory.current, [id]);
+    setGroups(current => current.filter(group => group.id !== id));
   }
 
   function updateGroup(id: string, patch: Partial<AnalysisGroupSelection>) {
@@ -231,6 +271,8 @@ export function AnalysisWorkspace({ repositories, reportError }: {
       const merging = current.filter((group) => mergeIds.includes(group.id));
       const first = merging[0];
       if (!first) return current;
+      groupMemory.current = forgetGroups(rememberGroups(groupMemory.current, current),
+        merging.filter(group => group.id !== first.id).map(group => group.id), first.id);
       const merged = { ...first, title: `${first.title} 외 ${merging.length - 1}개`, changeIds: [...new Set(merging.flatMap((group) => group.changeIds))] };
       return current.map((group) => group.id === first.id ? merged : group).filter((group) => !mergeIds.includes(group.id) || group.id === first.id);
     });
@@ -465,7 +507,7 @@ export function AnalysisWorkspace({ repositories, reportError }: {
                 const groupId = assignment.get(candidate.id);
                 return <article className="candidate-row" key={candidate.id}>
                   <label className="checkbox"><input type="checkbox" checked={Boolean(groupId)} onChange={(event) => toggleCandidate(candidate.id, event.target.checked)} /><span><strong>{candidate.qualifiedName}</strong><small>{candidate.changeType} · {candidate.filePath}:{candidate.startLine} · caller {candidate.callerCount} / callee {candidate.calleeCount}</small></span></label>
-                  <div className="candidate-actions">{groupId && <label className="group-select-label"><span>그룹 선택:</span><select aria-label={`${candidate.qualifiedName} 그룹 선택`} value={groupId} onChange={(event) => moveCandidate(candidate.id, event.target.value)}>{groups.map((group) => <option key={group.id} value={group.id}>{group.title}</option>)}</select></label>}{!evidence[candidate.id] && <button type="button" className="text-button" onClick={() => loadEvidence(candidate.id)}>소스 근거 보기</button>}</div>
+                  <div className="candidate-actions">{groupId && <label className="group-select-label"><span>그룹 선택:</span><select aria-label={`${candidate.qualifiedName} 그룹 선택`} value={groupId} onChange={(event) => moveCandidate(candidate.id, event.target.value)}>{groups.map((group) => <option key={group.id} value={group.id}>{group.title}</option>)}<option value="__new_group__">+ 새 그룹 만들기</option></select></label>}{!evidence[candidate.id] && <button type="button" className="text-button" onClick={() => loadEvidence(candidate.id)}>소스 근거 보기</button>}</div>
                   {evidence[candidate.id] && <details open className="evidence-snippet"><summary>{evidence[candidate.id].filePath}:{evidence[candidate.id].startLine}-{evidence[candidate.id].endLine}</summary><pre>{evidence[candidate.id].content}</pre></details>}
                 </article>;
               })}
@@ -476,7 +518,7 @@ export function AnalysisWorkspace({ repositories, reportError }: {
             {groups.map((group) => {
               const views = effectiveGroupViews(group);
               return <article className="panel group-card" key={group.id}>
-                <div className="group-heading"><label className="checkbox"><input type="checkbox" checked={mergeIds.includes(group.id)} onChange={(event) => setMergeIds((current) => event.target.checked ? [...current, group.id] : current.filter((id) => id !== group.id))} /> 병합 선택</label><button type="button" className="text-button" onClick={() => setGroups((current) => current.filter((item) => item.id !== group.id))}>그룹 삭제</button></div>
+                <div className="group-heading"><label className="checkbox"><input type="checkbox" checked={mergeIds.includes(group.id)} onChange={(event) => setMergeIds((current) => event.target.checked ? [...current, group.id] : current.filter((id) => id !== group.id))} /> 병합 선택</label><button type="button" className="text-button" onClick={() => deleteGroup(group.id)}>그룹 삭제</button></div>
                 <label>그룹 이름<input value={group.title} maxLength={120} onChange={(event) => updateGroup(group.id, { title: event.target.value })} /></label>
                 <div className="view-editor-heading"><span className="count-chip">변경점 {group.changeIds.length}개 · 출력 {views.length}개</span><button type="button" className="secondary" disabled={views.length >= 5 || views.length >= diagramTypes.length} onClick={() => addGroupView(group.id)}>다이어그램 형식 추가</button></div>
                 {views.map((view, index) => <GroupViewEditor key={view.id} group={group} view={view} index={index} presets={presets} siblingViews={views} onChange={(patch) => updateGroupView(group.id, view.id, patch)} onRemove={() => removeGroupView(group.id, view.id)} />)}
@@ -547,7 +589,7 @@ function GroupViewEditor({ group, view, index, presets, siblingViews, onChange, 
   const customized = Boolean(view.overrides && Object.values(view.overrides).some((value) => value !== undefined));
   return <fieldset className="diagram-view-editor">
     <legend>출력 {index + 1}</legend>
-    <div className="field-row"><label>다이어그램 형식<select value={view.diagramType} onChange={(event) => { const diagramType = event.target.value as DiagramType; onChange({ diagramType, presetId: defaultPreset(diagramType, presets), overrides: undefined }); }}>{diagramTypes.map((type) => <option key={type.value} value={type.value} disabled={siblingViews.some((other) => other.id !== view.id && other.diagramType === type.value)}>{type.label}</option>)}</select></label>{allowRemove && siblingViews.length > 1 && <button type="button" className="text-button danger" onClick={onRemove}>이 출력 삭제</button>}</div>
+    <div className="field-row"><label>다이어그램 형식<select value={view.diagramType} onChange={(event) => { const diagramType = event.target.value as DiagramType; onChange({ diagramType, presetId: defaultPreset(diagramType, presets), overrides: undefined }); }}>{diagramTypes.map((type) => <option key={type.value} value={type.value} disabled={siblingViews.some((other) => other.id !== view.id && other.diagramType === type.value)}>{type.label}</option>)}</select></label>{allowRemove && siblingViews.length > 1 && <button type="button" className="secondary remove-output-button" onClick={onRemove}>이 출력 삭제</button>}</div>
     <div className="diagram-mode-options">
       <label className="checkbox"><input type="checkbox" checked={Boolean(view.focusOnChanges)} onChange={(event) => onChange({ focusOnChanges: event.target.checked })} /> 요약</label>
       <span>요약은 Git 변경점과 의미 파악에 필요한 최소 문맥만 표시합니다.</span>
@@ -614,7 +656,7 @@ export function AnalysisResultView({ analysis, activeGroup, setActiveGroup, acti
             views: effectiveResultViews(group).map(view => ({ viewId: view.viewId, selection: view.selection, state: view.state, warnings: view.warnings,
               reused: view.reused, llmStatus: view.generationMetadata?.llmStatus ?? "", pages: (view.document?.pages ?? (view.diagram ? [{ id: "overview", title: view.diagram.ir.title, diagram: view.diagram }] : [])).map(page => ({
                 id: page.id, title: page.title, artifactId: page.diagram.id, resultKind: originOfPage(page) === "ai" ? "semantic" : "static",
-                codeArtifactId: "codeDiagram" in page ? page.codeDiagram?.id : undefined
+                codeArtifactId: "codeDiagram" in page ? page.codeDiagram?.id : undefined, aiState: page.aiState
               })) }))
           })) } satisfies Pick<CodeBlockRun, "id" | "results">} />
       </aside>
@@ -626,6 +668,7 @@ export function AnalysisResultView({ analysis, activeGroup, setActiveGroup, acti
               busy={Boolean(regeneratingViewId)} sampleRefinements={sampleRefinements} onApply={selection => onRegenerateView(selected.groupId, selection)} />
           </div>
           {selectedView.errorMessage && <p className="warning" role="alert">{selectedView.errorMessage}</p>}
+          {selectedView.failureStage && <p className="help">AI 실패 단계: {failureLabel(selectedView.failureStage)}</p>}
           {selectedView.diagram && active.page ? <AnalysisDiagramPane key={analysis.id + "/" + selected.groupId + "/" + selectedView.viewId}
             artifact={selectedView.diagram} analysis={analysis} groupId={selected.groupId} view={selectedView} reportError={reportError}
             busy={Boolean(regeneratingViewId)} location={active} compare={compare} onSelect={select}
@@ -821,6 +864,7 @@ function changedViewIds(groups: AnalysisGroupSelection[], source: AnalysisRespon
   return result;
 }
 function formatDiagramType(type: string) { return ({ flowchart: "흐름 / 영향도", class: "클래스 관계", sequence: "호출 시퀀스", "code-relation": "변경 구현 맵", state: "상태 전이" } as Record<string, string>)[type] ?? type; }
+function failureLabel(stage: string) { return ({ generation: "AI 설명 생성", "llm-request": "LLM 요청", "plan-validation": "응답 구조와 근거 검증", "semantic-review": "원본 의미 검토", projection: "그림 생성" } as Record<string, string>)[stage] ?? "생성 검증"; }
 function isCppDiagnostic(value: string) { return /C\+\+|syntax|parser|구문|모호|제외|인덱스|index/i.test(value); }
 function exclusionReason(reason: string) {
   return ({

@@ -12,6 +12,7 @@ import { executionMeaningFixture } from './execution-meaning-fixture.mjs';
 import { reliabilitySource as source } from './reliability-fixture.mjs';
 import { checkVariants, checkVariantUi, checkGitVariantUi } from './ai-code-variant-checks.mjs';
 import { naturalDesignFixture, checkNaturalDesign } from './natural-design-fixture.mjs';
+import { checkPartialGitAi } from './partial-ai-ui-checks.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 assertLocalPath(root);
@@ -56,7 +57,8 @@ const llm = createServer(async (request, response) => {
       kinds: context.items.map(item => item.kind), characters: payload.messages[1].content.length,
       facts: context.sources.facts.length, sourceCharacters: context.sources.facts.reduce((n, f) => n + (f.content?.length ?? 0), 0) });
     const result = naturalDesignFixture(context, properties, testMode) ?? (properties.steps ? executionMeaningFixture(context) : properties.accepted ? { accepted: true, issues: [] } :
-      reviewing ? { items: context.items.map(item => ({ id: item.id, issues: [] })) } : {
+      reviewing ? { items: context.items.map(item => ({ id: item.id,
+        issues: testMode === 'partial-git' && item.kind === 'change' ? ['G'] : [] })) } : {
       summary: '원본 코드의 입력값을 가공하고 결과를 반환합니다', recommendedType: context.available[0],
       items: context.items.map(item => ({ id: item.id, summary: '입력값을 누적하고 반환합니다', description: '원본 근거에 표시된 값을 누적하고 호출한 곳으로 반환합니다' })),
     });
@@ -215,6 +217,17 @@ try {
     }
   }
   checks.push({ name: 'git-five-formats', formats: 5, modifiedStateTransitions: 1, calls: 2, returns: ['false', 'true'] });
+  testMode = 'partial-git';
+  try {
+    statePlan = await request(`/analysis-plans/${statePlan.id}`);
+    statePlan = await request(`/analysis-plans/${statePlan.id}/selection`, 'PUT', { expectedRevision: statePlan.revision,
+      groups: [{ id: 'partial-g', title: '부분 AI 보존 검증', changeIds: statePlan.candidates.map(c => c.id),
+        diagramType: 'code-relation', presetId: 'balanced', views: [{ id: 'partial', diagramType: 'code-relation',
+          presetId: 'balanced', refinementInstruction: '각 코드 역할을 설명하고 변경 전후 근거를 검토하세요.' }] }] });
+    const partialStarted = await request(`/analysis-plans/${statePlan.id}/generate`, 'POST', { expectedRevision: statePlan.revision }, 202);
+    const partial = await poll(`/analyses/${partialStarted.id}?includeGraph=false&summary=true`);
+    checks.push(await checkPartialGitAi({ request, root, origin, fixture, analysis: partial, requestCount: () => requestCount }));
+  } finally { testMode = 'valid'; }
   checks.push(await checkNaturalDesign(request, () => requestCount, value => { testMode = value; }, root, origin, fixture));
   const settings = await request('/llm/tests/code-diagram-settings');
   assert.equal(settings.reviewOutputTokens, 2000);

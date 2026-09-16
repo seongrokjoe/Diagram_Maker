@@ -1,7 +1,12 @@
 namespace DiagramMaker.Domain;
 
-public sealed record NaturalRequirement(string Id, string Text, string Kind, string Origin, string SourceQuote);
-public sealed record NaturalRequirements(string Title, IReadOnlyList<string> Entities, IReadOnlyList<NaturalRequirement> Requirements);
+public sealed record NaturalRequirement(string Id, string Text, string Kind, string Origin, string SourceQuote,
+    string? SourceRangeId = null, string? ScenarioId = null);
+public sealed record NaturalPromptRange(string Id, int StartOffset, int EndOffset, string Text);
+public sealed record NaturalScenario(string Id, string Title, IReadOnlyList<string> RequirementIds,
+    IReadOnlyList<string> SourceRangeIds);
+public sealed record NaturalRequirements(string Title, IReadOnlyList<string> Entities, IReadOnlyList<NaturalRequirement> Requirements,
+    IReadOnlyList<NaturalPromptRange>? SourceRanges = null, IReadOnlyList<NaturalScenario>? Scenarios = null);
 public sealed record NaturalParameter(string Name, string Type);
 public sealed record NaturalMember(string Name, string Kind, string Visibility, string Type,
     IReadOnlyList<NaturalParameter> Parameters, IReadOnlyList<string> Preconditions);

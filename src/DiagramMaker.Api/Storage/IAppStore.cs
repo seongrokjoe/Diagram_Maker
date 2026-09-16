@@ -22,6 +22,12 @@ public interface IAppStore : IAsyncDisposable, ICodeBlockStore
     Task<NaturalDiagramRecord?> GetNaturalDiagramAsync(Guid id, CancellationToken cancellationToken);
     Task<IReadOnlyList<NaturalDiagramRecord>> ListNaturalDiagramsAsync(string ownerUserId, int limit, CancellationToken cancellationToken);
     Task<IReadOnlyList<NaturalDiagramRecord>> ListNaturalDiagramRevisionsAsync(Guid rootDiagramId, string ownerUserId, CancellationToken cancellationToken);
+    Task<bool> CreateNaturalDiagramRunAsync(NaturalDiagramRun run, CancellationToken cancellationToken);
+    Task<NaturalDiagramRun?> GetNaturalDiagramRunAsync(Guid id, CancellationToken cancellationToken);
+    Task<IReadOnlyList<NaturalDiagramRun>> ListNaturalDiagramRunsAsync(string ownerUserId, int limit, CancellationToken cancellationToken);
+    Task<bool> UpdateNaturalDiagramRunAsync(NaturalDiagramRun run, int expectedRevision, Guid? expectedLeaseId, CancellationToken cancellationToken);
+    Task<NaturalDiagramRun?> TryLeaseNaturalDiagramRunAsync(TimeSpan leaseDuration, CancellationToken cancellationToken);
+    Task<bool> RenewNaturalDiagramRunLeaseAsync(Guid id, Guid leaseId, TimeSpan leaseDuration, CancellationToken cancellationToken);
     Task SaveDiagramRevisionAsync(DiagramRevisionRecord record, CancellationToken cancellationToken);
     Task<DiagramRevisionRecord?> GetDiagramRevisionAsync(Guid id, CancellationToken cancellationToken);
     Task<IReadOnlyList<DiagramRevisionRecord>> ListDiagramRevisionsAsync(Guid rootArtifactId, string ownerUserId, CancellationToken cancellationToken);

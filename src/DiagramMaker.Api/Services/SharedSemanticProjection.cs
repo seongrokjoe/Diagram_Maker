@@ -172,11 +172,17 @@ internal sealed class SharedSemanticProjection
             var evidence = projected.Nodes.SelectMany(n => n.EvidenceIds).Concat(projected.Edges.SelectMany(e => e.EvidenceIds))
                 .Concat(SequenceStructure.AnnotatedBlocks(projected.SequenceBlocks ?? []).SelectMany(b => b.EvidenceIds ?? []))
                 .Concat(changeExplanations.SelectMany(c => c.FactIds).Where(facts.ContainsKey).SelectMany(id => facts[id].EvidenceIds)).Distinct().ToArray();
+            var failureDetails = (semantics.Failures ?? []).Where(failure => failure.ItemIds.Any(required.Contains))
+                .Select(failure => new SemanticFailureDetail(
+                    failure.ItemIds.Where(required.Contains).ToArray(), failure.Stage, failure.Code,
+                    failure.ItemIds.Where(Items.ContainsKey).SelectMany(id => Items[id].FactIds).Distinct().ToArray(),
+                    failure.CorrectionInstructions ?? [], failure.Fields, failure.IssueCodes, failure.Category))
+                .ToArray();
             var explanation = new DiagramExplanation(pageSummary, changeExplanations,
                 pageFacts.Concat(changeExplanations.SelectMany(c => c.FactIds)).Distinct().ToArray(), evidence, missing ? "Incomplete" : "Semantic", warnings,
                 Behaviors: codeBlocks ? behaviors : null, Coverage: new(required.Length, required.Count(annotations.ContainsKey),
                     required.Count(id => !annotations.ContainsKey(id)), required.Count(id => !annotations.ContainsKey(id) &&
-                        semantics.Failures?.Any(f => f.ItemIds.Contains(id)) == true)));
+                        semantics.Failures?.Any(f => f.ItemIds.Contains(id)) == true)), Failures: failureDetails);
             var validator = new DiagramValidator();
             validator.Validate(projected);
             _ = new MermaidCompiler(validator).Compile(projected);

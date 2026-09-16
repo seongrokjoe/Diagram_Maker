@@ -1,8 +1,8 @@
 # AI Git Architecture Reviewer
 
-현재 사내 LLM 시험용 Windows 배포본은 [0.1.0-internal.9 ZIP](artifacts/release/DiagramMaker-0.1.0-internal.9-win-x64.zip)과
-[SHA-256](artifacts/release/DiagramMaker-0.1.0-internal.9-win-x64.zip.sha256)입니다.
-기능별 검증 결과는 [배포 검증 보고서](CODE_DIAGRAM_RELIABILITY_REPORT.md), 사내 시험 절차는
+현재 사내 LLM 시험용 Windows 배포본은 [0.1.0-internal.10 ZIP](artifacts/release/DiagramMaker-0.1.0-internal.10-win-x64.zip)과
+[SHA-256](artifacts/release/DiagramMaker-0.1.0-internal.10-win-x64.zip.sha256)입니다.
+기능별 검증 결과는 [생성 안정성·직접 편집 검증 보고서](DIAGRAM_RELIABILITY_EDITING_REPORT.md), 사내 시험 절차는
 [INTERNAL_TEST_KO.txt](packaging/windows/INTERNAL_TEST_KO.txt)를 참조하세요.
 
 사내 Git 커밋의 변경 심볼과 중요한 호출 관계만 선별해 Mermaid 다이어그램으로 만드는 내부용 애플리케이션입니다. 외부 LLM fallback, CDN, telemetry, 임의 Git URL, 저장소 build·hook 실행은 지원하지 않습니다.
@@ -42,6 +42,12 @@ Git 변경 분석 결과는 왼쪽의 이름 검색·AI/Code 트리와 오른쪽
 
 자연어 다이어그램은 요청에서 공통 요구사항을 추출한 뒤 형식별 구조를 설계하고 독립적으로 검토합니다. 클래스 멤버·메서드, 흐름의 조건·실패 경로, 시퀀스 분기·반복, 상태의 시작·종료·전이 조건을 표현합니다. 추가 설계 가정은 그림에 표시하고 요구사항·검토 상태를 이력에 저장합니다. 검토 실패 시 한 번 보정하며, 선택한 형식의 재생성이 실패하면 마지막 정상 결과와 실패 안내를 함께 표시합니다. 간결한 프리셋도 생성된 노드·관계를 임의로 잘라내지 않습니다.
 
+자연어 입력은 빈 문단을 기준으로 시나리오를 나누고 선택한 각 형식 안에 여러 페이지를 생성합니다. 요구사항은 원문의 위치와 연결됩니다. 실행 진행과 완료된 페이지를 서버에 저장하므로 새로고침 후 복원하며, 실행 취소·이어하기와 형식 또는 시나리오별 재생성을 제공합니다. 모든 페이지가 실패해도 실패 진단을 남깁니다.
+
+코드/Git의 일부 의미 검토가 실패하면 통과한 설명은 **부분 완료 AI** 결과에 보존합니다. AI 항목 안에서 실패 상태를 확인하고, 페이지 설명에서 검토 사유·근거·보정 지시를 확인할 수 있습니다. **Code**는 별도 정적 원본을 유지합니다. Git 변경점 선택을 해제했다가 다시 선택하면 마지막 그룹 설정과 순서를 복원하며, 그룹 드롭다운에서 새 그룹을 만들어 바로 배정할 수 있습니다.
+
+**구조 편집**에서 노드·관계·클래스 멤버·시퀀스 조건/메모를 더블클릭해 문구를 수정합니다. 실행 취소·다시 실행을 거쳐 새 리비전으로 저장할 수 있습니다. 보기 모드는 그림 위 좌클릭 드래그로 이동하며, 편집 모드는 빈 공간 또는 **Space+드래그**로 이동합니다.
+
 2026-09-15 품질·사용성 개선의 전체 검증 결과와 화면은 [검증 기록](DIAGRAM_QUALITY_IMPROVEMENT_REPORT.md)에 있습니다. 합성 1,212행/40함수의 코드 3종·Git 3종 요청 수는 14→10회·28→20회이며 모든 결과 페이지와 의미 검토를 보존합니다. 실제 사내 모델의 처리 시간 개선은 별도 측정 대상입니다.
 
 초안 저장·생성 시 서버에 원문을 저장하며 결과·근거·편집·생성 이력은 작업 삭제 전까지 보존합니다. 저장한 작업은 주소의 `codeWorkspace`로 새로고침해 다시 열 수 있습니다. 탭 전환은 미저장 초안을 유지하지만 브라우저를 닫기 전에는 초안을 저장해야 합니다. 과거 근거는 당시 코드 스냅샷을 보여 줍니다. 한 결과 재생성 시 나머지 결과를 재사용하며 실패 시 이전 결과를 실패 표시와 함께 유지합니다.
@@ -62,7 +68,7 @@ LLM 구성 여부와 실패 단계가 표시되며 미설정·요청 실패·검
 
 **요청 오류 진단**은 화면에서도 최초·후속 오류, 응답 항목 검증 사유와 문자/토큰 한도를 보여줍니다. `MaxInputCharacters`는 문자 수이며 입력 토큰 상한인 `MaxInputTokens`와 다릅니다. 기본 문자 수 2,000,000, 입력 토큰 200,000을 사용하는 [완성 JSON 예제](packaging/windows/config/llm-policy.example.json)와 [설정 안내](packaging/windows/config/LLM_POLICY_KO.txt)를 제공합니다. 검토 입력만 커지면 생성된 의미를 보존하고 검토를 나눕니다.
 
-최신 Windows 시험 패키지는 [0.1.0-internal.9 ZIP](artifacts/release/DiagramMaker-0.1.0-internal.9-win-x64.zip)과 [SHA-256](artifacts/release/DiagramMaker-0.1.0-internal.9-win-x64.zip.sha256)입니다. 기능별 변경 사항과 검증 결과는 [accuracy.1 보고서](CODE_DIAGRAM_ACCURACY_REPORT.md) 및 [진행 기록](CODE_BLOCK_DIAGRAM_PROGRESS.md)에 기록했습니다.
+최신 Windows 시험 패키지는 [0.1.0-internal.10 ZIP](artifacts/release/DiagramMaker-0.1.0-internal.10-win-x64.zip)과 [SHA-256](artifacts/release/DiagramMaker-0.1.0-internal.10-win-x64.zip.sha256)입니다. 기능별 변경 사항과 검증 결과는 [accuracy.1 보고서](CODE_DIAGRAM_ACCURACY_REPORT.md) 및 [진행 기록](CODE_BLOCK_DIAGRAM_PROGRESS.md)에 기록했습니다.
 
 공유 의미 생성은 대상 ID를 요청 스키마로 제한하고 항목별 검토를 수행합니다. 검토 응답은 짧은 문제 코드만 반환하며 동봉 정책 예제의 2,000토큰 출력 예산에 맞춰 사전 분할합니다. 검토 형식 오류·잘림은 생성 결과를 보존한 채 검토만 복구합니다. **요청 오류 진단** 표는 오류마다 행을 보존하고 복구 완료·실패·재개 대기를 구분합니다. 행을 선택하면 우측 상세에서 원인과 다음 행동을 확인하고 **기술 상세**에서 입력·출력 한도를 확인합니다. 완료된 AI/Code 결과 수와 이전 AI 유지 수도 별도로 표시합니다. 자세한 이전 시험 기록은 [perf.4 보고서](CODE_DIAGRAM_PERF4_REPORT.md)를 참고하세요.
 
@@ -84,12 +90,12 @@ node scripts/smoke-code-block-ui.mjs
 Windows 패키지는 아래 명령으로 빌드하고 검사합니다. 빌드 스크립트는 같은 버전의 기존 ZIP을 덮어쓰지 않습니다. 검증 결과와 실제 내부 LLM/PostgreSQL 연결 검증 상태는 [진행 기록](CODE_BLOCK_DIAGRAM_PROGRESS.md)에 기록합니다.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1 -Version '0.1.0-internal.9'
-node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.9-win-x64
-node scripts/smoke-code-block-ui.mjs artifacts/stage/DiagramMaker-0.1.0-internal.9-win-x64
-node scripts/smoke-packaged-llm.mjs artifacts/stage/DiagramMaker-0.1.0-internal.9-win-x64
-node scripts/smoke-packaged-llm.mjs artifacts/stage/DiagramMaker-0.1.0-internal.9-win-x64 --basic
-node scripts/smoke-windows-launchers.mjs artifacts/stage/DiagramMaker-0.1.0-internal.9-win-x64
+powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1 -Version '0.1.0-internal.10'
+node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.10-win-x64
+node scripts/smoke-code-block-ui.mjs artifacts/stage/DiagramMaker-0.1.0-internal.10-win-x64
+node scripts/smoke-packaged-llm.mjs artifacts/stage/DiagramMaker-0.1.0-internal.10-win-x64
+node scripts/smoke-packaged-llm.mjs artifacts/stage/DiagramMaker-0.1.0-internal.10-win-x64 --basic
+node scripts/smoke-windows-launchers.mjs artifacts/stage/DiagramMaker-0.1.0-internal.10-win-x64
 ```
 
 ## 로컬 실행
@@ -186,15 +192,15 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 Windows x64 오프라인 패키지 생성:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1 -Version '0.1.0-internal.9'
+powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1 -Version '0.1.0-internal.10'
 ```
 
-이번 시험의 명시적 패키징 버전은 `0.1.0-internal.9`이며 출력은 `artifacts/release/DiagramMaker-0.1.0-internal.9-win-x64.zip`과 SHA-256 파일입니다. 기존 ZIP이 있으면 새 버전명을 지정해야 합니다. 실제 사내 LLM의 의미 품질은 사내 환경에서 별도로 확인해야 합니다.
+이번 시험의 명시적 패키징 버전은 `0.1.0-internal.10`이며 출력은 `artifacts/release/DiagramMaker-0.1.0-internal.10-win-x64.zip`과 SHA-256 파일입니다. 기존 ZIP이 있으면 새 버전명을 지정해야 합니다. 실제 사내 LLM의 의미 품질은 사내 환경에서 별도로 확인해야 합니다.
 
 승인된 Playwright를 미리 반입하고 패키징을 완료한 뒤 실제 배포 실행 파일의 오프라인 샘플을 검사할 수 있습니다.
 
 ```powershell
-node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.9-win-x64
+node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.10-win-x64
 ```
 
 격리된 메모리 저장소·동적 loopback 포트와 배포 start.cmd와 동일한 Development 환경에서 LLM과 개발용 생성 스텁을 끄고, 외부 페이지 요청과 생성 요청을 차단합니다. 배포 HTML/JS/CSS/Mermaid 파일의 SHA-256 일치와 4개 종류 × 4개 화면 폭의 모든 샘플을 확인합니다. 단계별 결과·파일 해시·스크린샷·서버 로그는 `artifacts/offline-preview-*/`에 저장합니다. 기존 운영 서버·저장 데이터·LLM 설정은 변경하지 않습니다.

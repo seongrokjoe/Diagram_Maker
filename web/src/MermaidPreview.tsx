@@ -1,13 +1,14 @@
-import { useEffect, useId, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type { DiagramArtifact } from "./types";
-import { clampZoom, steppedZoom, zoomPresets, renderAlias as alias, renderElementMap, zoomScrollDelta, isZoomWheel } from "./diagramInteraction";
+import { clampZoom, steppedZoom, zoomPresets, renderAlias as alias, renderElementMap, zoomScrollDelta, isZoomWheel,
+  canStartCanvasPan, memberSelectionId, type ElementSelection } from "./diagramInteraction";
 import { maximumMermaidCharacters, mermaidSafetyError } from "./mermaidSafety";
 import { prepareMermaidDisplay } from "./mermaidDisplay";
 import { sanitizeSvg } from "./svgSafety";
 import { fitZoom } from "./diagramViewSettings";
 import { prepareSequenceLayout } from "./sequenceLayout";
 
-export type DiagramSelection = { kind: "node" | "edge"; id: string };
+export type DiagramSelection = ElementSelection;
 export type DiagramInlineEdit = DiagramSelection & { value: string };
 
 type MermaidApi = {
@@ -71,6 +72,7 @@ type MermaidPreviewProps = {
   compact?: boolean;
   zoomable?: boolean;
   interactive?: boolean;
+  editMode?: boolean;
   selected?: DiagramSelection[];
   inlineEdit?: DiagramInlineEdit | null;
   onSelect?: (selection: DiagramSelection | null, additive: boolean) => void;
@@ -84,7 +86,7 @@ type MermaidPreviewProps = {
 
 export function MermaidPreview({ source, artifact, downloadName = "diagram", editable = false, compact = false,
   zoomable = false, interactive = false, selected = emptySelections, inlineEdit, onSelect, onEditRequest, onInlineEditChange,
-  onInlineEditCommit, onInlineEditCancel, onInteractionReady, onSaveRevision, toolbarContent, fitLabel = "맞춤 보기" }: MermaidPreviewProps) {
+  onInlineEditCommit, onInlineEditCancel, onInteractionReady, onSaveRevision, toolbarContent, fitLabel = "맞춤 보기", editMode = false }: MermaidPreviewProps) {
   const id = useId().replace(/[^A-Za-z0-9_-]/g, character => `_${character.codePointAt(0)!.toString(16)}_`);
   const canvasRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState(source);
@@ -96,8 +98,17 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
   const [fitting, setFitting] = useState(true);
   const [baseSize, setBaseSize] = useState({ width: 800, height: 500 });
   const [editAnchor, setEditAnchor] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  const [panning, setPanning] = useState(false);
+  // Selection and drag state must not replace the clicked SVG DOM between the
+  // second click and the browser's dblclick event.
+  const svgMarkup = useMemo(() => ({ __html: svg }), [svg]);
+  const pan = useRef<{ pointerId: number; x: number; y: number; left: number; top: number; dragged: boolean } | null>(null);
+  const spaceHeld = useRef(false);
+  const suppressClick = useRef(false);
   const interactionReady = useRef(onInteractionReady);
+  const mappingComplete = useRef(false);
   interactionReady.current = onInteractionReady;
+  useEffect(() => { interactionReady.current?.(interactive && mappingComplete.current); }, [interactive, svg]);
 
   useEffect(() => setDraft(source), [source]);
   useEffect(() => {
@@ -108,6 +119,19 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
     return () => canvas.removeEventListener("wheel", handle);
   }, [zoom, zoomable, compact, svg]);
   useEffect(() => { setZoom(1); setFitting(true); setEditAnchor(null); }, [artifact?.id]);
+  useEffect(() => {
+    const keyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.code !== "Space" || !editMode || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) return;
+      spaceHeld.current = true;
+      event.preventDefault();
+    };
+    const keyUp = (event: globalThis.KeyboardEvent) => { if (event.code === "Space") spaceHeld.current = false; };
+    const blur = () => { spaceHeld.current = false; };
+    window.addEventListener("keydown", keyDown);
+    window.addEventListener("keyup", keyUp);
+    window.addEventListener("blur", blur);
+    return () => { window.removeEventListener("keydown", keyDown); window.removeEventListener("keyup", keyUp); window.removeEventListener("blur", blur); };
+  }, [editMode]);
   useEffect(() => {
     canvasRef.current?.querySelectorAll("[data-ir-id]").forEach(element => {
       element.classList.toggle("ir-selected", selected.some(item => item.id === element.getAttribute("data-ir-id") && item.kind === element.getAttribute("data-ir-kind")));
@@ -146,6 +170,7 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
         .then((result) => {
           if (!active) return;
           const decorated = decorateSvg(sanitizeSvg(result.svg, display.marker), artifact, []);
+          mappingComplete.current = decorated.mappingComplete;
           setSvg(decorated.svg);
           setBaseSize(fittedSvgSize(decorated.svg, canvasRef.current, compact));
           interactionReady.current?.(interactive && decorated.mappingComplete);
@@ -158,20 +183,58 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
         .finally(() => { if (active) setRendering(false); });
     }, editable ? 350 : 0);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [artifact?.id, artifact?.version, draft, editable, id, interactive, source]);
+  }, [artifact?.id, artifact?.version, draft, editable, id, source]);
 
   function selectionFromTarget(target: EventTarget | null): { selection: DiagramSelection; element: Element } | null {
     const element = target instanceof Element ? target.closest("[data-ir-id]") : null;
     if (!element || !canvasRef.current?.contains(element)) return null;
     const kind = element.getAttribute("data-ir-kind");
     const itemId = element.getAttribute("data-ir-id");
-    return (kind === "node" || kind === "edge") && itemId ? { selection: { kind, id: itemId }, element } : null;
+    return (kind === "node" || kind === "edge" || kind === "member" || kind === "annotation") && itemId
+      ? { selection: { kind, id: itemId }, element } : null;
   }
 
   function selectRenderedElement(event: MouseEvent<HTMLDivElement>) {
+    if (suppressClick.current) { suppressClick.current = false; event.preventDefault(); return; }
     if (!interactive || !onSelect) return;
     const matched = selectionFromTarget(event.target);
     onSelect(matched?.selection ?? null, event.shiftKey);
+  }
+
+  function beginPan(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+    const rendered = event.target instanceof Element ? event.target.closest("[data-ir-id]") : null;
+    if (!canStartCanvasPan({ zoomable, compact, editMode, spaceHeld: spaceHeld.current,
+      overDiagramElement: Boolean(rendered), button: event.button })) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    pan.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY,
+      left: canvas.scrollLeft, top: canvas.scrollTop, dragged: false };
+    canvas.setPointerCapture(event.pointerId);
+  }
+
+  function movePan(event: ReactPointerEvent<HTMLDivElement>) {
+    const start = pan.current;
+    const canvas = canvasRef.current;
+    if (!start || !canvas || start.pointerId !== event.pointerId) return;
+    const x = event.clientX - start.x;
+    const y = event.clientY - start.y;
+    if (!start.dragged && Math.hypot(x, y) < 3) return;
+    start.dragged = true;
+    setPanning(true);
+    canvas.scrollLeft = start.left - x;
+    canvas.scrollTop = start.top - y;
+    event.preventDefault();
+  }
+
+  function endPan(event: ReactPointerEvent<HTMLDivElement>) {
+    const start = pan.current;
+    const canvas = canvasRef.current;
+    if (!start || start.pointerId !== event.pointerId) return;
+    suppressClick.current = start.dragged;
+    pan.current = null;
+    setPanning(false);
+    if (canvas?.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
   }
 
   function editRenderedElement(event: MouseEvent<HTMLDivElement>) {
@@ -252,13 +315,14 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
     {editable && <label className="mermaid-editor-label">Mermaid DSL 편집<textarea className="mermaid-editor" rows={12} value={draft} spellCheck={false} onChange={(event) => setDraft(event.target.value)} /></label>}
     {rendering && !svg && <div className="empty-state"><p>Mermaid 렌더러를 불러오는 중…</p></div>}
     {error && <div className={`error-panel ${compact ? "compact-error" : ""}`} role="alert">{error}</div>}
-    <div ref={canvasRef} className={`diagram-canvas ${compact ? "compact" : ""} ${interactive ? "interactive" : ""} ${zoomable ? "zoomable" : ""}`}
-      aria-label="생성된 다이어그램" title={zoomable && !compact ? "Ctrl + 마우스 휠: 확대·축소 · 마우스 휠: 스크롤" : undefined}
+    <div ref={canvasRef} aria-busy={rendering} className={`diagram-canvas ${compact ? "compact" : ""} ${interactive ? "interactive" : ""} ${zoomable ? "zoomable pannable" : ""} ${editMode ? "edit-mode" : "view-mode"} ${panning ? "panning" : ""}`}
+      aria-label="생성된 다이어그램" title={zoomable && !compact ? editMode ? "빈 공간 드래그 또는 Space + 드래그: 이동 · Ctrl + 휠: 확대·축소" : "좌클릭 드래그: 이동 · Ctrl + 휠: 확대·축소" : undefined}
+      onPointerDown={beginPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan}
       onClick={selectRenderedElement} onDoubleClick={editRenderedElement}>
       <div className="diagram-zoom-layer" style={compact ? undefined : { width: baseSize.width * zoom, height: baseSize.height * zoom } as CSSProperties}>
         <div className="diagram-transform-layer" style={compact ? { width: baseSize.width, height: baseSize.height } : {
           width: baseSize.width, height: baseSize.height, transform: `scale(${zoom})`, transformOrigin: "top left",
-        } as CSSProperties} dangerouslySetInnerHTML={{ __html: svg }} />
+        } as CSSProperties} dangerouslySetInnerHTML={svgMarkup} />
       </div>
       {inlineEdit && editAnchor && <div className={`diagram-inline-editor ${inlineEdit.kind}`} style={editAnchor}
         onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
@@ -268,7 +332,7 @@ export function MermaidPreview({ source, artifact, downloadName = "diagram", edi
               if (event.key === "Escape") { event.preventDefault(); onInlineEditCancel?.(); }
               else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); onInlineEditCommit?.(); }
             }} />
-          : <input autoFocus maxLength={240} value={inlineEdit.value} onChange={(event) => onInlineEditChange?.(event.target.value)}
+          : <input autoFocus maxLength={inlineEdit.kind === "member" ? 500 : inlineEdit.kind === "annotation" ? 1000 : 240} value={inlineEdit.value} onChange={(event) => onInlineEditChange?.(event.target.value)}
             onBlur={() => onInlineEditCommit?.()} onKeyDown={(event) => {
               if (event.key === "Escape") { event.preventDefault(); onInlineEditCancel?.(); }
               else if (event.key === "Enter") { event.preventDefault(); onInlineEditCommit?.(); }
@@ -296,6 +360,7 @@ function decorateSvg(svg: string, artifact: DiagramArtifact | undefined, selecte
     if (candidates.length === 0) continue;
     candidates.forEach((element) => tag(element, "node", node.id, selected, node.changeMarker));
     candidates.forEach((element) => used.add(element));
+    tagClassMembers(candidates, node.id, node.details ?? [], selected);
     mappedNodes++;
   }
 
@@ -324,6 +389,8 @@ function decorateSvg(svg: string, artifact: DiagramArtifact | undefined, selecte
     if (candidates.length === 0) continue;
     candidates.forEach((element) => tag(element, "edge", edge.id, selected, edge.changeMarker));
   }
+
+  tagSequenceAnnotations(root, artifact.ir.sequenceBlocks ?? [], selected);
 
   if (artifact.ir.nodes.some((node) => node.changeMarker) || artifact.ir.edges.some((edge) => edge.changeMarker)) {
     appendLegend(document, root);
@@ -379,7 +446,7 @@ function fittedSvgSize(svg: string, canvas: HTMLDivElement | null, compact: bool
   return { width: naturalWidth * (compact ? fit : 1), height: naturalHeight * (compact ? fit : 1) };
 }
 
-function tag(element: Element, kind: "node" | "edge", id: string, selected: DiagramSelection[], marker?: DiagramArtifact["ir"]["nodes"][number]["changeMarker"]) {
+function tag(element: Element, kind: DiagramSelection["kind"], id: string, selected: DiagramSelection[], marker?: DiagramArtifact["ir"]["nodes"][number]["changeMarker"]) {
   element.setAttribute("data-ir-kind", kind);
   element.setAttribute("data-ir-id", id);
   element.setAttribute("tabindex", "0");
@@ -390,6 +457,47 @@ function tag(element: Element, kind: "node" | "edge", id: string, selected: Diag
     element.setAttribute("style", `${element.getAttribute("style") ?? ""};filter:drop-shadow(0 0 5px #2563eb);`);
   }
 }
+
+function tagClassMembers(candidates: Element[], nodeId: string, details: string[], selected: DiagramSelection[]) {
+  if (details.length === 0) return;
+  const groups = [...new Set(candidates.map(element => element.closest("g.node, g.classGroup") ?? element)
+    .filter(element => element.matches("g.node, g.classGroup")))];
+  if (groups.length !== 1) return;
+  // Mermaid separates attributes and methods, preserving emission order inside
+  // each compartment. Keep the original member indices when it reorders them.
+  for (const [selector, method] of [[".members-group > g.label", false], [".methods-group > g.label", true]] as const) {
+    const indices = details.flatMap((detail, index) => (detail.indexOf(")") > 0) === method ? [index] : []);
+    const labels = [...groups[0].querySelectorAll(selector)];
+    if (labels.length !== indices.length) continue;
+    labels.forEach((element, index) => tag(element, "member", memberSelectionId(nodeId, indices[index]), selected));
+  }
+}
+
+function tagSequenceAnnotations(root: Element, blocks: NonNullable<DiagramArtifact["ir"]["sequenceBlocks"]>, selected: DiagramSelection[]) {
+  const annotations = sequenceAnnotations(blocks);
+  if (annotations.length === 0) return;
+  const candidates = [...new Set([...root.querySelectorAll("text.loopText, text.noteText, text.labelText, g.note text, text[class*='loop'], text[class*='note']")]
+    .map(element => element.closest("text") ?? element))];
+  let cursor = 0;
+  for (const annotation of annotations) {
+    const expected = normalizeRenderedText(annotation.label);
+    const offset = candidates.slice(cursor).findIndex(element => normalizeRenderedText(element.textContent ?? "").includes(expected));
+    if (offset < 0) continue;
+    const index = cursor + offset;
+    tag(candidates[index], "annotation", annotation.id, selected);
+    cursor = index + 1;
+  }
+}
+
+function sequenceAnnotations(blocks: NonNullable<DiagramArtifact["ir"]["sequenceBlocks"]>): Array<{ id: string; label: string }> {
+  return blocks.flatMap(block => [
+    ...(block.kind === "alt" || block.kind === "loop" || block.kind === "break" || block.kind === "opt" || block.kind === "note" || block.kind === "scenario"
+      ? [{ id: block.id, label: block.label }] : []),
+    ...sequenceAnnotations(block.children),
+  ]);
+}
+
+function normalizeRenderedText(value: string) { return value.replace(/\s+/g, " ").trim(); }
 
 function applyMarkerStyle(element: Element, kind: "Added" | "Modified" | "Deleted") {
   const colors = markerColors(kind);

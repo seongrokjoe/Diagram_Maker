@@ -97,6 +97,30 @@ public sealed class NaturalDesignTests
     public void RemovesHarmlessInlineFormattingWithoutRemovingCodeOrConditions() =>
         Assert.Equal("List<T> 값을 검사하고 x < 0 조건을 유지합니다", SharedSemanticValidation.PlainText("`List<T>` 값을 **검사**하고 `x < 0` 조건을 유지합니다"));
 
+    [Fact]
+    public void RequirementEvidenceUsesExactUtf16RangesAndAssignsEveryRequirementOnce()
+    {
+        const string prompt = "사용자가 🙂 요청을 시작한다.\r\n\r\n관리자는 요청을 승인한다.";
+        var source = new NaturalRequirements("승인", ["사용자", "관리자"],
+        [
+            new("r1", "요청 시작", "action", "explicit", "사용자가 🙂 요청을 시작한다."),
+            new("r2", "요청 승인", "action", "explicit", "관리자는 요청을 승인한다."),
+            new("r3", "감사 로그", "entity", "assumption", "")
+        ]);
+
+        var result = NaturalRequirementEvidence.Attach(prompt, source);
+
+        Assert.Equal(2, result.SourceRanges!.Count);
+        Assert.Equal(2, result.Scenarios!.Count);
+        Assert.All(result.SourceRanges, range => Assert.Equal(range.Text, prompt[range.StartOffset..range.EndOffset]));
+        Assert.Equal("사용자가 🙂 요청을 시작한다.", result.SourceRanges[0].Text);
+        Assert.Equal("관리자는 요청을 승인한다.", result.SourceRanges[1].Text);
+        Assert.Equal(result.Requirements.Count,
+            result.Scenarios.SelectMany(scenario => scenario.RequirementIds).Distinct(StringComparer.Ordinal).Count());
+        Assert.All(result.Requirements, requirement => Assert.False(string.IsNullOrWhiteSpace(requirement.ScenarioId)));
+        Assert.Null(result.Requirements.Single(requirement => requirement.Id == "r3").SourceRangeId);
+    }
+
     private static InternalLlmClient Client(Model model) => new(Options.Create(new LlmOptions { Enabled = true }), new(), new(), model, new(model));
     private sealed class Model : ILlmCompletionTransport
     {

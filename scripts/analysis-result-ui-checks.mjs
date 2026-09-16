@@ -105,7 +105,7 @@ export async function checkAnalysisResultUi({ page, origin, run, status }) {
     await page.locator('.code-block-explanation > summary').click();
     await evidence.locator('summary').click();
     assert.equal(await evidence.getByRole('searchbox').inputValue(), '');
-    await groups.locator('[data-row-id^="view:ui-failed-group/"][data-row-id$=":failure"]').first().click();
+    await groups.locator('[data-row-id^="view:ui-failed-group/"][data-row-id$=":ai-status"]').first().click();
     await page.getByText('합성 검사: 생성 실패', { exact: true }).first().waitFor();
     assert.equal(await page.locator('.diagram-result .structured-diagram-editor').count(), 0);
     assert.ok((await groups.locator('[aria-selected="true"]').getAttribute('data-row-id')).startsWith('view:ui-failed-group/'));

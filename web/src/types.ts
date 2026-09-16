@@ -141,6 +141,8 @@ export type CodeContext = {
 
 export type DiagramExplanation = {
   coverage?: { totalUnits: number; verifiedUnits: number; pendingUnits: number; failedUnits: number } | null;
+  failures?: Array<{ itemIds: string[]; stage: string; code: string; factIds: string[]; correctionInstructions: string[];
+    fields?: string[]; issueCodes?: string[]; category?: string }> | null;
   behaviors?: Array<{ id: string; summary: string; factIds: string[]; nodeIds: string[]; edgeIds: string[] }> | null;
   summary: string;
   changes: Array<{ changeId: string; summary: string; factIds: string[]; nodeIds: string[]; edgeIds: string[] }>;
@@ -183,7 +185,10 @@ export type NaturalDiagramRecord = {
   reused: boolean;
   views?: NaturalDiagramViewResult[];
   revision: number;
-  requirements?: { title: string; entities: string[]; requirements: Array<{ id: string; text: string; kind: string; origin: string; sourceQuote: string }> };
+  requirements?: { title: string; entities: string[]; requirements: Array<{ id: string; text: string; kind: string; origin: string; sourceQuote: string;
+      sourceRangeId?: string; scenarioId?: string }>;
+    sourceRanges?: Array<{ id: string; startOffset: number; endOffset: number; text: string }>;
+    scenarios?: Array<{ id: string; title: string; requirementIds: string[]; sourceRangeIds: string[] }> };
 };
 
 export type NaturalDiagramViewResult = {
@@ -196,6 +201,40 @@ export type NaturalDiagramViewResult = {
   lastSuccessfulDiagram?: DiagramArtifact;
   reused: boolean;
   designQuality?: { protocol: string; status: string; reviewedRequirementIds: string[]; assumptionElementIds: string[]; repairUsed: boolean };
+  pages?: NaturalDiagramPageResult[];
+};
+
+export type NaturalDiagramPageResult = {
+  id: string;
+  scenarioId: string;
+  title: string;
+  diagram?: DiagramArtifact;
+  state: string;
+  errorCode?: string;
+  errorMessage?: string;
+  lastSuccessfulDiagram?: DiagramArtifact;
+  reused: boolean;
+  designQuality?: NaturalDiagramViewResult["designQuality"];
+};
+
+export type NaturalDiagramRun = {
+  id: string;
+  ownerUserId: string;
+  request: NaturalDiagramRecord["request"];
+  state: "Queued" | "Generating" | "Completed" | "Partial" | "Failed" | "Cancelled";
+  createdAt: string;
+  updatedAt: string;
+  revision: number;
+  progress: number;
+  stageMessage: string;
+  sourceDiagramId?: string;
+  regenerateViewIds?: string[];
+  regeneratePageIds?: string[];
+  requirements?: NaturalDiagramRecord["requirements"];
+  views?: NaturalDiagramViewResult[];
+  resultDiagramId?: string;
+  errorCode?: string;
+  errorMessage?: string;
 };
 
 export type LlmConnectionTestResult = {
@@ -358,13 +397,15 @@ export type AnalysisDiagramView = {
     attempts?: number;
     warnings: string[];
   };
+  failureStage?: string;
 };
 
 export type DiagramEditDocument = {
   title: string;
   direction?: "LR" | "TB";
-  nodes: Array<{ id: string; label: string }>;
+  nodes: Array<{ id: string; label: string; details?: string[] }>;
   edges: Array<{ id: string; sourceId: string; targetId: string; label: string; type?: string }>;
+  sequenceAnnotations?: Array<{ id: string; kind: "alt" | "loop" | "break" | "opt" | "note" | "scenario"; label: string }>;
 };
 
 export type DiagramRevisionRecord = {

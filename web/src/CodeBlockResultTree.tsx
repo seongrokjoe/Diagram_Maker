@@ -32,20 +32,23 @@ export function CodeBlockResultTree({ run, active, showStatic, onSelect, query =
       if (!query.trim() && closed.includes(id)) continue;
       for (const kind of ["ai", ...(showStatic ? ["code"] : [])] as DiagramVariant[]) {
         const pages = v.pages.filter(p => matchesDiagramName(p.title, query) && (kind === "ai" ? isSemanticPage(v, p) : Boolean(p.codeArtifactId) || !isSemanticPage(v, p)));
-        if (!pages.length) continue;
+        const showAiStatus = kind === "ai" && v.state !== "Completed";
+        if (!pages.length && !showAiStatus) continue;
         const category = `${id}:${kind}`;
         rows.push({ id: category, parent: id, label: kind === "ai" ? "AI 다이어그램" : "Code 다이어그램", level: 3, branch: true });
         if (!query.trim() && closed.includes(category)) continue;
         for (const p of pages) rows.push({
           id: `${id}:${p.id}:${kind}`, parent: category, level: 4, kind,
-          label: baseDiagramName(p.title),
+          label: `${baseDiagramName(p.title)}${kind === "ai" && p.aiState === "Partial" ? " · 부분 완료" : ""}`,
           active: active?.group === g.groupId && active.view === v.viewId && active.page === p.id && (active.variant ?? (isSemanticPage(v, p) ? "ai" : "code")) === kind,
           location: { group: g.groupId, view: v.viewId, page: p.id, variant: kind }
         });
+        if (showAiStatus) rows.push({ id: `${id}:ai-status`, parent: category, level: 4,
+          label: v.reused && v.pages.some(p => isSemanticPage(v, p)) ? "최신 생성 실패 · 이전 AI 유지" :
+            pages.some(p => p.aiState === "Partial") ? "검증된 설명은 유지 · 나머지 AI 실패" : "AI 생성 미완료",
+          status: true, active: active?.group === g.groupId && active.view === v.viewId && active.page === "",
+          location: { group: g.groupId, view: v.viewId, page: "", variant: "ai" } });
       }
-      if (v.state !== "Completed") rows.push({ id: `${id}:failure`, parent: id, level: 3,
-        label: v.reused && v.pages.some(p => isSemanticPage(v, p)) ? "최신 생성 실패 · 이전 AI 유지" : "AI 생성 미완료", status: true,
-        active: active?.group === g.groupId && active.view === v.viewId && active.page === "", location: { group: g.groupId, view: v.viewId, page: "" } });
     }
   }
   const tabId = rows.some(r => r.id === focusId) ? focusId : rows.find(r => r.active)?.id ?? rows[0]?.id;

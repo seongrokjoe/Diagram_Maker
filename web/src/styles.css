@@ -75,6 +75,7 @@ textarea { resize: vertical; line-height: 1.55; }
 .connection-card strong { color: #176b43; }
 .connection-card code, .repository-list code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .connection-card small { color: #607d6d; }
+.natural-run-status progress { width: 100%; }
 .help { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .commit-picker { display: grid; min-width: 0; gap: 8px; margin: 0; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: #f8fafc; }
 .commit-picker:disabled { opacity: .65; }
@@ -131,7 +132,9 @@ textarea { resize: vertical; line-height: 1.55; }
 .node-evidence-row .evidence-browser { flex-basis: 100%; margin: 0; }
 .diagram-canvas text, .diagram-canvas .edgeLabel { font-weight: 400; }
 .zoom-button { min-width: 34px; padding-inline: 8px; font-size: 17px; }
-.diagram-canvas.zoomable { overscroll-behavior: contain; }
+.diagram-canvas.zoomable { overscroll-behavior: contain; max-height: 75vh; }
+.diagram-canvas.pannable { cursor: grab; touch-action: none; }
+.diagram-canvas.panning, .diagram-canvas.panning [data-ir-id] { cursor: grabbing; user-select: none; }
 .zoom-status { align-self: center; min-width: 48px; color: #526981; font-size: 11px; font-weight: 800; text-align: center; }
 .diagram-inline-editor { position: absolute; z-index: 5; min-width: 180px; padding: 4px; border: 2px solid #2563eb; border-radius: 4px; background: rgba(255, 255, 255, .97); box-shadow: 0 7px 20px rgba(24, 55, 91, .22); }
 .diagram-inline-editor input, .diagram-inline-editor textarea { height: 100%; min-height: 30px; padding: 7px 8px; resize: both; background: white; }
@@ -294,6 +297,7 @@ pre { overflow: auto; max-height: 260px; padding: 14px; background: #101c2d; col
 .direct-edit-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 10px 0; padding: 10px; border: 1px solid #c9d8e8; background: #f4f8fc; color: #536b84; font-size: 11px; }
 .direct-edit-toolbar span { flex: 1; min-width: 260px; }
 .diagram-canvas.interactive [data-ir-id] { cursor: pointer; }
+.diagram-canvas.interactive.panning [data-ir-id] { cursor: grabbing; }
 .history-picker { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; margin: 8px 0; }
 .history-picker select { margin: 0; }
 .structure-editor-panel { display: grid; gap: 12px; margin-top: 14px; padding: 16px; border: 1px solid #bdcde0; background: #f8fbff; }
@@ -307,6 +311,9 @@ pre { overflow: auto; max-height: 260px; padding: 14px; background: #101c2d; col
 .edit-row input, .edit-row select, .edit-row textarea { padding: 7px 8px; }
 .edit-row textarea { min-height: 50px; resize: vertical; }
 .edge-edit-row { grid-template-columns: minmax(120px, 1fr) auto minmax(120px, 1fr) minmax(140px, 1fr) auto auto auto; }
+.class-member-group { display: grid; gap: 6px; padding: 8px; border: 1px solid #d7e1eb; background: #f8fbff; }
+.member-edit-row { grid-template-columns: minmax(180px, 1fr) auto; }
+.annotation-edit-row { grid-template-columns: auto minmax(180px, 1fr); }
 .text-button.danger { color: #a3332c; }
 .analysis-output { min-height: 420px; }
 .analysis-output > .secondary { margin-top: 20px; }
@@ -594,3 +601,6 @@ body:has(main > div:not([hidden]) > .code-block-workspace, main > .llm-test-layo
   .diagram-comparison, .diagnostic-layout { grid-template-columns: minmax(0, 1fr); }
   .structure-editor-section .edge-edit-row { display: flex; flex-wrap: wrap; }
 }
+
+.remove-output-button { justify-self: start; align-self: center; width: max-content; max-width: 100%; color: #a3332c; border: 1px solid #d89b97; background: #fff5f4; padding: 8px 12px; }
+.error-panel > button { margin-left: 12px; }

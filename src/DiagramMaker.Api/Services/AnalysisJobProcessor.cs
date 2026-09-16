@@ -438,6 +438,7 @@ public sealed class AnalysisJobProcessor(
                     var artifact = projected.Artifacts.FirstOrDefault();
                     var viewWarnings = new List<string>();
                     var llmStatus = llm.IsEnabled ? "Semantic" : "Disabled";
+                    string? failureStage = null;
 
                     if (artifact is not null)
                     {
@@ -474,17 +475,22 @@ public sealed class AnalysisJobProcessor(
                                         pageStatus = generated.Status;
                                         explanation = generated.Explanation;
                                         pageWarnings.AddRange(generated.Warnings);
-                                        if (generated.Status != "Semantic") llmStatus = "Deterministic";
+                                        if (generated.Status != "Semantic")
+                                        {
+                                            llmStatus = "Incomplete";
+                                            failureStage ??= generated.FailureStage ?? "semantic-review";
+                                        }
                                         viewWarnings.AddRange(generated.Warnings);
                                         instructionResults.AddRange(generated.InstructionResults);
                                         attempts += generated.Attempts;
                                     }
-                                    else { llmStatus = "Deterministic"; pageWarnings.Add("LLM 설계 결과가 없어 정적 결과를 표시합니다."); }
+                                    else { llmStatus = "Incomplete"; failureStage ??= "llm-request"; pageWarnings.Add("LLM 설계 결과가 없어 정적 결과를 표시합니다."); }
                                 }
                                 catch (Exception exception) when (exception is not OperationCanceledException)
                                 {
                                     logger.LogWarning("Diagram planning failed for view {ViewId}, page {PageId}", view.Id, page.Id);
-                                    llmStatus = "Deterministic";
+                                    llmStatus = "Incomplete";
+                                    failureStage ??= "llm-request";
                                     pageWarnings.Add(LlmFailure.Describe(exception));
                                 }
                             }
@@ -510,6 +516,19 @@ public sealed class AnalysisJobProcessor(
                         if (document.Coverage.Any(item => item.State is "Partial" or "Unavailable"))
                             viewWarnings.Add("일부 선택 변경은 이 유형에서 표현되지 않았습니다. 변경 커버리지를 확인하세요.");
                         viewWarnings.AddRange(bundle.Warnings);
+                        if (llm.IsEnabled && llmStatus != "Semantic" && sourceView?.Document is { Pages.Count: > 0 } oldDocument &&
+                            oldDocument.Pages.All(page => page.Diagram.Explanation?.Status == "Semantic") &&
+                            sourceView.Selection == view && sourceView.GenerationMetadata?.BundleHash == bundle.Hash &&
+                            sourceView.GenerationMetadata?.PromptVersion == (useShared ? SharedSemanticProjection.Version : InternalLlmClient.SemanticPromptVersion))
+                        {
+                            var retained = sourceView with { State = "Partial", Reused = true,
+                                ErrorMessage = "최신 생성의 의미 검토를 완료하지 못해 이전 성공 결과를 유지합니다.",
+                                Warnings = sourceView.Warnings.Concat(viewWarnings).Distinct().ToArray(), FailureStage = failureStage };
+                            viewResults.Add(retained);
+                            artifacts.Add(retained.Diagram!);
+                            groupWarnings.AddRange(viewWarnings);
+                            continue;
+                        }
                         var compiledArtifact = pages.First(page => page.Id == document.OverviewPageId).Diagram;
                         artifacts.Add(compiledArtifact);
                         var metadata = BuildGenerationMetadata(group, view, graph, llmStatus, viewWarnings) with
@@ -518,8 +537,10 @@ public sealed class AnalysisJobProcessor(
                             PromptVersion = useShared ? SharedSemanticProjection.Version : InternalLlmClient.SemanticPromptVersion, EffectiveOptions = effectiveOptions,
                             InstructionResults = instructionResults.Distinct().ToArray(), Attempts = attempts
                         };
+                        var viewState = llm.IsEnabled && llmStatus != "Semantic" ? "Partial" : "Completed";
                         viewResults.Add(new AnalysisDiagramViewResult(view.Id, view, compiledArtifact, viewWarnings,
-                            "Completed", GenerationMetadata: metadata, Document: document));
+                            viewState, ErrorMessage: viewState == "Partial" ? viewWarnings.LastOrDefault() : null,
+                            GenerationMetadata: metadata, Document: document, FailureStage: failureStage));
                         groupWarnings.AddRange(viewWarnings);
                         continue;
                     }

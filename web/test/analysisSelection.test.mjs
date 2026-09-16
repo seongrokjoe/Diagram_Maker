@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assignChange, sidebarWidth } from '../src/analysisSelection.ts';
+import { assignChange, sidebarWidth, emptyGroupMemory, rememberGroups, restoreChange, forgetGroups } from '../src/analysisSelection.ts';
 import { steppedZoom } from '../src/diagramInteraction.ts';
 
 test('unchecking and moving the last Git change removes only the emptied group', () => {
@@ -24,4 +24,35 @@ test('sidebar preserves usable diagram space and bounds invalid preferences', ()
   assert.equal(sidebarWidth(500, 752), 400);
   assert.equal(sidebarWidth(NaN, 1200), 280);
   assert.equal(sidebarWidth(-1, 1200), 220);
+});
+
+test('reselecting restores the removed group and its settings without selecting its unchecked siblings', () => {
+  const original = [
+    { id: 'a', title: '앞 그룹', changeIds: ['one'] },
+    { id: 'b', title: '복원할 그룹', changeIds: ['two', 'three'], views: [{ id: 'v', presetId: 'detailed', diagramType: 'sequence' }] },
+    { id: 'c', title: '뒤 그룹', changeIds: ['four'] },
+  ];
+  let memory = rememberGroups(emptyGroupMemory(), original);
+  let groups = assignChange(assignChange(original, 'two'), 'three');
+  memory = rememberGroups(memory, groups);
+  groups = restoreChange(groups, 'three', JSON.parse(JSON.stringify(memory)), { id: 'unused', changeIds: [] });
+  assert.deepEqual(groups.map(g => g.id), ['a', 'b', 'c']);
+  assert.deepEqual(groups[1], { ...original[1], changeIds: ['three'] });
+  groups = restoreChange(groups, 'two', memory, { id: 'unused', changeIds: [] });
+  assert.deepEqual(groups[1].changeIds, ['three', 'two']);
+});
+
+test('explicit moves, merges and deletes determine the next restore target', () => {
+  let groups = [{ id: 'a', changeIds: ['one', 'two'] }, { id: 'b', changeIds: ['three'] }];
+  let memory = rememberGroups(emptyGroupMemory(), groups);
+  groups = assignChange(groups, 'one', 'b');
+  memory = rememberGroups(memory, groups);
+  groups = assignChange(groups, 'one');
+  assert.deepEqual(restoreChange(groups, 'one', memory, { id: 'unused', changeIds: [] })[1].changeIds, ['three', 'one']);
+  memory = forgetGroups(memory, ['b'], 'a');
+  assert.equal(memory.assignments.one, 'a');
+  assert.equal(memory.groups.b, undefined);
+  memory = forgetGroups(memory, ['a']);
+  assert.equal(memory.assignments.one, undefined);
+  assert.equal(restoreChange([], 'one', memory, { id: 'new', changeIds: [] })[0].id, 'new');
 });

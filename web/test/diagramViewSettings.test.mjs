@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { withViewDirection, fitZoom } from '../src/diagramViewSettings.ts';
-import { diagramName, matchesDiagramName, originOfPage } from '../src/diagramOrigin.ts';
+import { diagramName, matchesDiagramName, originOfPage, resultCountsText } from '../src/diagramOrigin.ts';
 import { mermaidSafetyError, maximumMermaidCharacters } from '../src/mermaidSafety.ts';
 
 test('view directions preserve diagram labels and sequence time order', () => {
@@ -31,4 +31,11 @@ test('compact page metadata preserves AI origin when explanation bodies are omit
   assert.equal(originOfPage({ diagram, resultKind: 'static' }), 'code');
   assert.equal(originOfPage({ diagram: { ...diagram, explanation: { status: 'Semantic' } } }), 'ai');
   assert.equal(originOfPage({ diagram }), 'code');
+});
+
+test('partially reviewed AI remains an AI result and is counted separately', () => {
+  const diagram = { ir: { provenance: [] }, explanation: { status: 'Incomplete', coverage: { verifiedUnits: 2 } } };
+  assert.equal(originOfPage({ diagram }), 'ai');
+  assert.match(resultCountsText({ aiCompleted: 1, aiPartial: 2, aiFailed: 3, aiPending: 4, codeCompleted: 5 }),
+    /AI 완료 1개 · AI 부분 2개 · AI 실패 3개/);
 });

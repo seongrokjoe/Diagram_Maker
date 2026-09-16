@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 
 export async function checkZoomWheel(page, editor) {
+  await editor.and(page.locator('[aria-busy="false"]')).waitFor();
   const canvas = editor.locator('.diagram-canvas');
   await canvas.locator('svg').waitFor();
+  await editor.locator('.diagram-canvas[aria-busy="false"]').waitFor();
   const originalViewport = await page.evaluate(() => innerWidth);
   await editor.getByLabel('원본 기준 확대', { exact: true }).selectOption('1');
   await canvas.hover();

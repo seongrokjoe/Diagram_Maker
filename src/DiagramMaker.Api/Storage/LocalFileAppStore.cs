@@ -17,6 +17,7 @@ public sealed partial class LocalFileAppStore(string filePath) : IAppStore
     private readonly string _analysisDirectory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(filePath))!, "analysis-jobs");
     private readonly string _planDirectory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(filePath))!, "analysis-plans");
     private readonly string _diagramRevisionDirectory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(filePath))!, "diagram-revisions");
+    private readonly string _naturalRunDirectory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(filePath))!, "natural-runs");
 
     public async Task InitializeAsync(CancellationToken cancellationToken)
     {
@@ -44,6 +45,7 @@ public sealed partial class LocalFileAppStore(string filePath) : IAppStore
                 await _inner.SaveAnalysisAsync(Deserialize<AnalysisJob>(json), cancellationToken), cancellationToken);
             await LoadRecordsAsync(_planDirectory, async json =>
                 await _inner.SaveAnalysisPlanAsync(Deserialize<AnalysisPlan>(json), cancellationToken), cancellationToken);
+            await InitializeNaturalRunsAsync(cancellationToken);
             await InitializeCodeBlocksAsync(cancellationToken);
             await LoadRecordsAsync(_diagramRevisionDirectory, async json =>
             {
@@ -151,6 +153,7 @@ public sealed partial class LocalFileAppStore(string filePath) : IAppStore
         _fileLock.Dispose();
         _codeFileGate.Dispose();
         _analysisFileGate.Dispose();
+        _naturalRunFileGate.Dispose();
     }
 
     private async Task PersistRepositoriesAsync(CancellationToken cancellationToken)

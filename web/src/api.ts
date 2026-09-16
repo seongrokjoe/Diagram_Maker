@@ -19,6 +19,7 @@ import type {
   LlmContractTestResult,
   LlmThinkingContractTestResult,
   NaturalDiagramRecord,
+  NaturalDiagramRun,
   Repository,
   RepositoryInspection,
 } from "./types";
@@ -74,7 +75,24 @@ export const api = {
     request<DiagramPreset[]>(`/api/v1/diagram-presets${type ? `?type=${type}` : ""}`),
 
   listNaturalDiagrams: (limit = 20) => request<NaturalDiagramRecord[]>(`/api/v1/natural-diagrams?limit=${limit}`),
+  getNaturalDiagram: (id: string) => request<NaturalDiagramRecord>(`/api/v1/natural-diagrams/${id}`),
   listNaturalDiagramRevisions: (id: string) => request<NaturalDiagramRecord[]>(`/api/v1/natural-diagrams/${id}/revisions`),
+  listNaturalDiagramRuns: (limit = 20) => request<NaturalDiagramRun[]>(`/api/v1/natural-diagram-runs?limit=${limit}`),
+  getNaturalDiagramRun: (id: string) => request<NaturalDiagramRun>(`/api/v1/natural-diagram-runs/${id}`),
+  createNaturalDiagramRun: (input: {
+    request: NaturalDiagramRecord["request"];
+    sourceDiagramId?: string;
+    regenerateViewIds?: string[];
+    regeneratePageIds?: string[];
+  }) => request<NaturalDiagramRun>("/api/v1/natural-diagram-runs", { method: "POST", body: JSON.stringify(input) }),
+  cancelNaturalDiagramRun: (id: string, expectedRevision: number) =>
+    request<NaturalDiagramRun>(`/api/v1/natural-diagram-runs/${id}/cancel`, {
+      method: "POST", body: JSON.stringify({ expectedRevision }),
+    }),
+  resumeNaturalDiagramRun: (id: string, expectedRevision: number) =>
+    request<NaturalDiagramRun>(`/api/v1/natural-diagram-runs/${id}/resume`, {
+      method: "POST", body: JSON.stringify({ expectedRevision }),
+    }),
   createNaturalDiagram: (input: {
     prompt: string;
     diagramType: DiagramType;
@@ -126,12 +144,12 @@ export const api = {
     request<DiagramRevisionRecord[]>(`/api/v1/diagram-artifacts/${rootArtifactId}/revisions`),
   saveNaturalDiagramEdit: (recordId: string, viewId: string, input: {
     rootArtifactId: string; parentRevisionId?: string; expectedVersion: number; document: DiagramEditDocument;
-  }) => request<DiagramRevisionRecord>(`/api/v1/natural-diagrams/${recordId}/views/${encodeURIComponent(viewId)}/edits`, {
+  }, pageId?: string) => request<DiagramRevisionRecord>(`/api/v1/natural-diagrams/${recordId}/views/${encodeURIComponent(viewId)}/edits${pageId ? `?pageId=${encodeURIComponent(pageId)}` : ""}`, {
     method: "POST", body: JSON.stringify(input),
   }),
   previewNaturalDiagramEdit: (recordId: string, viewId: string, input: {
     rootArtifactId: string; parentRevisionId?: string; expectedVersion: number; document: DiagramEditDocument;
-  }, signal?: AbortSignal) => request<DiagramEditPreview>(`/api/v1/natural-diagrams/${recordId}/views/${encodeURIComponent(viewId)}/edit-preview`, {
+  }, signal?: AbortSignal, pageId?: string) => request<DiagramEditPreview>(`/api/v1/natural-diagrams/${recordId}/views/${encodeURIComponent(viewId)}/edit-preview${pageId ? `?pageId=${encodeURIComponent(pageId)}` : ""}`, {
     method: "POST", body: JSON.stringify(input), signal,
   }),
   saveAnalysisDiagramEdit: (analysisId: string, groupId: string, viewId: string, input: {

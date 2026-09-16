@@ -1,12 +1,29 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clampZoom, deleteDiagramSelection, renderElementMap, zoomScrollDelta, isZoomWheel } from "../src/diagramInteraction.ts";
+import { canStartCanvasPan, clampZoom, deleteDiagramSelection, memberSelectionId, parseMemberSelectionId,
+  renderElementMap, zoomScrollDelta, isZoomWheel } from "../src/diagramInteraction.ts";
 
 test("ordinary scrolling never zooms; Ctrl and a vertical wheel delta are required", () => {
   assert.equal(isZoomWheel({ ctrlKey: false, deltaY: 100 }), false);
   assert.equal(isZoomWheel({ ctrlKey: true, deltaY: 0 }), false);
   assert.equal(isZoomWheel({ ctrlKey: true, deltaY: -100 }), true);
   assert.equal(isZoomWheel({ ctrlKey: true, deltaY: 100 }), true);
+});
+
+test("view drag pans everywhere while edit drag requires blank space or Space", () => {
+  const base = { zoomable: true, compact: false, button: 0, spaceHeld: false };
+  assert.equal(canStartCanvasPan({ ...base, editMode: false, overDiagramElement: true }), true);
+  assert.equal(canStartCanvasPan({ ...base, editMode: true, overDiagramElement: false }), true);
+  assert.equal(canStartCanvasPan({ ...base, editMode: true, overDiagramElement: true }), false);
+  assert.equal(canStartCanvasPan({ ...base, editMode: true, overDiagramElement: true, spaceHeld: true }), true);
+  assert.equal(canStartCanvasPan({ ...base, editMode: false, overDiagramElement: false, button: 2 }), false);
+  assert.equal(canStartCanvasPan({ ...base, editMode: false, overDiagramElement: false, compact: true }), false);
+});
+
+test("class member selection IDs preserve node IDs containing separators", () => {
+  const id = memberSelectionId("namespace:type::member", 12);
+  assert.deepEqual(parseMemberSelectionId(id), { nodeId: "namespace:type::member", index: 12 });
+  assert.equal(parseMemberSelectionId("ordinary-node"), null);
 });
 
 for (const type of ["flowchart", "sequence", "class", "code-relation", "state"]) {

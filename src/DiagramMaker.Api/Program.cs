@@ -87,6 +87,8 @@ builder.Services.AddSingleton<IInternalLlmClient, InternalLlmClient>();
 builder.Services.AddSingleton<GitWorkerClient>();
 builder.Services.AddSingleton<IGitWorkerClient>(services => services.GetRequiredService<GitWorkerClient>());
 builder.Services.AddScoped<NaturalDiagramService>();
+builder.Services.AddScoped<NaturalDiagramRunProcessor>();
+builder.Services.AddHostedService<NaturalDiagramWorker>();
 builder.Services.AddScoped<CodeBlockWorkspaceService>();
 builder.Services.AddSingleton<CodeBlockAnalyzer>();
 builder.Services.AddSingleton<CodeDiagramSelfTest>();
@@ -707,6 +709,89 @@ api.MapGet("/analyses/{id:guid}/evidence/{evidenceId}/snippet", async (
     return Results.Ok(snippet);
 });
 
+api.MapPost("/natural-diagram-runs", async (
+    CreateNaturalDiagramRunRequest input,
+    HttpContext context,
+    NaturalDiagramService service,
+    IAppStore store,
+    CancellationToken cancellationToken) =>
+{
+    var identity = context.GetInternalIdentity();
+    NaturalDiagramRequest request;
+    try { request = service.ValidateRequest(input.Request); }
+    catch (ArgumentException exception) { return Results.BadRequest(new { error = exception.Message }); }
+    NaturalDiagramRecord? source = null;
+    if (input.SourceDiagramId is { } sourceId)
+    {
+        source = await store.GetNaturalDiagramAsync(sourceId, cancellationToken);
+        if (source is null) return Results.NotFound(new { error = "The source natural diagram does not exist." });
+        if (!CanAccessNaturalDiagram(source, identity.UserId)) return Results.Forbid();
+    }
+    else if (input.RegenerateViewIds is { Count: > 0 } || input.RegeneratePageIds is { Count: > 0 })
+        return Results.BadRequest(new { error = "Selected-output regeneration requires a source natural diagram." });
+    var viewIds = request.EffectiveViews().Select(view => view.Id).ToHashSet(StringComparer.Ordinal);
+    if (input.RegenerateViewIds?.Any(viewId => !viewIds.Contains(viewId)) == true)
+        return Results.BadRequest(new { error = "RegenerateViewIds contains an unknown view." });
+    var knownPageIds = source?.Views?.SelectMany(view => view.Pages ?? []).Select(page => page.Id).ToHashSet(StringComparer.Ordinal) ?? [];
+    if (input.RegeneratePageIds?.Any(pageId => !knownPageIds.Contains(pageId)) == true)
+        return Results.BadRequest(new { error = "RegeneratePageIds contains an unknown scenario page." });
+    var now = DateTimeOffset.UtcNow;
+    var run = new NaturalDiagramRun(Guid.NewGuid(), identity.UserId, request, NaturalDiagramRunState.Queued,
+        now, now, StageMessage: "실행 대기", SourceDiagramId: source?.Id,
+        RegenerateViewIds: input.RegenerateViewIds, RegeneratePageIds: input.RegeneratePageIds);
+    if (!await store.CreateNaturalDiagramRunAsync(run, cancellationToken))
+        return Results.Conflict(new { error = "The natural diagram run could not be queued." });
+    await store.SaveAuditAsync(new AuditEvent(Guid.NewGuid(), identity.UserId, "natural-diagram-run.create", null,
+        "allowed", now), cancellationToken);
+    return Results.Accepted($"/api/v1/natural-diagram-runs/{run.Id}", run);
+});
+
+api.MapGet("/natural-diagram-runs", async (int? limit, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
+    Results.Ok(await store.ListNaturalDiagramRunsAsync(context.GetInternalIdentity().UserId,
+        Math.Clamp(limit ?? 20, 1, 50), cancellationToken)));
+
+api.MapGet("/natural-diagram-runs/{id:guid}", async (Guid id, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
+{
+    var run = await store.GetNaturalDiagramRunAsync(id, cancellationToken);
+    if (run is null) return Results.NotFound();
+    return CanAccessNaturalRun(run, context.GetInternalIdentity().UserId) ? Results.Ok(run) : Results.Forbid();
+});
+
+api.MapPost("/natural-diagram-runs/{id:guid}/cancel", async (
+    Guid id, NaturalDiagramRunActionRequest request, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
+{
+    var run = await store.GetNaturalDiagramRunAsync(id, cancellationToken);
+    if (run is null) return Results.NotFound();
+    if (!CanAccessNaturalRun(run, context.GetInternalIdentity().UserId)) return Results.Forbid();
+    if (run.Revision != request.ExpectedRevision)
+        return Results.Conflict(new { error = "The run changed. Refresh and try again.", currentRevision = run.Revision });
+    if (run.IsTerminal) return Results.Conflict(new { error = "The run is already finished.", currentRevision = run.Revision });
+    var cancelled = run with { State = NaturalDiagramRunState.Cancelled, Progress = run.Progress,
+        StageMessage = "사용자가 실행을 취소했습니다.", Revision = run.Revision + 1,
+        UpdatedAt = DateTimeOffset.UtcNow, LeaseId = null, LeaseUntil = null };
+    if (!await store.UpdateNaturalDiagramRunAsync(cancelled, run.Revision, null, cancellationToken))
+        return Results.Conflict(new { error = "The run changed. Refresh and try again." });
+    return Results.Ok(cancelled);
+});
+
+api.MapPost("/natural-diagram-runs/{id:guid}/resume", async (
+    Guid id, NaturalDiagramRunActionRequest request, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
+{
+    var run = await store.GetNaturalDiagramRunAsync(id, cancellationToken);
+    if (run is null) return Results.NotFound();
+    if (!CanAccessNaturalRun(run, context.GetInternalIdentity().UserId)) return Results.Forbid();
+    if (run.Revision != request.ExpectedRevision)
+        return Results.Conflict(new { error = "The run changed. Refresh and try again.", currentRevision = run.Revision });
+    if (run.State is not (NaturalDiagramRunState.Partial or NaturalDiagramRunState.Failed or NaturalDiagramRunState.Cancelled))
+        return Results.Conflict(new { error = "Only an interrupted or failed run can be resumed.", currentRevision = run.Revision });
+    var queued = run with { State = NaturalDiagramRunState.Queued, StageMessage = "이어하기 대기",
+        Revision = run.Revision + 1, UpdatedAt = DateTimeOffset.UtcNow, ErrorCode = null, ErrorMessage = null,
+        LeaseId = null, LeaseUntil = null };
+    if (!await store.UpdateNaturalDiagramRunAsync(queued, run.Revision, null, cancellationToken))
+        return Results.Conflict(new { error = "The run changed. Refresh and try again." });
+    return Results.Accepted($"/api/v1/natural-diagram-runs/{run.Id}", queued);
+});
+
 api.MapPost("/natural-diagrams", async (
     NaturalDiagramRequest request,
     HttpContext context,
@@ -959,7 +1044,7 @@ api.MapPost("/natural-diagrams/{id:guid}/views/{viewId}/edit-preview", async (
     if (record is null) return Results.NotFound();
     var identity = context.GetInternalIdentity();
     if (!CanAccessNaturalDiagram(record, identity.UserId)) return Results.Forbid();
-    var artifact = FindNaturalDiagramArtifact(record, viewId);
+    var artifact = FindNaturalDiagramArtifact(record, viewId, context.Request.Query["pageId"].FirstOrDefault());
     if (artifact is null) return Results.NotFound(new { error = "The diagram view does not exist." });
     try
     {
@@ -1017,12 +1102,13 @@ api.MapPost("/natural-diagrams/{id:guid}/views/{viewId}/edits", async (
     if (record is null) return Results.NotFound();
     var identity = context.GetInternalIdentity();
     if (!CanAccessNaturalDiagram(record, identity.UserId)) return Results.Forbid();
-    var artifact = FindNaturalDiagramArtifact(record, viewId);
+    var pageId = context.Request.Query["pageId"].FirstOrDefault();
+    var artifact = FindNaturalDiagramArtifact(record, viewId, pageId);
     if (artifact is null) return Results.NotFound(new { error = "The diagram view does not exist." });
     try
     {
         var revision = await service.SaveAsync(artifact, request, identity.UserId, "natural", record.Id,
-            null, viewId, cancellationToken);
+            null, pageId is null ? viewId : viewId + "/" + pageId, cancellationToken);
         return Results.Created($"/api/v1/diagram-artifacts/{artifact.Id}/revisions/{revision.Id}", revision);
     }
     catch (DiagramRevisionConflictException exception)
@@ -1074,10 +1160,17 @@ app.Run();
 static bool CanAccessNaturalDiagram(NaturalDiagramRecord record, string userId) =>
     string.IsNullOrEmpty(record.OwnerUserId) || string.Equals(record.OwnerUserId, userId, StringComparison.Ordinal);
 
-static DiagramArtifact? FindNaturalDiagramArtifact(NaturalDiagramRecord record, string viewId)
+static bool CanAccessNaturalRun(NaturalDiagramRun run, string userId) =>
+    string.Equals(run.OwnerUserId, userId, StringComparison.Ordinal);
+
+static DiagramArtifact? FindNaturalDiagramArtifact(NaturalDiagramRecord record, string viewId, string? pageId = null)
 {
     if (record.Views is { Count: > 0 })
-        return record.Views.FirstOrDefault(view => view.ViewId == viewId)?.Diagram;
+    {
+        var view = record.Views.FirstOrDefault(view => view.ViewId == viewId);
+        if (pageId is not null) return view?.Pages?.FirstOrDefault(page => page.Id == pageId)?.Diagram;
+        return view?.Diagram;
+    }
     return record.Request.EffectiveViews()[0].Id == viewId ? record.Diagram : null;
 }
 

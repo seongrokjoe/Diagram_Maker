@@ -46,6 +46,30 @@ public sealed class DiagramVariantsTests
     }
 
     [Fact]
+    public void ReviewedSubsetCreatesASeparatePartialAiVariantAndCount()
+    {
+        var source = Source();
+        var explanation = new DiagramExplanation("일부 검토", [], ["source"], ["source"], "Incomplete",
+            ["한 항목의 의미 검토를 완료하지 못했습니다."], Coverage: new(2, 1, 1, 1),
+            Failures: [new(["item-b"], "semantic-review", "LLM_SEMANTIC_REVIEW", ["source"],
+                ["원본 근거에 맞게 실패 항목만 보정합니다."], IssueCodes: ["reversed_condition"])]);
+        var generated = new SemanticGeneration(source.Diagram.Ir with
+        {
+            Nodes = source.Diagram.Ir.Nodes.Select((node, index) => index == 0 ? node with { Label = "검토된 동작" } : node).ToArray()
+        }, "Incomplete", explanation.Warnings, [], 2, explanation, "semantic-review");
+
+        var result = DiagramVariants.Apply(source, generated, Compiler, true);
+
+        Assert.Equal("Partial", result.AiState);
+        Assert.Equal("semantic", result.ResultKind);
+        Assert.True(DiagramVariants.IsPartialAi(result.Diagram));
+        Assert.NotNull(DiagramVariants.Select(result, "ai"));
+        Assert.Same(source.Diagram, DiagramVariants.Select(result, "code"));
+        Assert.Contains("검토된 동작", result.Diagram.MermaidDsl);
+        Assert.Equal(new DiagramResultCounts(0, 0, 0, 1, 0, 1), DiagramVariants.Count([result], true));
+    }
+
+    [Fact]
     public void LegacyArtifactsRemainReadableAndPendingWorkIsDistinctFromFailure()
     {
         var source = Source();
