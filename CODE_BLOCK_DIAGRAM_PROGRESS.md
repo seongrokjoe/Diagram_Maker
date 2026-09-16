@@ -6,12 +6,13 @@
 
 ## 현재 상태
 
-- 2026-09-17 internal.10 Git 전달 준비: ZIP 1,862개 항목을 다시 열어 manifest와 SHA-256
+- 2026-09-17 internal.10 Git 전달 완료: ZIP 1,862개 항목을 다시 열어 manifest와 SHA-256
   `77d23b45bfe5ea2a677ac453446d95385cd746e18500c3d48521d45460a5be9d` 일치를 확인하고,
   새 임시 압축 해제본의 사내 전용 패키지 정책 검사도 통과했다. OneDrive 경로 정책에 따른 직접
-  `verify.ps1` 거부는 아래의 비동기화 작업본 전체 검증 결과로 대체한다. 사용자 요청에 따라
-  internal.9 ZIP/SHA를 제거하고 이번 변경 전체와 internal.10 ZIP/SHA를 커밋·push한다.
-  다음: 구버전 파일 제거 → diff/상태 확인 → 커밋 → origin/main push 및 원격 HEAD 확인.
+  `verify.ps1` 거부는 아래의 비동기화 작업본 전체 검증 결과로 대체했다. 사용자 요청에 따라
+  internal.9 ZIP/SHA를 제거하고 이번 변경 전체와 internal.10 ZIP/SHA를 `25973ac`으로 커밋해
+  `origin/main`에 push했으며 원격 HEAD 일치를 확인했다. GitHub의 50MB 권장 크기 경고는 있었지만
+  91.98MB ZIP과 커밋은 정상 수락됐다. 다음: 사내 환경에서 실제 LLM 품질·시간과 PostgreSQL을 확인한다.
 
 - 2026-09-17 생성 안정성·직접 편집 개선 **구현·검증·internal.10 전달 완료**.
   전체 verify와 패키지 9단계가 모두 실제 exit 0이며 마지막 패키지 검사는 07:43:24 KST에 끝났다.
