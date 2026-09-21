@@ -287,7 +287,7 @@ public sealed class VllmClientTests
             Response(JsonSerializer.Serialize(new NaturalRequirementsReview(true,
                 NaturalRequirementEvidence.Prepare(NaturalDesignTests.Prompt).Select(r => r.Id).ToArray(), []), jsonOptions)),
             Response(JsonSerializer.Serialize(NaturalDesignTests.Design("flowchart"), jsonOptions)),
-            Response("{\"accepted\":true,\"reviewedRequirementIds\":[\"r1\"],\"issues\":[]}"));
+            Response("{\"accepted\":true,\"reviewedRequirementIds\":[\"r1\"],\"issues\":[],\"itemIssues\":[]}"));
         var options = Options();
         options.ThinkingOutputTokens = 1_750;
         using var transport = new VllmClient(options, handler: handler);
@@ -320,7 +320,7 @@ public sealed class VllmClientTests
             "synthetic request", "flowchart", enableThinking: false,
             new DiagramPresetCatalog().Resolve("flowchart", "balanced"), null, CancellationToken.None));
 
-        Assert.Equal("NATURAL_REQUIREMENTS_REVIEW", error.Code);
+        Assert.Equal("NATURAL_REQUIREMENTS_INVALID", error.Code);
         Assert.Equal(3, handler.Requests.Count);
     }
 

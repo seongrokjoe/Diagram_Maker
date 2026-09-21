@@ -10,7 +10,8 @@ public sealed class NaturalDesignTests
 {
     internal const string Prompt = "문이 열려 있으면 장비 운전을 차단한다.";
     internal static NaturalRequirements Requirements() => new("장비 운전", ["장비"],
-        [new("r1", Prompt, "interlock", "explicit", Prompt)]);
+        [new("r1", Prompt, "interlock", "explicit", "", SourceRangeIds: NaturalRequirementEvidence.Prepare(Prompt).Select(r => r.Id).ToArray())],
+        Scenarios: [new("s1", "장비 운전", ["r1"], NaturalRequirementEvidence.Prepare(Prompt).Select(r => r.Id).ToArray())], Questions: []);
     internal static NaturalDesign Design(string type)
     {
         string Key(string value) => Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(value));
@@ -57,12 +58,12 @@ public sealed class NaturalDesignTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task RejectedDesignConsumesOnlyOneRepairAndNeverReturnsUnreviewedSuccess(bool alwaysReject)
+    public async Task RejectedDesignConsumesAtMostTwoRepairsAndNeverReturnsUnreviewedSuccess(bool alwaysReject)
     {
         var model = new Model { Reject = alwaysReject ? 3 : 1 };
         var task = Client(model).GenerateDesignedNaturalAsync(Prompt, "flowchart", false,
             new DiagramPresetCatalog().Resolve("flowchart", "balanced"), null, null, CancellationToken.None);
-        if (alwaysReject) Assert.Equal("NATURAL_REQUIREMENTS_REVIEW", (await Assert.ThrowsAsync<LlmClientException>(() => task)).Code);
+        if (alwaysReject) Assert.Equal("NATURAL_DESIGN_REJECTED", (await Assert.ThrowsAsync<LlmClientException>(() => task)).Code);
         else Assert.True((await task)!.Quality!.RepairUsed);
         Assert.Equal(alwaysReject ? new[] { "requirements", "requirements-review", "design", "review", "repair", "review", "repair", "review" } :
             new[] { "requirements", "requirements-review", "design", "review", "repair", "review" }, model.Purposes);
@@ -150,7 +151,7 @@ public sealed class NaturalDesignTests
                 "requirements-review" => new NaturalRequirementsReview(true,
                     json.RootElement.GetProperty("sourceRanges").EnumerateArray().Select(r => r.GetProperty("id").GetString()!).ToArray(), []),
                 "review" => Reject-- > 0 ? new NaturalDesignReview(false, ["r1"], ["문 열림 차단을 확인하세요"],
-                    TargetedRepair ? [new("e2", "label", "BranchLabelInvalid", "차단 분기를 수정하세요")] : null) : new NaturalDesignReview(true, ["r1"], []),
+                    TargetedRepair ? [new("e2", "label", "BranchLabelInvalid", "차단 분기를 수정하세요")] : []) : new NaturalDesignReview(true, ["r1"], [], []),
                 _ => Design(json.RootElement.GetProperty("type").GetString()!)
             };
             if (TargetedRepair && request.Purpose == "repair" && result is NaturalDesign design)

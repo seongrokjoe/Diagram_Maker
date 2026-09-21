@@ -17,7 +17,7 @@ public sealed class NaturalDiagramService(
     IOptions<LlmOptions> options,
     IWebHostEnvironment environment)
 {
-    public const string GeneratorVersion = "natural-v7";
+    public const string GeneratorVersion = "natural-v8";
     private readonly LlmOptions _options = options.Value;
 
     public NaturalDiagramRequest ValidateRequest(NaturalDiagramRequest request) => NormalizeRequest(request);

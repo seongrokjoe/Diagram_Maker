@@ -3,9 +3,9 @@ using DiagramMaker.Domain;
 
 namespace DiagramMaker.Services;
 
-internal static class NaturalDesignValidation
+internal static partial class NaturalDesignValidation
 {
-    public const string Protocol = "natural-design-v3";
+    public const string Protocol = "natural-design-v4";
     public static string? Requirements(NaturalRequirements value, string prompt)
     {
         if (string.IsNullOrWhiteSpace(value.Title) || value.Requirements is not { Count: > 0 and <= 150 } ||
@@ -21,19 +21,29 @@ internal static class NaturalDesignValidation
         return value.Requirements.Any(r => r.Origin == "explicit") ? null : "NaturalExplicitRequirementsMissing";
     }
 
-    public static IReadOnlyList<NaturalIssue> RequirementIssues(NaturalRequirements value, string prompt)
+    public static IReadOnlyList<NaturalIssue> RequirementIssues(NaturalRequirements value, string prompt,
+        IReadOnlyList<NaturalPromptRange>? source = null)
     {
         var issues = new List<NaturalIssue>();
         var seen = new HashSet<string>();
+        source ??= NaturalRequirementEvidence.Prepare(prompt);
         foreach (var item in value.Requirements ?? [])
         {
-            var error = item is null ? "NullItem" : !seen.Add(item.Id ?? "") ? "DuplicateId" :
-                Requirements(new(value.Title, value.Entities, [item]), prompt);
-            if (item?.Origin == "assumption" && error == "NaturalExplicitRequirementsMissing") error = null;
-            if (error is not null) issues.Add(new(item?.Id ?? "unknown", "requirements", error,
-                "Return this item with a unique ID, supported kind and valid server sourceRangeIds; preserve accepted items."));
+            var ids = item is null ? [] : NaturalRequirementEvidence.RangeIds(item);
+            var error = item is null ? "NullItem" : string.IsNullOrWhiteSpace(item.Id) ? "NaturalRequirementIdMissing" :
+                !seen.Add(item.Id) ? "DuplicateId" : string.IsNullOrWhiteSpace(item.Text) ? "NaturalRequirementTextMissing" :
+                item.Text.Length > 500 ? "NaturalFieldTooLong" : SharedSemanticValidation.UnsafeText(item.Text) ? "NaturalUnsafeText" :
+                item.Kind is not ("entity" or "behavior" or "state" or "interlock" or "error" or "data" or "member") ? "NaturalFieldEnumInvalid" :
+                item.Origin is not ("explicit" or "assumption") ? "NaturalOriginInvalid" :
+                item.Origin == "assumption" ? null : ids.Count == 0 && string.IsNullOrWhiteSpace(item.SourceQuote) ? "NaturalEvidenceMissing" :
+                ids.Distinct().Count() != ids.Count ? "NaturalEvidenceDuplicate" :
+                ids.Any(id => !source.Any(range => range.Id == id)) ? "NaturalEvidenceUnknown" :
+                !NaturalRequirementEvidence.TryResolve(prompt, item, source, out _) ? "NaturalEvidenceAmbiguous" : null;
+            if (error is not null) issues.Add(new(item?.Id ?? "response", error.StartsWith("NaturalEvidence", StringComparison.Ordinal) ? "sourceRangeIds" : "requirements", error,
+                "Correct the identified item using only supplied sourceRangeIds and supported kinds. Keep all accepted IDs unchanged. Do not rewrite evidence quotations."));
         }
         if (value.Requirements is not { Count: > 0 }) issues.Add(new("requirements", "requirements", "MissingItems", "Extract all source requirements."));
+        if (value.Requirements is { Count: > 150 }) issues.Add(new("requirements", "requirements", "NaturalTooManyItems", "Return at most 150 requirements in this unit."));
         return issues;
     }
 
@@ -114,13 +124,15 @@ internal static class NaturalDesignValidation
         }
     }
 
-    public static string? Review(NaturalDesignReview value, NaturalRequirements requirements) =>
+    public static string? Review(NaturalDesignReview value, NaturalRequirements requirements, IReadOnlySet<string>? elementIds = null) =>
         value.ReviewedRequirementIds is null || value.Issues is null || value.Issues.Count > 30 ||
         value.ReviewedRequirementIds.Count != requirements.Requirements.Count ||
         !value.ReviewedRequirementIds.ToHashSet().SetEquals(requirements.Requirements.Select(r => r.Id)) ||
         value.Accepted != (value.Issues.Count == 0) || value.Accepted && value.ItemIssues is { Count: > 0 } ||
         value.ItemIssues?.Any(issue => issue is null || string.IsNullOrWhiteSpace(issue.ItemId) || string.IsNullOrWhiteSpace(issue.Code) ||
-            string.IsNullOrWhiteSpace(issue.Field) || string.IsNullOrWhiteSpace(issue.Instruction)) == true ? "NaturalReviewInvalid" : null;
+            string.IsNullOrWhiteSpace(issue.Field) || string.IsNullOrWhiteSpace(issue.Instruction)) == true ? "NaturalReviewInvalid" :
+        elementIds is not null && value.ItemIssues?.Any(issue => !elementIds.Contains(issue.ItemId) &&
+            !requirements.Requirements.Any(r => r.Id == issue.ItemId)) == true ? "NaturalReviewTargetUnknown" : null;
 
     public static DiagramIr Normalize(NaturalDesign value, string type)
     {

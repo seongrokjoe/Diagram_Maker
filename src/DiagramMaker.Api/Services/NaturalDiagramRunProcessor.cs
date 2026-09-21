@@ -10,9 +10,7 @@ public sealed class NaturalDiagramRunProcessor(IAppStore store, NaturalDiagramSe
     public async Task ProcessAsync(NaturalDiagramRun leased, CancellationToken cancellationToken)
     {
         var run = leased;
-        var fingerprint = SemanticExecution.Hash(System.Text.Json.JsonSerializer.Serialize(new {
-            run.Request, run.Answers, run.AnswerVersion, NaturalDiagramService.GeneratorVersion,
-            policy = SemanticExecution.PolicyFingerprint(options.Value), protocol = NaturalDesignValidation.Protocol }));
+        var fingerprint = Fingerprint(run, options.Value);
         if (run.InputFingerprint is not null && run.InputFingerprint != fingerprint)
             run = run with { Requirements = null, Views = run.Views?.Select(view => view with {
                 State = "Failed", Pages = view.Pages?.Select(page => page with { State = "Failed" }).ToArray() }).ToArray() };
@@ -59,19 +57,24 @@ public sealed class NaturalDiagramRunProcessor(IAppStore store, NaturalDiagramSe
             var views = record.Views ?? [];
             var state = views.Count > 0 && views.All(view => view.State == "Completed")
                 ? NaturalDiagramRunState.Completed : NaturalDiagramRunState.Partial;
+            await execution.FinishNaturalAsync(state == NaturalDiagramRunState.Completed ? "Recovered" : "Exhausted");
             await Save(run with { State = state, Progress = 100,
                 StageMessage = state == NaturalDiagramRunState.Completed ? "자연어 다이어그램 생성 완료" : "일부 결과와 실패 진단 저장 완료",
                 ResultDiagramId = record.Id, Requirements = record.Requirements, Views = record.Views,
-                ErrorCode = null, ErrorMessage = null, LeaseId = null, LeaseUntil = null });
+                ErrorCode = state == NaturalDiagramRunState.Completed ? null : views.FirstOrDefault(v => v.ErrorCode is not null)?.ErrorCode,
+                ErrorMessage = state == NaturalDiagramRunState.Completed ? null : views.FirstOrDefault(v => v.ErrorMessage is not null)?.ErrorMessage,
+                LeaseId = null, LeaseUntil = null });
         }
         catch (OperationCanceledException) when (leaseLost.IsCancellationRequested) { }
         catch (OperationCanceledException) when (execution.BudgetExpired)
         {
+            await execution.FinishNaturalAsync("Interrupted");
             await Save(run with { State = NaturalDiagramRunState.Partial, StageMessage = "실행 시간 한도에 도달했습니다. 완료된 단위부터 이어갈 수 있습니다.",
                 ErrorCode = "NATURAL_EXECUTION_BUDGET", ErrorMessage = $"실행 예산 {execution.BudgetSeconds}초에 도달했습니다.", LeaseId = null, LeaseUntil = null });
         }
         catch (Exception exception)
         {
+            await execution.FinishNaturalAsync(exception is LlmClientException e && LlmFailure.StopsRequests(e) ? "RequiresAction" : "Exhausted");
             var hasResult = run.Views?.SelectMany(view => view.Pages ?? []).Any(page => page.Diagram is not null) == true;
             await Save(run with { State = hasResult ? NaturalDiagramRunState.Partial : NaturalDiagramRunState.Failed,
                 Progress = hasResult ? run.Progress : 100,
@@ -81,6 +84,19 @@ public sealed class NaturalDiagramRunProcessor(IAppStore store, NaturalDiagramSe
                     ? exception.Message : "자연어 다이어그램 생성 중 내부 오류가 발생했습니다.",
                 LeaseId = null, LeaseUntil = null });
         }
+    }
+
+    internal static string Fingerprint(NaturalDiagramRun run, LlmOptions options) =>
+        SemanticExecution.Hash(System.Text.Json.JsonSerializer.Serialize(new {
+            run.Request, run.Answers, run.AnswerVersion, NaturalDiagramService.GeneratorVersion,
+            policy = SemanticExecution.PolicyFingerprint(options), protocol = NaturalDesignValidation.Protocol }));
+
+    internal static bool CanResume(NaturalDiagramRun run, LlmOptions options)
+    {
+        if (!run.IsTerminal || run.State == NaturalDiagramRunState.Completed) return false;
+        if (run.InputFingerprint != Fingerprint(run, options) || run.State == NaturalDiagramRunState.Cancelled) return true;
+        var failures = (run.Diagnostics ?? []).Where(d => d.ErrorCode is not null && d.RecoveryState != "Recovered").ToArray();
+        return failures.Any(d => d.RecoveryState is "Interrupted" or "RequiresAction") || !failures.Any(d => d.RecoveryState == "Exhausted");
     }
 
     private static string StageLabel(SemanticExecution execution) => execution.Progress.LastRequest?.Purpose == "natural-final-review"

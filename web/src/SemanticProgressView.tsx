@@ -8,6 +8,7 @@ export type FailureDiagnostic = {
   protocolVersion?: string; recoveryGroupId?: string; parentGroupId?: string; attempt?: number;
   recoveryState?: string; requiredOutputTokens?: number; state?: string; estimatedInputTokens?: boolean;
   httpStatus?: number; serverErrorCategory?: string; nextAction?: string; schemaRelaxed?: boolean;
+  kind?: string; requestId?: string;
   validationDetails?: { expectedItems: number; receivedItems: number; missingItems: number; duplicateItems: number;
     unknownItems: number; field?: string; itemIndex?: number; actualLength?: number; allowedLength?: number;
     nonTargetItems?: number; unknownAliases?: number; issueCodes?: string[] };
@@ -76,7 +77,7 @@ export function SemanticProgressView({ value, running, diagnosticsUrl, waitingFo
 }
 
 function recoveryLabel(failure: FailureDiagnostic, running: boolean) {
-  return ({ Recovered: "복구 완료", PartiallyRecovered: "일부 복구", Exhausted: "복구 실패 · Code 확인",
+  return ({ Recovered: "복구 완료", PartiallyRecovered: "일부 복구", Exhausted: "보정 소진 · 새 실행 필요",
     RequiresAction: "설정 확인 필요", Retrying: running ? "복구 중" : "재개 대기", Interrupted: "재개 대기" } as Record<string, string>)[failure.recoveryState ?? ""] ?? "복구 상태 미확인";
 }
 
@@ -95,12 +96,12 @@ function DiagnosticGrid({ records, running }: { records: FailureDiagnostic[]; ru
         </tr>)}</tbody></table></div>
       <div className="diagnostic-detail" aria-label="선택 오류 상세">
         <strong>{failureDescription(selected.validationCode, selected.errorCode)}</strong>
-        <p>{purpose(selected)} · {selected.sent ? "응답 수신·검증 단계" : "전송 전 검사"}</p>
+        <p>{purpose(selected)} · {selected.kind === "Validation" ? "응답 내용 검증" : selected.kind === "Terminal" ? "단계 종료" : selected.sent ? "응답 수신·검증 단계" : "전송 전 검사"}</p>
         <p>복구 결과: {recoveryLabel(selected, running)} · 시도 {selected.attempt ?? 1}</p>
         {!!selected.validationDetails?.issueCodes?.length && <p>{selected.validationDetails.issueCodes.map(issueDescription).join(" · ")}</p>}
-        {selected.recoveryState === "Recovered" ? <p>후속 보정이 완료되었습니다. 최초 오류 기록은 보존됩니다.</p> : selected.recoveryState === "RequiresAction" ? <p>{serverFailure(selected.serverErrorCategory)}</p> : <p>완료된 AI/Code 다이어그램은 계속 확인할 수 있습니다. 재개 대기는 이어서 생성으로, 복구 실패는 해당 결과 재생성으로 다시 시도합니다.</p>}
+        {selected.recoveryState === "Recovered" ? <p>후속 보정이 완료되었습니다. 최초 오류 기록은 보존됩니다.</p> : selected.recoveryState === "RequiresAction" ? <p>{serverFailure(selected.serverErrorCategory)}</p> : selected.recoveryState === "Exhausted" && selected.protocolVersion?.startsWith("natural-") ? <p>보정 횟수를 소진했습니다. 진단에서 원인을 확인한 뒤 새 실행을 시작하세요. 이전 정상 결과는 계속 확인할 수 있습니다.</p> : <p>완료된 AI/Code 다이어그램은 계속 확인할 수 있습니다. 재개 대기는 이어서 생성으로, 복구 실패는 해당 결과 재생성으로 다시 시도합니다.</p>}
         <details><summary>기술 상세</summary><p>{selected.errorCode} / {selected.validationCode}</p><OutputDiagnostic value={selected} />
-          {selected.httpStatus && <p>HTTP {selected.httpStatus}</p>}
+          <p>HTTP {selected.httpStatus ?? (selected.kind ? "해당 없음" : "미기록")} · 다음 행동: {actionLabel(selected.nextAction, selected.kind)}</p>
           <p>내부 묶음 {selected.recoveryGroupId ?? "미기록"} · 요청 {selected.id}</p>
           {selected.inputCharacters != null && <p>입력 {selected.inputCharacters.toLocaleString()}자 / {selected.inputCharacterLimit?.toLocaleString() ?? "미기록"}</p>}
           {selected.validationDetails && <p>필요 {selected.validationDetails.expectedItems} · 응답 {selected.validationDetails.receivedItems} · 누락 {selected.validationDetails.missingItems} · 중복 {selected.validationDetails.duplicateItems}{selected.validationDetails.field && " · 필드 " + selected.validationDetails.field}</p>}
@@ -109,7 +110,14 @@ function DiagnosticGrid({ records, running }: { records: FailureDiagnostic[]; ru
   </details>;
 }
 
-function purpose(value: FailureDiagnostic) { return value.purpose === "execution-plan" ? "함수 실행 의미 계획" :
+function actionLabel(action?: string, kind?: string) { return ({ StartNewRun: "원인 확인 후 새 실행", Resume: "저장 지점에서 이어하기",
+  CheckSettings: "설정 확인", RepairInvalidItem: "실패 항목 보정" } as Record<string, string>)[action ?? ""] ?? action ?? (kind ? "해당 없음" : "미기록"); }
+
+function purpose(value: FailureDiagnostic) { return value.purpose === "requirements-validation" ? "요구사항 근거 검증" :
+  value.purpose === "scenario-validation" ? "시나리오 연결 검증" : value.purpose === "design-validation" ? "다이어그램 구조 검증" :
+  value.purpose === "design-review" ? "설계 의미 검토" : value.purpose === "requirements-result" ? "요구사항 단계 종료" :
+  value.purpose === "design-result" ? "설계 단계 종료" : value.purpose === "final-review-result" ? "최종 검토 종료" :
+  value.purpose === "execution-plan" ? "함수 실행 의미 계획" :
   value.purpose === "requirements" ? "요구사항 추출" : value.purpose === "requirements-repair" ? "요구사항 보정" :
   value.purpose === "requirements-review" ? "원문·요구사항 검토" : value.purpose === "natural-final-review" ? "전체 형식 검토" :
   value.purpose === "design" ? "다이어그램 설계" :
@@ -139,6 +147,21 @@ function issueDescription(code: string) {
 
 function failureDescription(validation?: string, error?: string) {
   const descriptions: Record<string, string> = { SharedSummaryInvalid: "전체 요약이 비었거나 너무 깁니다.", SharedRecommendedTypeInvalid: "추천한 다이어그램 형식이 허용 목록과 다릅니다.",
+    NaturalEvidenceUnknown: "응답이 제공되지 않은 원문 근거 ID를 참조했습니다.", NaturalEvidenceMissing: "요구사항의 원문 근거가 빠졌습니다.",
+    NaturalEvidenceDuplicate: "같은 원문 근거 ID가 중복됐습니다.", NaturalEvidenceAmbiguous: "인용문을 원문의 한 위치로 연결할 수 없습니다.",
+    NaturalScenarioInvalid: "시나리오가 요구사항을 누락했거나 잘못된 ID를 참조합니다.", NaturalAcceptedIdsChanged: "보정 응답이 정상 항목의 ID를 바꿨습니다.",
+    NaturalFieldMissing: "필수 응답 필드가 빠졌습니다.", NaturalFieldTypeInvalid: "필수 필드의 자료형이 잘못됐거나 null입니다.",
+    NaturalFieldEnumInvalid: "필드 값이 허용된 종류와 다릅니다.", NaturalFieldTooLong: "응답 필드가 길이 제한을 넘었습니다.",
+    NaturalTooManyItems: "응답 항목이 개수 제한을 넘었습니다.", NaturalReviewMissingIds: "일부 원문 범위의 검토가 빠졌습니다.",
+    NaturalReviewUnknownIds: "검토에 제공되지 않은 원문 ID가 포함됐습니다.", NaturalReviewDuplicateIds: "동일 원문 범위가 중복 검토됐습니다.",
+    NaturalReviewTargetUnknown: "수정 지시가 존재하지 않는 항목을 가리킵니다.", NaturalReviewDecisionInvalid: "검토 승인 값과 문제 목록이 모순됩니다.",
+    NaturalReviewIssuesInvalid: "검토의 수정 지시 형식이 잘못됐습니다.", NaturalSemanticIssue: "원문 의미 검토에서 수정이 필요한 항목이 발견됐습니다.",
+    NATURAL_REQUIREMENTS_INVALID: "요구사항의 응답 형식 또는 근거 보정을 소진했습니다.",
+    NATURAL_REQUIREMENTS_REVIEW_INVALID: "요구사항 검토 응답의 형식 보정을 소진했습니다.",
+    NATURAL_REQUIREMENTS_REJECTED: "요구사항이 원문 의미 검토를 통과하지 못했습니다.", NATURAL_PLAN_INVALID: "시나리오 연결 보정을 소진했습니다.",
+    NATURAL_DESIGN_INVALID: "다이어그램 구조 보정을 소진했습니다.", NATURAL_DESIGN_REVIEW_INVALID: "설계 검토 응답의 보정을 소진했습니다.",
+    NATURAL_DESIGN_REJECTED: "설계가 의미 검토를 통과하지 못했습니다.", NATURAL_FINAL_REVIEW_INVALID: "최종 검토 응답의 보정을 소진했습니다.",
+    NATURAL_CROSS_VIEW_REVIEW: "형식 간 누락 또는 모순이 발견됐습니다.",
     SharedItemsInvalid: "응답 항목 또는 ID가 비어 있습니다.", SharedUnknownIds: "요청에 없는 ID가 응답에 포함됐습니다.",
     SharedDuplicateIds: "같은 ID가 응답에 반복됐습니다.", SharedMissingIds: "요청한 항목 일부가 응답에서 빠졌습니다.",
     SharedItemCountMismatch: "요청과 응답의 항목 수가 다릅니다.", SharedTextEmpty: "요약 또는 설명이 비어 있습니다.",

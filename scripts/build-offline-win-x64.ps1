@@ -127,7 +127,7 @@ foreach ($nativePrebuildRoot in @(
 
 dotnet restore $apiProject -r win-x64 --locked-mode --configfile (Join-Path $projectRoot 'NuGet.Config')
 Assert-LastExitCode 'offline publish restore'
-dotnet publish $apiProject -c Release -r win-x64 --self-contained true --no-restore -o $stageRoot
+dotnet publish $apiProject -c Release -r win-x64 --self-contained true --no-restore -p:Version=$Version -o $stageRoot
 Assert-LastExitCode 'win-x64 self-contained publish'
 
 $wwwroot = Join-Path $stageRoot 'wwwroot'

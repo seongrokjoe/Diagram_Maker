@@ -92,6 +92,7 @@ builder.Services.AddHostedService<NaturalDiagramWorker>();
 builder.Services.AddScoped<CodeBlockWorkspaceService>();
 builder.Services.AddSingleton<CodeBlockAnalyzer>();
 builder.Services.AddSingleton<CodeDiagramSelfTest>();
+builder.Services.AddSingleton<NaturalDiagramSelfTest>();
 builder.Services.AddSingleton<CodeBlockGroupingService>();
 builder.Services.AddSingleton<CodeBlockProjectionService>();
 builder.Services.AddScoped<CodeBlockRunProcessor>();
@@ -746,15 +747,15 @@ api.MapPost("/natural-diagram-runs", async (
     return Results.Accepted($"/api/v1/natural-diagram-runs/{run.Id}", run);
 });
 
-api.MapGet("/natural-diagram-runs", async (int? limit, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
+api.MapGet("/natural-diagram-runs", async (int? limit, HttpContext context, IAppStore store, IOptions<LlmOptions> options, CancellationToken cancellationToken) =>
     Results.Ok((await store.ListNaturalDiagramRunsAsync(context.GetInternalIdentity().UserId,
-        Math.Clamp(limit ?? 20, 1, 50), cancellationToken)).Select(run => run with { Checkpoints = null })));
+        Math.Clamp(limit ?? 20, 1, 50), cancellationToken)).Select(run => run with { Checkpoints = null, ResumeAllowed = NaturalDiagramRunProcessor.CanResume(run, options.Value) })));
 
-api.MapGet("/natural-diagram-runs/{id:guid}", async (Guid id, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
+api.MapGet("/natural-diagram-runs/{id:guid}", async (Guid id, HttpContext context, IAppStore store, IOptions<LlmOptions> options, CancellationToken cancellationToken) =>
 {
     var run = await store.GetNaturalDiagramRunAsync(id, cancellationToken);
     if (run is null) return Results.NotFound();
-    return CanAccessNaturalRun(run, context.GetInternalIdentity().UserId) ? Results.Ok(run with { Checkpoints = null }) : Results.StatusCode(StatusCodes.Status403Forbidden);
+    return CanAccessNaturalRun(run, context.GetInternalIdentity().UserId) ? Results.Ok(run with { Checkpoints = null, ResumeAllowed = NaturalDiagramRunProcessor.CanResume(run, options.Value) }) : Results.StatusCode(StatusCodes.Status403Forbidden);
 });
 
 api.MapPost("/natural-diagram-runs/{id:guid}/cancel", async (
@@ -768,14 +769,16 @@ api.MapPost("/natural-diagram-runs/{id:guid}/cancel", async (
     if (run.IsTerminal) return Results.Conflict(new { error = "The run is already finished.", currentRevision = run.Revision });
     var cancelled = run with { State = NaturalDiagramRunState.Cancelled, Progress = run.Progress,
         StageMessage = "사용자가 실행을 취소했습니다.", Revision = run.Revision + 1,
-        UpdatedAt = DateTimeOffset.UtcNow, LeaseId = null, LeaseUntil = null };
+        UpdatedAt = DateTimeOffset.UtcNow, LeaseId = null, LeaseUntil = null,
+        Diagnostics = run.Diagnostics?.Select(d => d.State is "Preparing" or "Running" || d.RecoveryState == "Retrying"
+            ? d with { State = "Interrupted", ErrorCode = d.ErrorCode ?? "NATURAL_CANCELLED", RecoveryState = "Interrupted", NextAction = "Resume" } : d).ToArray() };
     if (!await store.UpdateNaturalDiagramRunAsync(cancelled, run.Revision, null, cancellationToken))
         return Results.Conflict(new { error = "The run changed. Refresh and try again." });
     return Results.Ok(cancelled with { Checkpoints = null });
 });
 
 api.MapPost("/natural-diagram-runs/{id:guid}/resume", async (
-    Guid id, NaturalDiagramRunActionRequest request, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
+    Guid id, NaturalDiagramRunActionRequest request, HttpContext context, IAppStore store, IOptions<LlmOptions> options, CancellationToken cancellationToken) =>
 {
     var run = await store.GetNaturalDiagramRunAsync(id, cancellationToken);
     if (run is null) return Results.NotFound();
@@ -784,6 +787,8 @@ api.MapPost("/natural-diagram-runs/{id:guid}/resume", async (
         return Results.Conflict(new { error = "The run changed. Refresh and try again.", currentRevision = run.Revision });
     if (run.State is not (NaturalDiagramRunState.Partial or NaturalDiagramRunState.Failed or NaturalDiagramRunState.Cancelled))
         return Results.Conflict(new { error = "Only an interrupted or failed run can be resumed.", currentRevision = run.Revision });
+    if (!NaturalDiagramRunProcessor.CanResume(run, options.Value))
+        return Results.Conflict(new { error = "보정 횟수를 소진했습니다. 원인을 확인하고 새 실행을 시작하세요.", errorCode = "NATURAL_REPAIR_EXHAUSTED", currentRevision = run.Revision });
     var queued = run with { State = NaturalDiagramRunState.Queued, StageMessage = "이어하기 대기",
         Revision = run.Revision + 1, UpdatedAt = DateTimeOffset.UtcNow, ErrorCode = null, ErrorMessage = null,
         LeaseId = null, LeaseUntil = null };
@@ -821,6 +826,8 @@ api.MapGet("/natural-diagram-runs/{id:guid}/diagnostics", async (
     var run = await store.GetNaturalDiagramRunAsync(id, ct);
     if (run is null) return Results.NotFound();
     if (!CanAccessNaturalRun(run, context.GetInternalIdentity().UserId)) return Results.StatusCode(StatusCodes.Status403Forbidden);
+    if (context.Request.Query["format"] == "json")
+        return Results.Ok(new { run.Id, run.State, run.ErrorCode, run.Execution, diagnostics = run.Diagnostics ?? [] });
     var report = LlmDiagnosticReport.Text(run.State.ToString(), run.ErrorCode, run.Execution, run.Diagnostics);
     return Results.File(System.Text.Encoding.UTF8.GetBytes(report), "text/plain; charset=utf-8", $"natural-{id}-diagnostics.txt");
 });
@@ -863,6 +870,15 @@ api.MapGet("/llm/tests/code-diagram-settings", (HttpContext context, IOptions<Ll
 api.MapPost("/llm/tests/code-diagram-contract", async (HttpContext context, CodeDiagramSelfTest test, CancellationToken ct) =>
 {
     if (!context.GetInternalIdentity().Roles.Contains("Admin")) return Results.Forbid();
+    var result = await test.RunAsync(ct);
+    return context.Request.Query["format"] == "text"
+        ? Results.Text(result.Report, "text/plain; charset=utf-8", statusCode: result.Success ? 200 : 503)
+        : Results.Ok(result);
+});
+
+api.MapPost("/llm/tests/natural-diagram-contract", async (HttpContext context, NaturalDiagramSelfTest test, CancellationToken ct) =>
+{
+    if (!context.GetInternalIdentity().Roles.Contains("Admin")) return Results.StatusCode(StatusCodes.Status403Forbidden);
     var result = await test.RunAsync(ct);
     return context.Request.Query["format"] == "text"
         ? Results.Text(result.Report, "text/plain; charset=utf-8", statusCode: result.Success ? 200 : 503)

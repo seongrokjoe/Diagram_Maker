@@ -794,7 +794,7 @@ public sealed record NaturalDiagramRun(
     IReadOnlyList<NaturalAnswer>? Answers = null,
     int QuestionVersion = 0,
     int AnswerVersion = 0,
-    string? InputFingerprint = null)
+    string? InputFingerprint = null, bool? ResumeAllowed = null)
 {
     public bool IsTerminal => State is NaturalDiagramRunState.Completed or NaturalDiagramRunState.Partial or
         NaturalDiagramRunState.Failed or NaturalDiagramRunState.Cancelled;

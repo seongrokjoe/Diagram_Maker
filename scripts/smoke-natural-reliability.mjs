@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { cp, mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,6 +38,13 @@ const llm = createServer(async (request, response) => {
     const kind = properties.requirements ? 'requirements' : properties.reviewedSourceRangeIds ? 'requirements-review' :
       properties.reviewedRequirementIds ? context.views ? 'final-review' : 'review' : 'design';
     calls.push({ kind, mode, at: Date.now(), requirementCount: context.requirements?.requirements?.length });
+    const attempt = calls.filter(call => call.mode === mode && call.kind === kind).length;
+    if (mode === 'grammar-once' && calls.filter(call => call.mode === mode).length === 1) {
+      response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: 'The provided JSON schema contains features not supported by xgrammar.' } })); return;
+    }
+    if (mode === 'review-unavailable' && kind === 'requirements-review' && attempt === 1) {
+      response.writeHead(503, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: 'synthetic unavailable' } })); return;
+    }
     let value;
     if (kind === 'requirements') {
       const ranges = context.sourceRanges;
@@ -48,17 +55,21 @@ const llm = createServer(async (request, response) => {
         questions: mode === 'question' && !JSON.stringify(ranges).includes('사용자 확인 답변') ?
           [{ id: 'q1', text: '승인을 어떻게 처리합니까?', reason: '승인 주체에 따라 호출 흐름이 달라집니다.', sourceRangeIds: [ranges[0].id], choices: ['자동 승인', '담당자 승인'] }] : [] };
       if (mode === 'unknown-id') value.requirements[0].sourceRangeIds = ['unknown'];
+      if (mode === 'scenario-invalid') value.scenarios[0].requirementIds = ['unknown'];
     } else if (kind === 'requirements-review') value = { accepted: true, reviewedSourceRangeIds: context.sourceRanges.map(r => r.id), issues: [] };
     else if (kind === 'review' || kind === 'final-review') {
       const rejected = mode === 'contradiction' || mode === 'cross-view' && kind === 'final-review';
       value = { accepted: !rejected, reviewedRequirementIds: context.requirements.requirements.map(r => r.id),
-        issues: rejected ? ['조건 반전을 수정하세요.'] : [] };
+        issues: rejected ? ['조건 반전을 수정하세요.'] : [], itemIssues: [] };
     }
     else {
       value = naturalDesignFixture(context, properties, 'valid');
       const ids = context.requirements.requirements.map(r => r.id);
       for (const item of [...value.nodes, ...value.edges]) item.requirementIds = ids;
     }
+    if (kind === 'requirements-review' && mode === 'review-missing-field' && attempt === 1) delete value.accepted;
+    if (kind === 'requirements-review' && mode === 'review-all-missing') value.reviewedSourceRangeIds = [];
+    if (kind === 'review' && mode === 'design-review-once' && attempt === 1) delete value.accepted;
     await delay(mode === 'question' ? 100 : 1);
     response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
       choices: [{ message: { content: mode === 'null-json' ? 'null' : JSON.stringify(value) },
@@ -120,7 +131,7 @@ try {
   assert.equal(run.checkpoints, null);
   assert.equal(run.requirements.sourceRanges.length, 2);
   const original = await request(`/natural-diagrams/${run.resultDiagramId}`);
-  assert.equal(original.generatorVersion, 'natural-v7');
+  assert.equal(original.generatorVersion, 'natural-v8');
   await request(`/natural-diagram-runs/${run.id}`, 'GET', undefined, 403, 'other-owner');
   await request(`/natural-diagram-runs/${run.id}/diagnostics`, 'GET', undefined, 403, 'other-owner');
   await request(`/natural-diagram-runs/${run.id}/answers`, 'POST', {}, 403, 'other-owner');
@@ -128,12 +139,62 @@ try {
   assert.ok(!diagnostic.includes('secret_for_mask_test') && !diagnostic.includes(llmOrigin));
   checks.push({ name: 'generation-evidence-masking-acl-diagnostics', requests: calls.length });
 
+  for (const [testMode, stage, expected] of [['review-missing-field', 'requirements-review', 'Completed'],
+    ['review-all-missing', 'requirements-review', 'Failed'], ['scenario-invalid', 'requirements', 'Failed'],
+    ['design-review-once', 'review', 'Completed'], ['grammar-once', 'requirements', 'Completed']]) {
+    mode = testMode; const before = calls.length;
+    const checked = await poll((await create()).id);
+    assert.equal(checked.state, expected, checked.errorMessage);
+    const rows = (await request(`/natural-diagram-runs/${checked.id}/diagnostics?format=json`)).diagnostics;
+    assert.ok(rows.some(row => row.errorCode || row.schemaRelaxed), `${testMode}: diagnostic evidence`);
+    assert.ok(!rows.some(row => row.recoveryState === 'Retrying'));
+    const sent = calls.slice(before);
+    if (testMode === 'review-missing-field') {
+      assert.equal(sent.filter(call => call.kind === 'requirements').length, 1);
+      assert.equal(sent.filter(call => call.kind === stage).length, 2);
+      assert.ok(rows.some(row => row.validationCode === 'NaturalFieldMissing' && row.recoveryState === 'Recovered'));
+    }
+    if (testMode === 'review-all-missing') {
+      assert.equal(checked.errorCode, 'NATURAL_REQUIREMENTS_REVIEW_INVALID');
+      assert.equal(sent.filter(call => call.kind === 'requirements').length, 1);
+      assert.equal(sent.filter(call => call.kind === stage).length, 3);
+    }
+    if (testMode === 'scenario-invalid') assert.equal(checked.errorCode, 'NATURAL_PLAN_INVALID');
+    if (testMode === 'design-review-once') assert.equal(sent.filter(call => call.kind === 'design').length, 1);
+    if (testMode === 'grammar-once') assert.ok(rows.some(row => row.schemaRelaxed));
+    const text = await request(`/natural-diagram-runs/${checked.id}/diagnostics`);
+    assert.ok(!/category: unknown|action: unknown|recovery: unknown/.test(text));
+    checks.push({ name: testMode, requests: sent.length });
+  }
+  mode = 'review-unavailable';
+  const interrupted = await poll((await create()).id);
+  assert.equal(interrupted.state, 'Failed'); assert.equal(interrupted.resumeAllowed, true);
+  await request(`/natural-diagram-runs/${interrupted.id}/resume`, 'POST', { expectedRevision: interrupted.revision }, 202);
+  assert.equal((await poll(interrupted.id)).state, 'Completed');
+  assert.equal(calls.filter(call => call.mode === mode && call.kind === 'requirements').length, 1);
+  checks.push({ name: 'review-http-interruption-resumes-without-reextraction' });
+
+  mode = 'valid';
+  await request('/llm/tests/natural-diagram-contract', 'POST', undefined, 403, 'other-owner');
+  const selfTest = await request('/llm/tests/natural-diagram-contract', 'POST');
+  assert.equal(selfTest.success, true, selfTest.report);
+  assert.equal(selfTest.cases.length, 2);
+  assert.ok(selfTest.cases.every(item => item.reviewedPages > 0));
+  assert.ok(!selfTest.report.includes(llmOrigin));
+  if (packageRoot) {
+    const manifest = JSON.parse((await readFile(path.join(packageRoot, 'manifest.json'), 'utf8')).replace(/^\uFEFF/, ''));
+    assert.ok(selfTest.report.includes(`Build: ${manifest.version}`), 'The report identifies the shipped package version');
+  }
+  await writeFile(path.join(fixture, 'natural-self-test.txt'), selfTest.report);
+  checks.push({ name: 'natural-self-test-real-pipeline-five-views-admin-acl' });
+
   for (const failureMode of ['null-json', 'unknown-id']) {
     mode = failureMode; const before = calls.length;
     const failed = await poll((await create()).id);
     assert.equal(failed.state, 'Failed');
     assert.equal(calls.length - before, 3);
-    await request(`/natural-diagram-runs/${failed.id}/resume`, 'POST', { expectedRevision: failed.revision }, 202);
+    assert.equal(failed.resumeAllowed, false);
+    await request(`/natural-diagram-runs/${failed.id}/resume`, 'POST', { expectedRevision: failed.revision }, 409);
     assert.equal((await poll(failed.id)).state, 'Failed');
     assert.equal(calls.length - before, 3, 'resume cannot reset exhausted repairs');
     checks.push({ name: failureMode, requests: calls.length - before });
@@ -224,6 +285,35 @@ try {
   assert.equal(run.state, 'Completed');
   await request(`/natural-diagram-runs/${run.id}/answers`, 'POST', { expectedRevision: run.revision, questionVersion: run.questionVersion, answers }, 409);
   checks.push({ name: 'questions-restart-stale-answers-poll-recovery-mobile', requests: calls.length - beforeRestart });
+  mode = 'unknown-id';
+  const exhausted = await poll((await create()).id);
+  assert.equal(exhausted.resumeAllowed, false);
+  await page.reload();
+  await page.locator('.natural-run-history summary').click();
+  await page.locator('.natural-run-history button').first().click();
+  await page.locator('.natural-run-status').filter({ hasText: 'Failed' }).waitFor();
+  await page.getByText('보정 횟수를 소진했습니다. 진단의 원인을 확인하고', { exact: false }).waitFor();
+  const diagnosticsPanel = page.getByLabel('요청 오류 진단', { exact: true });
+  await diagnosticsPanel.locator('tbody tr').first().waitFor();
+  const exported = await request(`/natural-diagram-runs/${exhausted.id}/diagnostics?format=json`);
+  assert.equal(await diagnosticsPanel.locator('tbody tr').count(), exported.diagnostics.filter(d => d.errorCode).length);
+  assert.equal(await page.getByRole('button', { name: '저장 지점에서 이어하기', exact: true }).count(), 0);
+  await page.screenshot({ path: path.join(fixture, 'exhausted-390.png'), fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.screenshot({ path: path.join(fixture, 'exhausted-1440.png'), fullPage: true });
+  mode = 'valid';
+  await page.getByRole('button', { name: 'LLM 점검', exact: true }).click();
+  await page.getByRole('button', { name: '자연어 생성 검사', exact: true }).click();
+  const testPanel = page.locator('.natural-diagram-test');
+  await testPanel.getByText('검사 통과', { exact: true }).waitFor({ timeout: 30000 });
+  const download = page.waitForEvent('download');
+  await testPanel.getByRole('button', { name: '자연어 검사 보고서 다운로드', exact: true }).click();
+  await (await download).saveAs(path.join(fixture, 'natural-self-test-ui.txt'));
+  await page.screenshot({ path: path.join(fixture, 'natural-self-test-1440.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: path.join(fixture, 'natural-self-test-390.png'), fullPage: true });
+  assert.deepEqual(errors, []);
+  checks.push({ name: 'exhausted-full-diagnostics-and-synthetic-test-ui-download' });
   await writeFile(path.join(fixture, 'result.json'), JSON.stringify({ status: 'passed', checks, calls,
     elapsedMilliseconds: Date.now() - startedAt, realModel: false, postgres: false }, null, 2));
   console.log(`Natural reliability smoke passed: ${fixture}`);

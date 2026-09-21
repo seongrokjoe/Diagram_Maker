@@ -94,6 +94,20 @@ try {
           await writeFile(path.join(fixture, 'code-diagram-command.txt'), report);
           await writeFile(path.join(fixture, 'code-diagram-command.log'), testOutput);
           checks.push('code diagram command retains failure report and nonzero exit');
+          const natural = spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/c', 'test-natural-diagram.cmd'], {
+            cwd: app, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+          });
+          let naturalOutput = '';
+          natural.stdout.on('data', data => naturalOutput += data); natural.stderr.on('data', data => naturalOutput += data);
+          const [naturalExit] = await once(natural, 'close');
+          assert.notEqual(naturalExit, 0, 'Disabled LLM must fail natural test');
+          const naturalName = (await readdir(path.join(app, 'diagnostics'))).find(name => name.startsWith('natural-diagram-'));
+          assert.ok(naturalName);
+          const naturalReport = await readFile(path.join(app, 'diagnostics', naturalName), 'utf8');
+          assert.match(naturalReport, /LLM_DISABLED/); assert.match(naturalReport, /natural-design-v4/);
+          await writeFile(path.join(fixture, 'natural-diagram-command.txt'), naturalReport);
+          await writeFile(path.join(fixture, 'natural-diagram-command.log'), naturalOutput);
+          checks.push('natural diagram command retains failure report and nonzero exit');
         }
       } else {
         assert.notEqual(child.exitCode, null, output);

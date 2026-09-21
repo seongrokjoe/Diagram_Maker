@@ -60,7 +60,7 @@ public sealed record VllmCompletionResult(
     int? PromptTokens,
     int? CompletionTokens,
     int? TotalTokens,
-    string? OutputMode = null);
+    string? OutputMode = null, int? HttpStatus = null);
 
 public sealed class VllmClient : ILlmCompletionTransport, IDisposable
 {
@@ -118,7 +118,7 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
             Purpose: request.Purpose ?? (execution?.Stage.Contains("Review", StringComparison.Ordinal) == true ? "review" : "generation"),
             InputCharacters: request.UserPrompt.Length, InputCharacterLimit: request.InputCharacterLimit,
             InputTokenLimit: LlmRequestBudget.InputLimit(_options, request.MaxOutputTokens, request.InputTokenLimit),
-            ContextTokenLimit: _options.MaxContextTokens);
+            ContextTokenLimit: _options.MaxContextTokens, Kind: "Request");
         try
         {
             if (_client is null) throw new LlmClientException("LLM_DISABLED", "The internal LLM is disabled.");
@@ -147,7 +147,7 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
             diagnostic = diagnostic with { State = result.FinishReason == "length" ? "Failed" : "Completed", PromptTokens = result.PromptTokens, CompletionTokens = result.CompletionTokens,
                 ErrorCode = result.FinishReason == "length" ? "LLM_RESPONSE_TRUNCATED" : null,
                 FinishReason = result.FinishReason is "stop" or "length" or "content_filter" ? result.FinishReason : "other",
-                OutputMode = result.OutputMode, Retries = result.RetryCount };
+                OutputMode = result.OutputMode, Retries = result.RetryCount, HttpStatus = result.HttpStatus };
             return result;
         }
         catch (Exception e)
@@ -261,7 +261,7 @@ public sealed class VllmClient : ILlmCompletionTransport, IDisposable
                     LogCompletion(correlationId, stopwatch.ElapsedMilliseconds, request.EnableThinking, retryCount, mode == "json_prompt");
                     return new(content.Content, content.FinishReason, stopwatch.ElapsedMilliseconds,
                         mode is "structured_outputs" or "response_format", mode == "json_prompt", retryCount,
-                        request.MaxOutputTokens, content.PromptTokens, content.CompletionTokens, content.TotalTokens, mode);
+                        request.MaxOutputTokens, content.PromptTokens, content.CompletionTokens, content.TotalTokens, mode, (int)response.StatusCode);
                 }
                 if (request.StructuredSchema.HasValue && mode is "structured_outputs" or "response_format")
                 {

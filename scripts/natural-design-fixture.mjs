@@ -14,7 +14,7 @@ export function naturalDesignFixture(context, properties, mode) {
     { id: 'r1', text: naturalPrompt, kind: 'interlock', origin: 'explicit', sourceQuote: '', sourceRangeIds: context.sourceRanges.map(range => range.id) }],
     scenarios: [{ id: 'scenario-1', title: '장비 설계', requirementIds: ['r1'], sourceRangeIds: context.sourceRanges.map(range => range.id) }], questions: [] };
   if (properties.reviewedRequirementIds) return { accepted: mode !== 'natural-reject', reviewedRequirementIds: ['r1'],
-    issues: mode === 'natural-reject' ? ['문 열림 차단 경로를 보완하세요'] : [] };
+    issues: mode === 'natural-reject' ? ['문 열림 차단 경로를 보완하세요'] : [], itemIssues: [] };
   if (!properties.nodes?.items?.properties?.requirementIds) return undefined;
   const node = (id, label, kind, members = []) => ({ id, label, kind, shape: '', members, details: [], requirementIds: ['r1'], assumption: false });
   const edge = (id, sourceId, targetId, label, extras = {}) => ({ id, sourceId, targetId, label,

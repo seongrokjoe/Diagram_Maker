@@ -105,7 +105,7 @@ public sealed class NaturalReliabilityTests
         using (var execution = new SemanticExecution(options, null, Ct))
         {
             var error = await Assert.ThrowsAsync<LlmClientException>(() => Client(model).ExtractNaturalRequirementsAsync("요청한다.", false, Ct));
-            Assert.Equal("NATURAL_REQUIREMENTS_REVIEW", error.Code);
+            Assert.Equal("NATURAL_REQUIREMENTS_INVALID", error.Code);
             checkpoints = execution.Checkpoints;
         }
         Assert.Equal(3, model.Purposes.Count);
@@ -203,7 +203,8 @@ public sealed class NaturalReliabilityTests
                 var items = ranges.Select((r, i) => new NaturalRequirement($"r{i + 1}",
                     RepairItem && i == 0 ? request.Purpose == "requirements" ? "원래 정상 항목" : "덮어쓰면 안 되는 항목" : "동작",
                     "behavior", "explicit", "", SourceRangeIds: [RepairItem && i == 1 && request.Purpose == "requirements" ? "unknown" : r.GetProperty("id").GetString()!])).ToArray();
-                value = new NaturalRequirements("설계", [], items, Questions: Ask
+                value = new NaturalRequirements("설계", [], items,
+                    Scenarios: [new("s1", "흐름", items.Select(item => item.Id).ToArray(), ranges.Select(r => r.GetProperty("id").GetString()!).ToArray())], Questions: Ask
                     ? [new("q1", "어떤 승인 방식을 사용합니까?", "흐름이 달라집니다.", [ranges[0].GetProperty("id").GetString()!], ["자동", "수동"])] : []);
             }
             return Result(JsonSerializer.Serialize(value, new JsonSerializerOptions(JsonSerializerDefaults.Web)));

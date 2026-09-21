@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { AnalysisWorkspace } from "./AnalysisWorkspace";
 import { CodeBlockWorkspace } from "./CodeBlockWorkspace";
 import { CodeDiagramTest } from "./CodeDiagramTest";
+import { NaturalDiagramTest } from "./NaturalDiagramTest";
 import { api } from "./api";
 import { createFeatureErrors, type FeatureMessages } from "./featureErrors";
 import { DiagramEditor } from "./DiagramEditor";
@@ -338,11 +339,14 @@ function NormalApp() {
           <div className="panel-heading"><div><p className="section-label">PREVIEW</p><h2>{diagram?.ir.title ?? "생성 결과"}</h2></div>{diagram && <span className="status-chip">{formatDiagramType(diagram.type)} · v{diagram.version}</span>}</div>
           {naturalRun && <div className="connection-card natural-run-status" role="status"><strong>{naturalRun.stageMessage}</strong><progress max={100} value={naturalRun.progress} /><span>{naturalRun.progress}% · {naturalRun.state}</span>{naturalRun.errorMessage && <small>{naturalRun.errorMessage}</small>}<div className="button-row">
             {naturalRunActive && <button type="button" className="secondary" onClick={() => void cancelNaturalRun()}>실행 취소</button>}
-            {(naturalRun.state === "Partial" || naturalRun.state === "Failed" || naturalRun.state === "Cancelled") && <button type="button" className="secondary" onClick={() => void resumeNaturalRun()}>저장 지점에서 이어하기</button>}
+            {(naturalRun.state === "Partial" || naturalRun.state === "Failed" || naturalRun.state === "Cancelled") && (naturalRun.resumeAllowed !== false
+              ? <button type="button" className="secondary" onClick={() => void resumeNaturalRun()}>저장 지점에서 이어하기</button>
+              : <p>보정 횟수를 소진했습니다. 진단의 원인을 확인하고 왼쪽의 ‘다이어그램 생성’으로 새 실행을 시작하세요.</p>)}
             <a href={`/api/v1/natural-diagram-runs/${naturalRun.id}/diagnostics`} download>진단 다운로드</a>
           </div></div>}
           {naturalPollError && <p role="status" className="warning">{naturalPollError}</p>}
-          {naturalRun?.execution && <SemanticProgressView value={naturalRun.execution} running={naturalRunActive} waitingForAnswer={naturalRun.state === "NeedsClarification"} />}
+          {naturalRun?.execution && <SemanticProgressView value={naturalRun.execution} running={naturalRunActive} waitingForAnswer={naturalRun.state === "NeedsClarification"}
+            diagnosticsUrl={`/api/v1/natural-diagram-runs/${naturalRun.id}/diagnostics?format=json`} />}
           {naturalRun?.state === "NeedsClarification" && <section className="natural-questions" aria-label="자연어 요청 확인">
             <h3>설계에 필요한 내용 확인</h3>
             {(naturalRun.questions ?? []).map(question => <fieldset key={question.id}><legend>{question.text}</legend>
@@ -394,7 +398,7 @@ function NormalApp() {
 
       {tab === "llm" && <section className="llm-test-layout">
         <section className="panel controls"><p className="section-label">SYNTHETIC DATA ONLY</p><h2>사내 LLM 연결 점검</h2><p className="help">실제 저장소·커밋·사용자 요청을 보내지 않고 고정된 합성 데이터만 사용합니다.</p><button type="button" className="secondary" disabled={busy} onClick={() => void runLlmTest("connection")}>{elapsedLabel("1. 기본 연결 시험", busyAction === "llm-connection", busySeconds)}</button><button type="button" className="secondary" disabled={busy} onClick={() => void runLlmTest("diagram")}>{elapsedLabel("2. DiagramIR 계약 시험", busyAction === "llm-diagram", busySeconds)}</button><button type="button" className="secondary" disabled={busy} onClick={() => void runLlmTest("thinking")}>{elapsedLabel("3. Thinking 계약 시험", busyAction === "llm-thinking", busySeconds)}</button></section>
-        <section className="panel"><p className="section-label">BOUNDED DIAGNOSTICS</p><h2>시험 결과</h2><div className="llm-result-list"><LlmTestCard title="기본 연결" value={llmTests.connection} /><LlmTestCard title="DiagramIR 구조화" value={llmTests.diagram} /><LlmTestCard title="Thinking 구조화" value={llmTests.thinking} /><CodeDiagramTest /></div></section>
+        <section className="panel"><p className="section-label">BOUNDED DIAGNOSTICS</p><h2>시험 결과</h2><div className="llm-result-list"><LlmTestCard title="기본 연결" value={llmTests.connection} /><LlmTestCard title="DiagramIR 구조화" value={llmTests.diagram} /><LlmTestCard title="Thinking 구조화" value={llmTests.thinking} /><CodeDiagramTest /><NaturalDiagramTest /></div></section>
       </section>}
     </main>
   </div>;

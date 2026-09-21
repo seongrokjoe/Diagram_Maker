@@ -30,10 +30,11 @@ public sealed class SemanticExecution : IDisposable
     private readonly long previousElapsed;
     private readonly int attemptNumber;
     private readonly DateTimeOffset startedAt = DateTimeOffset.UtcNow;
-    private (string Group, string? Parent, int Attempt, IReadOnlyList<string> Ancestors)? requestScope;
+    private (string Group, string? Parent, int Attempt, IReadOnlyList<string> Ancestors, string Protocol)? requestScope;
     private readonly bool protocolUpgraded;
     public string Stage { get; private set; } = "preparing";
     public string UnitId { get; private set; } = "";
+    internal string? RequestGroupId => requestScope?.Group;
     public int BudgetSeconds { get; }
     public Guid? LeaseId { get; init; }
     public CancellationToken Token => budget.Token;
@@ -126,7 +127,7 @@ public sealed class SemanticExecution : IDisposable
             checkpoints.Any(c => c.Stage.StartsWith("shared-", StringComparison.Ordinal)) &&
             !(savedDiagnostics ?? []).Any(d => d.ProtocolVersion == SharedPolicyVersion);
         diagnostics = (savedDiagnostics ?? []).Select(d => d.State is "Running" or "Preparing"
-            ? d with { State = "Interrupted", ErrorCode = "PROCESS_INTERRUPTED" } : d).ToList();
+            ? d with { State = "Interrupted", ErrorCode = "PROCESS_INTERRUPTED", RecoveryState = "Interrupted", NextAction = "Resume" } : d).ToList();
         initialRequests = diagnostics.Count;
         preflightTokenizationRequests = initialPreflightTokenizationRequests = savedProgress?.PreflightTokenizationRequests ?? 0;
         previousElapsed = savedProgress?.TotalElapsedSeconds is > 0 ? savedProgress.TotalElapsedSeconds : savedProgress?.ElapsedSeconds ?? 0;
@@ -206,8 +207,8 @@ public sealed class SemanticExecution : IDisposable
     public async Task RecordAsync(LlmDiagnostic record)
     {
         if (record.ProtocolVersion is null && requestScope is { } scope)
-            record = record with { ProtocolVersion = SharedPolicyVersion, RecoveryGroupId = scope.Group,
-                ParentGroupId = scope.Parent, Attempt = scope.Attempt, AncestorGroupIds = scope.Ancestors };
+            record = record with { ProtocolVersion = scope.Protocol, RecoveryGroupId = scope.Group,
+                ParentGroupId = scope.Parent, Attempt = record.Attempt ?? scope.Attempt, AncestorGroupIds = scope.Ancestors };
         if (record.ProtocolVersion is not null && record.ErrorCode is not null && record.RecoveryState is null)
             record = record with { RecoveryState = "Retrying" };
         var index = diagnostics.FindIndex(d => d.Id == record.Id);
@@ -215,7 +216,7 @@ public sealed class SemanticExecution : IDisposable
         if (index >= 0) diagnostics[index] = record; else diagnostics.Add(record);
         await NotifyAsync();
     }
-    public IDisposable BeginRequestScope(string group, string? parentGroup, int attempt)
+    public IDisposable BeginRequestScope(string group, string? parentGroup, int attempt, string? protocol = null)
     {
         var before = requestScope;
         // Preflight splits have no HTTP diagnostic of their own. Persist the
@@ -223,7 +224,13 @@ public sealed class SemanticExecution : IDisposable
         var ancestors = parentGroup is null ? [] : new[] { parentGroup }
             .Concat(before is { } enclosing && (enclosing.Group == parentGroup || enclosing.Group == group)
                 ? enclosing.Ancestors : []).Distinct(StringComparer.Ordinal).ToArray();
-        requestScope = (group, parentGroup, attempt, ancestors);
+        requestScope = (group, parentGroup, attempt, ancestors, protocol ?? SharedPolicyVersion);
+        return new RequestScope(() => requestScope = before);
+    }
+    internal IDisposable BeginRequestAttempt(int attempt)
+    {
+        var before = requestScope;
+        if (requestScope is { } scope) requestScope = (scope.Group, scope.Parent, attempt, scope.Ancestors, scope.Protocol);
         return new RequestScope(() => requestScope = before);
     }
     public async Task SetRecoveryAsync(string group, string state, bool descendants = false, bool protocolOnly = false)
@@ -255,6 +262,14 @@ public sealed class SemanticExecution : IDisposable
         var index = checkpoints.FindIndex(c => c.Key.StartsWith(UnitId, StringComparison.Ordinal));
         if (UnitId.Length == 0 || index < 0) return;
         checkpoints[index] = checkpoints[index] with { State = "Split", WasSplit = true };
+        await NotifyAsync();
+    }
+    public async Task FinishNaturalAsync(string state)
+    {
+        for (var i = 0; i < diagnostics.Count; i++)
+            if (diagnostics[i].ProtocolVersion?.StartsWith("natural-", StringComparison.Ordinal) == true &&
+                diagnostics[i].ErrorCode is not null && diagnostics[i].RecoveryState is null or "Retrying")
+                diagnostics[i] = diagnostics[i] with { RecoveryState = state };
         await NotifyAsync();
     }
     public Task NotifyAsync()

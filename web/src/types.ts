@@ -218,6 +218,7 @@ export type NaturalDiagramPageResult = {
 };
 
 export type NaturalDiagramRun = {
+  resumeAllowed?: boolean;
   id: string;
   ownerUserId: string;
   request: NaturalDiagramRecord["request"];
