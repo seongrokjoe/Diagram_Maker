@@ -8,11 +8,14 @@ import { checkZoomWheel } from './diagram-presentation-ui-checks.mjs';
 
 export const naturalPrompt = '문이 열려 있으면 장비 운전을 차단한다.';
 export function naturalDesignFixture(context, properties, mode) {
+  if (properties.reviewedSourceRangeIds) return { accepted: true,
+    reviewedSourceRangeIds: context.sourceRanges.map(range => range.id), issues: [] };
   if (properties.requirements) return { title: '장비 설계', entities: ['장비'], requirements: [
-    { id: 'r1', text: naturalPrompt, kind: 'interlock', origin: 'explicit', sourceQuote: naturalPrompt }] };
+    { id: 'r1', text: naturalPrompt, kind: 'interlock', origin: 'explicit', sourceQuote: '', sourceRangeIds: context.sourceRanges.map(range => range.id) }],
+    scenarios: [{ id: 'scenario-1', title: '장비 설계', requirementIds: ['r1'], sourceRangeIds: context.sourceRanges.map(range => range.id) }], questions: [] };
   if (properties.reviewedRequirementIds) return { accepted: mode !== 'natural-reject', reviewedRequirementIds: ['r1'],
     issues: mode === 'natural-reject' ? ['문 열림 차단 경로를 보완하세요'] : [] };
-  if (!properties.nodes?.items?.properties?.members) return undefined;
+  if (!properties.nodes?.items?.properties?.requirementIds) return undefined;
   const node = (id, label, kind, members = []) => ({ id, label, kind, shape: '', members, details: [], requirementIds: ['r1'], assumption: false });
   const edge = (id, sourceId, targetId, label, extras = {}) => ({ id, sourceId, targetId, label,
     type: context.type === 'state' ? 'transition' : context.type === 'sequence' ? 'message' : 'flow',
@@ -165,15 +168,15 @@ export async function checkNaturalDesign(request, count, setMode, root, origin, 
   const body = { prompt: naturalPrompt, views };
   const before = count();
   const record = await request('/natural-diagrams', 'POST', body, 201);
-  assert.equal(count() - before, 9, 'one shared extraction plus independent design/review for four views');
+  assert.equal(count() - before, 11, 'shared extraction/review, four design/reviews, and cross-view review');
   assert.equal(record.requirements.requirements.length, 1);
   assert.ok(record.views.every(view => view.designQuality.status === 'Reviewed' && view.designQuality.reviewedRequirementIds.length === 1));
   assert.deepEqual((await request(`/natural-diagrams/${record.id}`)).requirements, record.requirements);
   assert.equal((await request('/natural-diagrams', 'POST', body, 201)).id, record.id);
-  assert.equal(count() - before, 9, 'cached result causes no generation');
+  assert.equal(count() - before, 11, 'cached result causes no generation');
   setMode('natural-reject');
   const failed = await request(`/natural-diagrams/${record.id}/views/revise`, 'POST', { views: record.request.views, regenerateViewIds: ['state'] }, 201);
-  assert.equal(count() - before, 13, 'selected view uses its one repair without repeating requirements');
+  assert.equal(count() - before, 17, 'selected view uses two repairs without repeating requirements');
   assert.equal(failed.views.find(view => view.viewId === 'state').state, 'Failed');
   assert.equal(failed.views.find(view => view.viewId === 'state').diagram.id, record.views.find(view => view.viewId === 'state').diagram.id);
   assert.ok(failed.views.filter(view => view.viewId !== 'state').every(view => view.reused));
@@ -194,7 +197,7 @@ export async function checkNaturalDesign(request, count, setMode, root, origin, 
   const regenerated = runRecord.views.find(view => view.viewId === 'state').pages[0];
   assert.notEqual(regenerated.diagram.id, statePage.diagram.id, 'selected scenario page is regenerated');
   assert.ok(runRecord.views.filter(view => view.viewId !== 'state').every(view => view.reused));
-  assert.equal(count() - before, 15, 'background page regeneration reuses requirements and calls design/review once');
+  assert.equal(count() - before, 20, 'background page regeneration reuses requirements and reviews the selected design and overall result');
   const { chromium } = createRequire(path.join(root, 'artifacts/ui-check/package.json'))('playwright');
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   let page;
@@ -240,7 +243,7 @@ export async function checkNaturalDesign(request, count, setMode, root, origin, 
     await restored.locator('.diagram-type-tabs button').nth(2).click();
     await restored.locator('[data-ir-kind="annotation"]').filter({ hasText: '문이 닫힌 경우' }).waitFor();
     assert.deepEqual(errors, []);
-    assert.equal(count() - before, 15, 'view navigation never invokes the LLM');
+    assert.equal(count() - before, 20, 'view navigation never invokes the LLM');
   } catch (error) {
     if (page) {
       await page.screenshot({ path: path.join(fixture, 'natural-ui-failure.png') }).catch(() => {});
@@ -248,7 +251,7 @@ export async function checkNaturalDesign(request, count, setMode, root, origin, 
     }
     throw error;
   } finally { await browser.close(); }
-  return { name: 'natural-design', formats: 4, requests: 15, sharedRequirements: 1,
+  return { name: 'natural-design', formats: 4, requests: 20, sharedRequirements: 1,
     backgroundRun: true, selectedScenarioRegeneration: true, rejectedRepairPreservesSource: true,
     directSvgEditing: ['class-member', 'sequence-condition'], canvasPan: ['view', 'edit-blank', 'edit-space'], revisionRestore: true };
 }

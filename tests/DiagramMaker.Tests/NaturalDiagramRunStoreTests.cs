@@ -10,6 +10,8 @@ public sealed class NaturalDiagramRunStoreTests
     {
         Assert.Equal("\"Completed\"", System.Text.Json.JsonSerializer.Serialize(NaturalDiagramRunState.Completed));
         Assert.Equal(NaturalDiagramRunState.Completed, System.Text.Json.JsonSerializer.Deserialize<NaturalDiagramRunState>("2"));
+        Assert.Equal(NaturalDiagramRunState.Cancelled, System.Text.Json.JsonSerializer.Deserialize<NaturalDiagramRunState>("5"));
+        Assert.Equal(NaturalDiagramRunState.NeedsClarification, System.Text.Json.JsonSerializer.Deserialize<NaturalDiagramRunState>("6"));
     }
 
     private static readonly CancellationToken Ct = CancellationToken.None;

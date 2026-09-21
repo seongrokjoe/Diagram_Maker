@@ -1,6 +1,6 @@
 ﻿{
-    "version":  "0.1.0-internal.10",
-    "archive":  "DiagramMaker-0.1.0-internal.10-win-x64.zip",
-    "sha256":  "77d23b45bfe5ea2a677ac453446d95385cd746e18500c3d48521d45460a5be9d",
-    "webSha256":  "54c08bb28f7103f6a65029d8e3cc1c0a476ee3c68ebb817b40ba8a38a8c3fe4a"
+    "version":  "0.1.0-internal.11",
+    "archive":  "DiagramMaker-0.1.0-internal.11-win-x64.zip",
+    "sha256":  "ba9e58c272e64d32a48b279b052083dda17e094f336ce462d99ae0ab227ed585",
+    "webSha256":  "f847a20bbb5efed5a259c620fb6929d80715acde9b3354edcd99835ed191715d"
 }

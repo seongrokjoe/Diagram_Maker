@@ -46,9 +46,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\ui-test.ps1 -NoBro
 
 ## 실행기 검증
 
-2026-09-14 AI/Code 개선을 포함한 최신 전체 `verify.ps1`도 실제 종료 코드 0으로 완료했습니다.
-.NET 302개·작업자 43개·웹 50개·정책 단위 13개, API·공유 의미 두 설정·전체 UI와 CMD 14개가 통과했습니다.
-모바일 오류 표와 AI/Code 비교 화면까지 확인한 [최신 검증 보고서](AI_CODE_DIAGRAM_IMPROVEMENT_REPORT.md)를 참고하세요.
+2026-09-21 internal.11을 포함한 최신 전체 `verify.ps1`은 실제 종료 코드 0으로 완료했습니다.
+.NET 370개·작업자 43개·웹 62개·정책 단위 13개, API·공유 의미 두 설정·전체 UI와 CMD 14개가 통과했습니다.
+모바일 오류 표와 AI/Code 비교 화면을 포함한 최신 결과는 [자연어 안정성 검증 보고서](NATURAL_DIAGRAM_RELIABILITY_REPORT.md)를 참고하세요.
 
 비동기화 작업본에서 다음 명령으로 재현할 수 있습니다. `scripts/verify.ps1`도 두 검사를 포함합니다.
 
@@ -59,10 +59,5 @@ node scripts/smoke-ui-test-launchers.mjs
 
 실제 CMD 검사는 합성 데이터로 UI/API 변경 반영, 파일 추가·삭제, 변경 없는 재실행, 컴파일 실패 시 기존 서버 보존,
 자동 교체, 저장 데이터·생성 결과 복원, 포트 충돌, 프로세스 신원 확인, 캐시 손상 복구, 정책·SDK 오류를 확인합니다.
-검증용 데이터와 로그는 `artifacts/ui-test-launchers-*`에 별도로 남습니다.
-
-2026-09-12 최종 전체 `verify.ps1`의 실제 종료 코드 0을 확인했습니다. .NET 279개, worker 37개,
-웹 46개, 정책·폰트·실행기 13개와 실제 CMD 회귀 14개 및 API·공유 의미·화면 검사가 통과했습니다.
-실제 저장소의 현재 소스 해시·제공 JS/CSS·재사용·종료도 확인했으며, 서버는 종료하고 데이터/캐시는 보존했습니다.
-상세 결과는 [검증 요약](artifacts/ui-source-validation/result-summary.json)과
-[전체 검증 로그](artifacts/ui-source-validation/ui-source-verify-recorded.log)에 있습니다.
+검증용 데이터와 로그는 실행 중 `artifacts/ui-test-launchers-*`에 생성되며 배포 정리 시 제거할 수 있습니다.
+최종 결과와 미검증 항목은 최신 검증 보고서와 진행 기록에 유지합니다.

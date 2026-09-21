@@ -178,7 +178,10 @@ try {
   await checkZoomWheel(page, editor);
   await checkResultPresentation(page, workspace, fixture, 'code');
   const resizer = workspace.getByRole('separator', { name: '생성 이력 영역 너비' });
+  // Viewport changes complete before ResizeObserver publishes the desktop width.
+  await resizer.and(page.locator('[aria-valuemax="560"]')).waitFor();
   await resizer.focus(); await page.keyboard.press('End');
+  await resizer.and(page.locator('[aria-valuenow="560"]')).waitFor();
   assert.equal(await resizer.getAttribute('aria-valuenow'), '560');
   await page.keyboard.press('Home');
   assert.equal(await resizer.getAttribute('aria-valuenow'), '220');

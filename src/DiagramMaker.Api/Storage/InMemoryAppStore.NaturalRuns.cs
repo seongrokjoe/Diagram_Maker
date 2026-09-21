@@ -40,8 +40,8 @@ public sealed partial class InMemoryAppStore
                 return Task.FromResult(false);
             _naturalRuns[run.Id] = run with
             {
-                LeaseId = run.IsTerminal || run.State == NaturalDiagramRunState.Queued ? null : current.LeaseId,
-                LeaseUntil = run.IsTerminal || run.State == NaturalDiagramRunState.Queued ? null : current.LeaseUntil
+                LeaseId = run.State != NaturalDiagramRunState.Generating ? null : current.LeaseId,
+                LeaseUntil = run.State != NaturalDiagramRunState.Generating ? null : current.LeaseUntil
             };
             return Task.FromResult(true);
         }
@@ -53,7 +53,7 @@ public sealed partial class InMemoryAppStore
         {
             var now = DateTimeOffset.UtcNow;
             var run = _naturalRuns.Values.Where(candidate => candidate.State == NaturalDiagramRunState.Queued ||
-                    candidate.State == NaturalDiagramRunState.Generating && candidate.LeaseUntil < now)
+                    candidate.State == NaturalDiagramRunState.Generating && (candidate.LeaseUntil is null || candidate.LeaseUntil < now))
                 .OrderBy(candidate => candidate.CreatedAt).FirstOrDefault();
             if (run is null) return Task.FromResult<NaturalDiagramRun?>(null);
             var leased = run with { State = NaturalDiagramRunState.Generating, Progress = Math.Max(5, run.Progress),
@@ -83,5 +83,14 @@ public sealed partial class InMemoryAppStore
     internal void RestoreNaturalRun(NaturalDiagramRun run)
     {
         lock (_naturalRunGate) _naturalRuns[run.Id] = run;
+    }
+
+    internal void RestoreNaturalRuns(IReadOnlyList<NaturalDiagramRun> runs)
+    {
+        lock (_naturalRunGate)
+        {
+            _naturalRuns.Clear();
+            foreach (var run in runs) _naturalRuns.Add(run.Id, run);
+        }
     }
 }

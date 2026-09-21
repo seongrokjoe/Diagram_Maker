@@ -763,7 +763,8 @@ public enum NaturalDiagramRunState
     Completed,
     Partial,
     Failed,
-    Cancelled
+    Cancelled,
+    NeedsClarification
 }
 
 public sealed record NaturalDiagramRun(
@@ -785,7 +786,15 @@ public sealed record NaturalDiagramRun(
     string? ErrorCode = null,
     string? ErrorMessage = null,
     Guid? LeaseId = null,
-    DateTimeOffset? LeaseUntil = null)
+    DateTimeOffset? LeaseUntil = null,
+    IReadOnlyList<SemanticCheckpoint>? Checkpoints = null,
+    IReadOnlyList<LlmDiagnostic>? Diagnostics = null,
+    SemanticProgress? Execution = null,
+    IReadOnlyList<NaturalQuestion>? Questions = null,
+    IReadOnlyList<NaturalAnswer>? Answers = null,
+    int QuestionVersion = 0,
+    int AnswerVersion = 0,
+    string? InputFingerprint = null)
 {
     public bool IsTerminal => State is NaturalDiagramRunState.Completed or NaturalDiagramRunState.Partial or
         NaturalDiagramRunState.Failed or NaturalDiagramRunState.Cancelled;

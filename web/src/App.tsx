@@ -6,6 +6,7 @@ import { api } from "./api";
 import { createFeatureErrors, type FeatureMessages } from "./featureErrors";
 import { DiagramEditor } from "./DiagramEditor";
 import { PresetPicker } from "./PresetPicker";
+import { SemanticProgressView } from "./SemanticProgressView";
 import { RepositoryRuleEditor } from "./RepositoryRuleEditor";
 
 import type { RuntimeInfo } from "./runtimeTypes";
@@ -51,6 +52,8 @@ function NormalApp() {
   const [naturalRecord, setNaturalRecord] = useState<NaturalDiagramRecord | null>(null);
   const [naturalRun, setNaturalRun] = useState<NaturalDiagramRun | null>(null);
   const [naturalRuns, setNaturalRuns] = useState<NaturalDiagramRun[]>([]);
+  const [naturalAnswers, setNaturalAnswers] = useState<Record<string, string>>({});
+  const [naturalPollError, setNaturalPollError] = useState("");
   const naturalSelection = useRef(0);
   const [naturalPrompt, setNaturalPrompt] = useState("");
   const [naturalThinking, setNaturalThinking] = useState(false);
@@ -89,7 +92,7 @@ function NormalApp() {
   useEffect(() => {
     void api.listNaturalDiagramRuns().then((runs) => {
       setNaturalRuns(runs);
-      const recoverable = runs.find(run => run.state === "Queued" || run.state === "Generating");
+      const recoverable = runs.find(run => run.state === "Queued" || run.state === "Generating" || run.state === "NeedsClarification");
       if (recoverable) void openNaturalRun(recoverable);
     }).catch((reason: unknown) => reportError(messageOf(reason, "자연어 실행 이력을 불러오지 못했습니다.")));
   }, []);
@@ -100,6 +103,7 @@ function NormalApp() {
   async function openNaturalRun(run: NaturalDiagramRun) {
     const selection = ++naturalSelection.current;
     setNaturalRun(run);
+    setNaturalAnswers(Object.fromEntries((run.answers ?? []).map(answer => [answer.questionId, answer.text])));
     setNaturalRecord(null);
     setNaturalPrompt(run.request.prompt);
     setNaturalThinking(run.request.enableThinking);
@@ -137,6 +141,7 @@ function NormalApp() {
     return () => { active = false; };
   }, [naturalRecord?.id]);
   useEffect(() => {
+    setNaturalPollError("");
     if (!naturalRun || (naturalRun.state !== "Queued" && naturalRun.state !== "Generating")) return;
     let stopped = false;
     let timer = 0;
@@ -156,10 +161,14 @@ function NormalApp() {
           await loadNaturalHistory();
         }
         if (stopped) return;
+        setNaturalPollError("");
         setNaturalRun(current);
         if (current.state === "Queued" || current.state === "Generating") timer = window.setTimeout(poll, 500);
       } catch (reason) {
-        if (!stopped) reportError(messageOf(reason, "자연어 실행 상태를 불러오지 못했습니다."));
+        if (!stopped) {
+          setNaturalPollError("실행 상태를 불러오지 못했습니다. 자동으로 다시 확인합니다.");
+          timer = window.setTimeout(poll, 2000);
+        }
       }
     };
     timer = window.setTimeout(poll, 250);
@@ -227,6 +236,18 @@ function NormalApp() {
       const current = await api.getNaturalDiagramRun(naturalRun.id);
       setNaturalRun(await api.resumeNaturalDiagramRun(current.id, current.revision));
     } catch (reason) { reportAttemptError(messageOf(reason, "자연어 실행을 이어서 시작하지 못했습니다.")); }
+  }
+
+  async function answerNaturalRun() {
+    if (!naturalRun) return;
+    const selection = naturalSelection.current;
+    setBusyAction("natural-answer");
+    try {
+      const updated = await api.answerNaturalDiagramRun(naturalRun.id, naturalRun.revision, naturalRun.questionVersion,
+        (naturalRun.questions ?? []).map(question => ({ questionId: question.id, text: naturalAnswers[question.id] ?? "" })));
+      if (selection === naturalSelection.current) setNaturalRun(updated);
+    } catch (reason) { if (selection === naturalSelection.current) reportError(messageOf(reason, "답변을 저장하지 못했습니다.")); }
+    finally { setBusyAction(""); }
   }
 
   async function inspectRepository() {
@@ -318,10 +339,32 @@ function NormalApp() {
           {naturalRun && <div className="connection-card natural-run-status" role="status"><strong>{naturalRun.stageMessage}</strong><progress max={100} value={naturalRun.progress} /><span>{naturalRun.progress}% · {naturalRun.state}</span>{naturalRun.errorMessage && <small>{naturalRun.errorMessage}</small>}<div className="button-row">
             {naturalRunActive && <button type="button" className="secondary" onClick={() => void cancelNaturalRun()}>실행 취소</button>}
             {(naturalRun.state === "Partial" || naturalRun.state === "Failed" || naturalRun.state === "Cancelled") && <button type="button" className="secondary" onClick={() => void resumeNaturalRun()}>저장 지점에서 이어하기</button>}
+            <a href={`/api/v1/natural-diagram-runs/${naturalRun.id}/diagnostics`} download>진단 다운로드</a>
           </div></div>}
+          {naturalPollError && <p role="status" className="warning">{naturalPollError}</p>}
+          {naturalRun?.execution && <SemanticProgressView value={naturalRun.execution} running={naturalRunActive} waitingForAnswer={naturalRun.state === "NeedsClarification"} />}
+          {naturalRun?.state === "NeedsClarification" && <section className="natural-questions" aria-label="자연어 요청 확인">
+            <h3>설계에 필요한 내용 확인</h3>
+            {(naturalRun.questions ?? []).map(question => <fieldset key={question.id}><legend>{question.text}</legend>
+              <p>{question.reason}</p>
+              {question.sourceRangeIds.map(id => <blockquote key={id}>{naturalRequirements?.sourceRanges?.find(range => range.id === id)?.text}</blockquote>)}
+              {question.choices.length > 0 && <div className="button-row">{question.choices.map(choice => <button type="button" key={choice}
+                onClick={() => setNaturalAnswers(current => ({ ...current, [question.id]: choice }))}>{choice}</button>)}</div>}
+              <label>답변<input maxLength={1000} value={naturalAnswers[question.id] ?? ""} onChange={event =>
+                setNaturalAnswers(current => ({ ...current, [question.id]: event.target.value }))} /></label>
+            </fieldset>)}
+            <button type="button" className="primary" disabled={busy || (naturalRun.questions ?? []).some(q => !naturalAnswers[q.id]?.trim())}
+              onClick={() => void answerNaturalRun()}>답변 저장 후 생성</button>
+          </section>}
           {naturalResults.length > 0 && <div className="diagram-type-tabs">{naturalResults.map((view) => <button type="button" key={view.viewId} className={selectedNatural?.viewId === view.viewId ? "active" : ""} onClick={() => { setActiveNaturalView(view.viewId); setActiveNaturalPage(effectiveNaturalPages(view)[0]?.id ?? ""); }}>{formatDiagramType(view.selection.diagramType)}{view.state === "Failed" ? " · 실패" : view.state === "Partial" ? " · 부분" : ""}</button>)}</div>}
           {naturalPages.length > 1 && <div className="diagram-type-tabs natural-scenario-tabs" aria-label="자연어 시나리오 결과">{naturalPages.map(page =>
             <button type="button" key={page.id} className={selectedNaturalPage?.id === page.id ? "active" : ""} onClick={() => setActiveNaturalPage(page.id)}>{page.title}{page.state === "Failed" ? " · 실패" : ""}</button>)}</div>}
+          {naturalPages.length > 1 && <details className="diagnostic-panel"><summary>시나리오 개요와 상세 페이지</summary>
+            <ul>{naturalPages.map(page => <li key={page.id}><button type="button" className="text-button" onClick={() => setActiveNaturalPage(page.id)}>{page.title}</button>
+              <span> · {page.designQuality?.reviewedRequirementIds.length ?? 0}개 요구사항</span>
+              <p>{naturalRequirements?.requirements.filter(item => page.designQuality?.reviewedRequirementIds.includes(item.id)).map(item => item.text).join(" · ")}</p>
+            </li>)}</ul>
+          </details>}
           {naturalRecord && selectedNatural && <div className="diagram-meta"><span>{selectedNaturalPage?.reused || selectedNatural.reused ? "이전 결과 재사용" : selectedNaturalPage?.state === "Failed" ? "생성 실패 · 마지막 정상 결과 표시" : "LLM 생성"}</span><div className="button-row"><button type="button" className="secondary" disabled={busy || naturalRunActive} onClick={() => void regenerateNatural(selectedNatural.viewId)}>{elapsedLabel("이 형식 다시 생성", busyAction === `natural-regenerate-${selectedNatural.viewId}`, busySeconds)}</button>{selectedNaturalPage && <button type="button" className="secondary" disabled={busy || naturalRunActive} onClick={() => void regenerateNatural(selectedNatural.viewId, selectedNaturalPage.id)}>이 시나리오 다시 생성</button>}</div></div>}
           {(selectedNaturalPage?.errorMessage ?? selectedNatural?.errorMessage) && <p className="warning">{selectedNaturalPage?.errorMessage ?? selectedNatural?.errorMessage}</p>}
           {(selectedNaturalPage?.designQuality ?? selectedNatural?.designQuality) && (() => { const quality = selectedNaturalPage?.designQuality ?? selectedNatural!.designQuality!; return <details className="diagnostic-panel"><summary>{quality.status === "Reviewed" ? "생성 원본 설계 검토 완료" : "검토 후 편집됨"} · 요구사항 {quality.reviewedRequirementIds.length}개 · 설계 가정 {quality.assumptionElementIds.length}개</summary>

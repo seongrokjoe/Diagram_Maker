@@ -79,6 +79,10 @@ export const api = {
   listNaturalDiagramRevisions: (id: string) => request<NaturalDiagramRecord[]>(`/api/v1/natural-diagrams/${id}/revisions`),
   listNaturalDiagramRuns: (limit = 20) => request<NaturalDiagramRun[]>(`/api/v1/natural-diagram-runs?limit=${limit}`),
   getNaturalDiagramRun: (id: string) => request<NaturalDiagramRun>(`/api/v1/natural-diagram-runs/${id}`),
+  answerNaturalDiagramRun: (id: string, expectedRevision: number, questionVersion: number, answers: Array<{ questionId: string; text: string }>) =>
+    request<NaturalDiagramRun>(`/api/v1/natural-diagram-runs/${id}/answers`, {
+      method: "POST", body: JSON.stringify({ expectedRevision, questionVersion, answers }),
+    }),
   createNaturalDiagramRun: (input: {
     request: NaturalDiagramRecord["request"];
     sourceDiagramId?: string;

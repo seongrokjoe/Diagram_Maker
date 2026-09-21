@@ -284,6 +284,8 @@ public sealed class VllmClientTests
     {
         var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
         var handler = new QueueHandler(Response(JsonSerializer.Serialize(NaturalDesignTests.Requirements(), jsonOptions)),
+            Response(JsonSerializer.Serialize(new NaturalRequirementsReview(true,
+                NaturalRequirementEvidence.Prepare(NaturalDesignTests.Prompt).Select(r => r.Id).ToArray(), []), jsonOptions)),
             Response(JsonSerializer.Serialize(NaturalDesignTests.Design("flowchart"), jsonOptions)),
             Response("{\"accepted\":true,\"reviewedRequirementIds\":[\"r1\"],\"issues\":[]}"));
         var options = Options();
@@ -296,20 +298,20 @@ public sealed class VllmClientTests
             new DiagramPresetCatalog().Resolve("flowchart", "balanced"), null, CancellationToken.None);
 
         Assert.NotNull(diagram);
-        using var payload = JsonDocument.Parse(handler.Requests[1].Body);
+        using var payload = JsonDocument.Parse(handler.Requests[2].Body);
         Assert.Equal(1_750, payload.RootElement.GetProperty("max_tokens").GetInt32());
         Assert.Equal(0, payload.RootElement.GetProperty("temperature").GetDouble());
         Assert.True(payload.RootElement.GetProperty("chat_template_kwargs").GetProperty("enable_thinking").GetBoolean());
         var properties = payload.RootElement.GetProperty("structured_outputs").GetProperty("json").GetProperty("properties");
         Assert.True(properties.TryGetProperty("nodes", out _));
         Assert.True(properties.TryGetProperty("edges", out _));
-        Assert.Equal(3, handler.Requests.Count);
+        Assert.Equal(4, handler.Requests.Count);
     }
 
     [Fact]
-    public async Task NaturalDiagram_InvalidRequirementsStopAfterOneContractRepair()
+    public async Task NaturalDiagram_InvalidRequirementsStopAfterTwoContractRepairs()
     {
-        var handler = new QueueHandler(Response(ValidDiagramContent), Response(ValidDiagramContent));
+        var handler = new QueueHandler(Response(ValidDiagramContent), Response(ValidDiagramContent), Response(ValidDiagramContent));
         var options = Options();
         using var transport = new VllmClient(options, handler: handler);
         var llm = CreateInternalClient(options, transport);
@@ -318,9 +320,8 @@ public sealed class VllmClientTests
             "synthetic request", "flowchart", enableThinking: false,
             new DiagramPresetCatalog().Resolve("flowchart", "balanced"), null, CancellationToken.None));
 
-        Assert.Equal("LLM_SCHEMA_INVALID", error.Code);
-        Assert.True(error.RepairAttempted);
-        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal("NATURAL_REQUIREMENTS_REVIEW", error.Code);
+        Assert.Equal(3, handler.Requests.Count);
     }
 
     [Fact]

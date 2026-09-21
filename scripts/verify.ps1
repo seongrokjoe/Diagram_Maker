@@ -54,6 +54,8 @@ try {
         Assert-LastExitCode 'synthetic code block UI regression'
         node scripts/smoke-design-ui.mjs
         Assert-LastExitCode 'synthetic design and commit dropdown UI regression'
+        node scripts/smoke-natural-reliability.mjs
+        Assert-LastExitCode 'natural evidence, recovery, questions and UI regression'
     } else { Write-Host 'Edge UI regression: NOT RUN (pre-provisioned Playwright is unavailable).' }
     node scripts/smoke-ui-test-launchers.mjs
     Assert-LastExitCode 'current-source UI test CMD build, refresh, lifecycle and isolation regression'

@@ -69,8 +69,8 @@ public sealed partial class PostgresAppStore
             expectedLeaseId is not null && (current.IsTerminal || current.LeaseId != expectedLeaseId)) return false;
         var stored = run with
         {
-            LeaseId = run.IsTerminal || run.State == NaturalDiagramRunState.Queued ? null : current.LeaseId,
-            LeaseUntil = run.IsTerminal || run.State == NaturalDiagramRunState.Queued ? null : current.LeaseUntil
+                LeaseId = run.State != NaturalDiagramRunState.Generating ? null : current.LeaseId,
+                LeaseUntil = run.State != NaturalDiagramRunState.Generating ? null : current.LeaseUntil
         };
         await WriteNaturalRunAsync(connection, transaction, stored, cancellationToken);
         await transaction.CommitAsync(cancellationToken);

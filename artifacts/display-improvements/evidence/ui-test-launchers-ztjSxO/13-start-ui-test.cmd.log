@@ -1,7 +1,0 @@
-Checking the current project and local build tools...
-  DiagramMaker.Api -> C:\Users\������\AppData\Local\Temp\DiagramMaker-internal7-e67b3047\artifacts\ui-test-launchers-ztjSxO\local\DiagramMaker\UiTest\80628a6cc2d6\apps\398400a7a664-2c31ef22\
-Current-source UI build completed.
-UI test ready: http://127.0.0.1:56759
-Current project: 398400a7a664. LLM is disabled.
-Test data and logs: C:\Users\������\AppData\Local\Temp\DiagramMaker-internal7-e67b3047\artifacts\ui-test-launchers-ztjSxO\local\DiagramMaker\UiTest\80628a6cc2d6
-Stop the server with stop-ui-test.cmd. Closing the browser does not stop it.

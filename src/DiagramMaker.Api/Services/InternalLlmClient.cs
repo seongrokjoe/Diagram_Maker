@@ -10,6 +10,8 @@ public interface IInternalLlmClient
     bool IsEnabled { get; }
     Task<NaturalRequirements?> ExtractNaturalRequirementsAsync(string prompt, bool thinking, CancellationToken ct) =>
         Task.FromResult<NaturalRequirements?>(null);
+    Task<bool> ReviewNaturalSetAsync(string prompt, NaturalRequirements requirements,
+        IReadOnlyList<NaturalDiagramViewResult> views, bool thinking, CancellationToken ct) => Task.FromResult(true);
     async Task<NaturalDesignedDiagram?> GenerateDesignedNaturalAsync(string prompt, string type, bool thinking,
         DiagramPreset preset, DiagramStyleOverrides? style, NaturalRequirements? requirements, CancellationToken ct)
     {

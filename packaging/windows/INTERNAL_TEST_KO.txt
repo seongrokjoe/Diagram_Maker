@@ -1,8 +1,13 @@
-Diagram Maker 0.1.0-internal.7 사내 시험 안내
+Diagram Maker 0.1.0-internal.11 사내 시험 안내
 ============================================
 
 준비
 ----
+internal.11 변경: 자연어 원문 근거 ID/복수 근거, 최대 두 차례 보정과 정상 항목 보존,
+시나리오·상세 페이지 분할, 형식 간 최종 검토, 질문 저장·답변 후 생성, 진단 다운로드.
+새로고침·서버 재시작 후 질문과 완료 단위를 복원하며 이어하기는 보정 횟수를 초기화하지 않는다.
+기존 결과와 편집은 유지된다. 새 생성 프로토콜은 natural-v7/natural-design-v3이다.
+
 OFFLINE_INSTALL_KO.txt에 따라 비동기화 로컬 폴더에 압축을 풀고 configure-llm.cmd로
 승인된 사내 LLM을 설정한다. start.cmd 실행 후 health-check.cmd와 test-llm.cmd를 실행한다.
 웹 주소: http://127.0.0.1:5080

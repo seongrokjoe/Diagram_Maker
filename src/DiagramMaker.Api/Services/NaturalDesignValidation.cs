@@ -5,19 +5,55 @@ namespace DiagramMaker.Services;
 
 internal static class NaturalDesignValidation
 {
-    public const string Protocol = "natural-design-v2";
+    public const string Protocol = "natural-design-v3";
     public static string? Requirements(NaturalRequirements value, string prompt)
     {
         if (string.IsNullOrWhiteSpace(value.Title) || value.Requirements is not { Count: > 0 and <= 150 } ||
             value.Entities is null || value.Entities.Any(string.IsNullOrWhiteSpace)) return "NaturalRequirementsInvalid";
-        if (value.Requirements.Select(r => r.Id).Distinct().Count() != value.Requirements.Count) return "NaturalRequirementIdsInvalid";
+        if (value.Requirements.Any(r => r is null) || value.Requirements.Select(r => r.Id).Distinct().Count() != value.Requirements.Count) return "NaturalRequirementIdsInvalid";
+        var ranges = NaturalRequirementEvidence.Prepare(prompt);
         foreach (var r in value.Requirements)
             if (string.IsNullOrWhiteSpace(r.Id) || string.IsNullOrWhiteSpace(r.Text) || r.Text.Length > 500 ||
                 r.Kind is not ("entity" or "behavior" or "state" or "interlock" or "error" or "data" or "member") ||
                 r.Origin is not ("explicit" or "assumption") || SharedSemanticValidation.UnsafeText(r.Text) ||
-                r.Origin == "explicit" && (string.IsNullOrWhiteSpace(r.SourceQuote) || !prompt.Contains(r.SourceQuote, StringComparison.Ordinal)))
+                !NaturalRequirementEvidence.TryResolve(prompt, r, ranges, out _))
                 return "NaturalRequirementEvidenceInvalid";
         return value.Requirements.Any(r => r.Origin == "explicit") ? null : "NaturalExplicitRequirementsMissing";
+    }
+
+    public static IReadOnlyList<NaturalIssue> RequirementIssues(NaturalRequirements value, string prompt)
+    {
+        var issues = new List<NaturalIssue>();
+        var seen = new HashSet<string>();
+        foreach (var item in value.Requirements ?? [])
+        {
+            var error = item is null ? "NullItem" : !seen.Add(item.Id ?? "") ? "DuplicateId" :
+                Requirements(new(value.Title, value.Entities, [item]), prompt);
+            if (item?.Origin == "assumption" && error == "NaturalExplicitRequirementsMissing") error = null;
+            if (error is not null) issues.Add(new(item?.Id ?? "unknown", "requirements", error,
+                "Return this item with a unique ID, supported kind and valid server sourceRangeIds; preserve accepted items."));
+        }
+        if (value.Requirements is not { Count: > 0 }) issues.Add(new("requirements", "requirements", "MissingItems", "Extract all source requirements."));
+        return issues;
+    }
+
+    public static string? Plan(NaturalRequirements value)
+    {
+        var ids = value.Requirements.Select(r => r.Id).ToHashSet();
+        var ranges = (value.SourceRanges ?? []).Select(r => r.Id).ToHashSet();
+        if (value.Scenarios is { Count: > 0 } scenarios &&
+            (scenarios.Count > 30 || scenarios.Any(s => s is null || string.IsNullOrWhiteSpace(s.Id) || string.IsNullOrWhiteSpace(s.Title) ||
+                s.RequirementIds is not { Count: > 0 } || s.RequirementIds.Any(id => !ids.Contains(id)) ||
+                s.SourceRangeIds is null || s.SourceRangeIds.Any(id => !ranges.Contains(id))) ||
+             scenarios.Select(s => s.Id).Distinct().Count() != scenarios.Count ||
+             !scenarios.SelectMany(s => s.RequirementIds).ToHashSet().SetEquals(ids))) return "NaturalScenarioInvalid";
+        if (value.Questions is { Count: > 0 } questions && (questions.Count > 5 ||
+            questions.Any(q => q is null || string.IsNullOrWhiteSpace(q.Id) || string.IsNullOrWhiteSpace(q.Text) ||
+                string.IsNullOrWhiteSpace(q.Reason) || q.Text.Length > 500 || q.Reason.Length > 500 ||
+                q.SourceRangeIds is not { Count: > 0 } || q.SourceRangeIds.Any(id => !ranges.Contains(id)) ||
+                q.Choices is null || q.Choices.Count > 6 || q.Choices.Any(c => string.IsNullOrWhiteSpace(c) || c.Length > 500)) ||
+            questions.Select(q => q.Id).Distinct().Count() != questions.Count)) return "NaturalQuestionInvalid";
+        return null;
     }
 
     public static string? Design(NaturalDesign value, string type, NaturalRequirements requirements)
@@ -82,7 +118,9 @@ internal static class NaturalDesignValidation
         value.ReviewedRequirementIds is null || value.Issues is null || value.Issues.Count > 30 ||
         value.ReviewedRequirementIds.Count != requirements.Requirements.Count ||
         !value.ReviewedRequirementIds.ToHashSet().SetEquals(requirements.Requirements.Select(r => r.Id)) ||
-        value.Accepted != (value.Issues.Count == 0) ? "NaturalReviewInvalid" : null;
+        value.Accepted != (value.Issues.Count == 0) || value.Accepted && value.ItemIssues is { Count: > 0 } ||
+        value.ItemIssues?.Any(issue => issue is null || string.IsNullOrWhiteSpace(issue.ItemId) || string.IsNullOrWhiteSpace(issue.Code) ||
+            string.IsNullOrWhiteSpace(issue.Field) || string.IsNullOrWhiteSpace(issue.Instruction)) == true ? "NaturalReviewInvalid" : null;
 
     public static DiagramIr Normalize(NaturalDesign value, string type)
     {
@@ -110,7 +148,12 @@ internal static class NaturalDesignValidation
     public static readonly JsonElement RequirementsSchema = JsonSerializer.SerializeToElement(Obj(("title", Text()), ("entities", Strings()),
         ("requirements", List(Obj(("id", Text(80)), ("text", Text()),
             ("kind", Choice("entity", "behavior", "state", "interlock", "error", "data", "member")),
-            ("origin", Choice("explicit", "assumption")), ("sourceQuote", Text(1000))), 150))));
+            ("origin", Choice("explicit", "assumption")), ("sourceQuote", Text(1000)), ("sourceRangeIds", Strings())), 150)),
+        ("scenarios", List(Obj(("id", Text(80)), ("title", Text()), ("requirementIds", Strings()), ("sourceRangeIds", Strings())), 30)),
+        ("questions", List(Obj(("id", Text(80)), ("text", Text()), ("reason", Text()), ("sourceRangeIds", Strings()), ("choices", Strings(6))), 5))));
+    public static readonly JsonElement RequirementsReviewSchema = JsonSerializer.SerializeToElement(Obj(
+        ("accepted", new { type = "boolean" }), ("reviewedSourceRangeIds", Strings(1000)),
+        ("issues", List(Obj(("itemId", Text(80)), ("field", Text(80)), ("code", Text(80)), ("instruction", Text())), 30))));
     public static readonly JsonElement DesignSchema = JsonSerializer.SerializeToElement(Obj(("title", Text()),
         ("nodes", List(Obj(("id", Text(80)), ("label", Text(240)),
             ("kind", Choice("class", "interface", "participant", "state", "initial", "final", "operation", "decision", "terminal", "component")),
@@ -125,5 +168,32 @@ internal static class NaturalDesignValidation
             ("controlPath", List(Obj(("id", Text(80)), ("kind", Choice("alt", "opt", "loop")), ("label", Text(240)), ("branch", Text(240))), 32)),
             ("requirementIds", Strings()), ("assumption", new { type = "boolean" })))), ("notes", Strings(100))));
     public static readonly JsonElement ReviewSchema = JsonSerializer.SerializeToElement(Obj(("accepted", new { type = "boolean" }),
-        ("reviewedRequirementIds", Strings()), ("issues", Strings(30))));
+        ("reviewedRequirementIds", Strings()), ("issues", Strings(30)),
+        ("itemIssues", List(Obj(("itemId", Text(80)), ("field", Text(80)), ("code", Text(80)), ("instruction", Text())), 30))));
+
+    public static JsonElement DesignSchemaFor(string type)
+    {
+        var schema = System.Text.Json.Nodes.JsonNode.Parse(DesignSchema.GetRawText())!;
+        var node = schema["properties"]!["nodes"]!["items"]!;
+        var edge = schema["properties"]!["edges"]!["items"]!;
+        void Remove(System.Text.Json.Nodes.JsonNode item, string field)
+        {
+            item["properties"]!.AsObject().Remove(field);
+            item["required"] = new System.Text.Json.Nodes.JsonArray(item["required"]!.AsArray()
+                .Where(value => value!.GetValue<string>() != field).Select(value => value!.DeepClone()).ToArray());
+        }
+        if (type != "class") Remove(node, "members");
+        if (type != "flowchart") Remove(node, "shape");
+        if (type != "sequence") Remove(edge, "controlPath");
+        if (type != "state") foreach (var field in new[] { "event", "guard", "action" }) Remove(edge, field);
+        return JsonSerializer.SerializeToElement(schema);
+    }
+
+    public static NaturalDesign CompleteInapplicableFields(NaturalDesign design, string type) => design with {
+        Nodes = design.Nodes?.Select(node => node is null ? null! : node with {
+            Members = type == "class" ? node.Members : [], Shape = type == "flowchart" ? node.Shape : "" }).ToArray()!,
+        Edges = design.Edges?.Select(edge => edge is null ? null! : edge with {
+            ControlPath = type == "sequence" ? edge.ControlPath : [], Event = type == "state" ? edge.Event : "",
+            Guard = type == "state" ? edge.Guard : "", Action = type == "state" ? edge.Action : "" }).ToArray()!
+    };
 }

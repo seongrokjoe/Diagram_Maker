@@ -1,9 +1,0 @@
-2026-09-11 11:55:54 info: Microsoft.Hosting.Lifetime[14] Now listening on: http://127.0.0.1:49989
-2026-09-11 11:55:54 info: Microsoft.Hosting.Lifetime[0] Application started. Press Ctrl+C to shut down.
-2026-09-11 11:55:54 info: Microsoft.Hosting.Lifetime[0] Hosting environment: Development
-2026-09-11 11:55:54 info: Microsoft.Hosting.Lifetime[0] Content root path: C:\Users\������\AppData\Local\Temp\DiagramMaker-performance-20260910\artifacts\stage\DiagramMaker-0.1.0-perf.3-win-x64
-2026-09-11 11:55:54 info: DiagramMaker.Services.VllmClient[0] Internal LLM request 61d676605d354f83b22887f46588bef5 completed in 68 ms; thinking=False, retries=0, structuredFallback=False
-2026-09-11 11:55:54 info: DiagramMaker.Services.VllmClient[0] Internal LLM request ddbfd91038b14617b7b581b572c0567e completed in 9 ms; thinking=False, retries=0, structuredFallback=False
-2026-09-11 11:55:54 info: DiagramMaker.Services.VllmClient[0] Internal LLM request b398320e8fcb453d8b7245559394600f completed in 1 ms; thinking=True, retries=0, structuredFallback=False
-2026-09-11 11:55:54 info: DiagramMaker.Services.VllmClient[0] Internal LLM request 3980450b4335443380563de6d1e56709 completed in 1 ms; thinking=False, retries=0, structuredFallback=False
-2026-09-11 11:55:54 info: DiagramMaker.Services.VllmClient[0] Internal LLM request de0c6c796a3f4ac3a94ee710d2caae5e completed in 1 ms; thinking=False, retries=0, structuredFallback=False

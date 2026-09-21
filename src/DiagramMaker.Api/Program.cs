@@ -725,7 +725,7 @@ api.MapPost("/natural-diagram-runs", async (
     {
         source = await store.GetNaturalDiagramAsync(sourceId, cancellationToken);
         if (source is null) return Results.NotFound(new { error = "The source natural diagram does not exist." });
-        if (!CanAccessNaturalDiagram(source, identity.UserId)) return Results.Forbid();
+        if (!CanAccessNaturalDiagram(source, identity.UserId)) return Results.StatusCode(StatusCodes.Status403Forbidden);
     }
     else if (input.RegenerateViewIds is { Count: > 0 } || input.RegeneratePageIds is { Count: > 0 })
         return Results.BadRequest(new { error = "Selected-output regeneration requires a source natural diagram." });
@@ -747,14 +747,14 @@ api.MapPost("/natural-diagram-runs", async (
 });
 
 api.MapGet("/natural-diagram-runs", async (int? limit, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
-    Results.Ok(await store.ListNaturalDiagramRunsAsync(context.GetInternalIdentity().UserId,
-        Math.Clamp(limit ?? 20, 1, 50), cancellationToken)));
+    Results.Ok((await store.ListNaturalDiagramRunsAsync(context.GetInternalIdentity().UserId,
+        Math.Clamp(limit ?? 20, 1, 50), cancellationToken)).Select(run => run with { Checkpoints = null })));
 
 api.MapGet("/natural-diagram-runs/{id:guid}", async (Guid id, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
 {
     var run = await store.GetNaturalDiagramRunAsync(id, cancellationToken);
     if (run is null) return Results.NotFound();
-    return CanAccessNaturalRun(run, context.GetInternalIdentity().UserId) ? Results.Ok(run) : Results.Forbid();
+    return CanAccessNaturalRun(run, context.GetInternalIdentity().UserId) ? Results.Ok(run with { Checkpoints = null }) : Results.StatusCode(StatusCodes.Status403Forbidden);
 });
 
 api.MapPost("/natural-diagram-runs/{id:guid}/cancel", async (
@@ -762,7 +762,7 @@ api.MapPost("/natural-diagram-runs/{id:guid}/cancel", async (
 {
     var run = await store.GetNaturalDiagramRunAsync(id, cancellationToken);
     if (run is null) return Results.NotFound();
-    if (!CanAccessNaturalRun(run, context.GetInternalIdentity().UserId)) return Results.Forbid();
+    if (!CanAccessNaturalRun(run, context.GetInternalIdentity().UserId)) return Results.StatusCode(StatusCodes.Status403Forbidden);
     if (run.Revision != request.ExpectedRevision)
         return Results.Conflict(new { error = "The run changed. Refresh and try again.", currentRevision = run.Revision });
     if (run.IsTerminal) return Results.Conflict(new { error = "The run is already finished.", currentRevision = run.Revision });
@@ -771,7 +771,7 @@ api.MapPost("/natural-diagram-runs/{id:guid}/cancel", async (
         UpdatedAt = DateTimeOffset.UtcNow, LeaseId = null, LeaseUntil = null };
     if (!await store.UpdateNaturalDiagramRunAsync(cancelled, run.Revision, null, cancellationToken))
         return Results.Conflict(new { error = "The run changed. Refresh and try again." });
-    return Results.Ok(cancelled);
+    return Results.Ok(cancelled with { Checkpoints = null });
 });
 
 api.MapPost("/natural-diagram-runs/{id:guid}/resume", async (
@@ -779,7 +779,7 @@ api.MapPost("/natural-diagram-runs/{id:guid}/resume", async (
 {
     var run = await store.GetNaturalDiagramRunAsync(id, cancellationToken);
     if (run is null) return Results.NotFound();
-    if (!CanAccessNaturalRun(run, context.GetInternalIdentity().UserId)) return Results.Forbid();
+    if (!CanAccessNaturalRun(run, context.GetInternalIdentity().UserId)) return Results.StatusCode(StatusCodes.Status403Forbidden);
     if (run.Revision != request.ExpectedRevision)
         return Results.Conflict(new { error = "The run changed. Refresh and try again.", currentRevision = run.Revision });
     if (run.State is not (NaturalDiagramRunState.Partial or NaturalDiagramRunState.Failed or NaturalDiagramRunState.Cancelled))
@@ -789,7 +789,40 @@ api.MapPost("/natural-diagram-runs/{id:guid}/resume", async (
         LeaseId = null, LeaseUntil = null };
     if (!await store.UpdateNaturalDiagramRunAsync(queued, run.Revision, null, cancellationToken))
         return Results.Conflict(new { error = "The run changed. Refresh and try again." });
-    return Results.Accepted($"/api/v1/natural-diagram-runs/{run.Id}", queued);
+    return Results.Accepted($"/api/v1/natural-diagram-runs/{run.Id}", queued with { Checkpoints = null });
+});
+
+api.MapPost("/natural-diagram-runs/{id:guid}/answers", async (
+    Guid id, NaturalAnswersRequest input, HttpContext context, IAppStore store, CancellationToken ct) =>
+{
+    var run = await store.GetNaturalDiagramRunAsync(id, ct);
+    if (run is null) return Results.NotFound();
+    if (!CanAccessNaturalRun(run, context.GetInternalIdentity().UserId)) return Results.StatusCode(StatusCodes.Status403Forbidden);
+    if (run.State != NaturalDiagramRunState.NeedsClarification || run.Revision != input.ExpectedRevision ||
+        run.QuestionVersion != input.QuestionVersion)
+        return Results.Conflict(new { error = "질문 또는 실행이 변경되었습니다. 새로고침 후 다시 답변하세요." });
+    var questions = run.Questions ?? [];
+    if (input.Answers is null || input.Answers.Count != questions.Count ||
+        input.Answers.Any(a => a is null || string.IsNullOrWhiteSpace(a.Text) || a.Text.Length > 1000) ||
+        input.Answers.Select(a => a.QuestionId).Distinct().Count() != questions.Count ||
+        !input.Answers.Select(a => a.QuestionId).ToHashSet().SetEquals(questions.Select(q => q.Id)))
+        return Results.BadRequest(new { error = "각 질문에 1,000자 이내의 답변을 입력하세요." });
+    var queued = run with { State = NaturalDiagramRunState.Queued, Revision = run.Revision + 1,
+        UpdatedAt = DateTimeOffset.UtcNow, Answers = input.Answers, AnswerVersion = run.AnswerVersion + 1,
+        Requirements = null, StageMessage = "답변을 반영하여 생성 대기", LeaseId = null, LeaseUntil = null };
+    if (!await store.UpdateNaturalDiagramRunAsync(queued, run.Revision, null, ct))
+        return Results.Conflict(new { error = "실행 상태가 변경되었습니다." });
+    return Results.Accepted($"/api/v1/natural-diagram-runs/{id}", queued with { Checkpoints = null });
+});
+
+api.MapGet("/natural-diagram-runs/{id:guid}/diagnostics", async (
+    Guid id, HttpContext context, IAppStore store, CancellationToken ct) =>
+{
+    var run = await store.GetNaturalDiagramRunAsync(id, ct);
+    if (run is null) return Results.NotFound();
+    if (!CanAccessNaturalRun(run, context.GetInternalIdentity().UserId)) return Results.StatusCode(StatusCodes.Status403Forbidden);
+    var report = LlmDiagnosticReport.Text(run.State.ToString(), run.ErrorCode, run.Execution, run.Diagnostics);
+    return Results.File(System.Text.Encoding.UTF8.GetBytes(report), "text/plain; charset=utf-8", $"natural-{id}-diagnostics.txt");
 });
 
 api.MapPost("/natural-diagrams", async (
@@ -897,7 +930,7 @@ api.MapGet("/natural-diagrams/{id:guid}", async (Guid id, HttpContext context, I
     if (record is null) return Results.NotFound();
     return CanAccessNaturalDiagram(record, context.GetInternalIdentity().UserId)
         ? Results.Ok(record)
-        : Results.Forbid();
+        : Results.StatusCode(StatusCodes.Status403Forbidden);
 });
 
 api.MapGet("/natural-diagrams/{id:guid}/revisions", async (Guid id, HttpContext context, IAppStore store, CancellationToken cancellationToken) =>
@@ -905,7 +938,7 @@ api.MapGet("/natural-diagrams/{id:guid}/revisions", async (Guid id, HttpContext 
     var record = await store.GetNaturalDiagramAsync(id, cancellationToken);
     if (record is null) return Results.NotFound();
     var identity = context.GetInternalIdentity();
-    if (!CanAccessNaturalDiagram(record, identity.UserId)) return Results.Forbid();
+    if (!CanAccessNaturalDiagram(record, identity.UserId)) return Results.StatusCode(StatusCodes.Status403Forbidden);
     return Results.Ok(await store.ListNaturalDiagramRevisionsAsync(record.RootDiagramId ?? record.Id, identity.UserId, cancellationToken));
 });
 
@@ -920,7 +953,7 @@ api.MapPost("/diagrams/{id:guid}/revisions", async (
     var parent = await store.GetNaturalDiagramAsync(id, cancellationToken);
     if (parent is null) return Results.NotFound();
     var identity = context.GetInternalIdentity();
-    if (!CanAccessNaturalDiagram(parent, identity.UserId)) return Results.Forbid();
+    if (!CanAccessNaturalDiagram(parent, identity.UserId)) return Results.StatusCode(StatusCodes.Status403Forbidden);
     var revised = request with { ParentDiagramId = id };
     var record = await service.GenerateAsync(revised, identity.UserId, cancellationToken);
     return Results.Created($"/api/v1/natural-diagrams/{record.Id}", record);
@@ -937,7 +970,7 @@ api.MapPost("/natural-diagrams/{id:guid}/dsl-revisions", async (
     var parent = await store.GetNaturalDiagramAsync(id, cancellationToken);
     if (parent is null) return Results.NotFound();
     var identity = context.GetInternalIdentity();
-    if (!CanAccessNaturalDiagram(parent, identity.UserId)) return Results.Forbid();
+    if (!CanAccessNaturalDiagram(parent, identity.UserId)) return Results.StatusCode(StatusCodes.Status403Forbidden);
     try
     {
         var record = await service.SaveAsync(parent, request.MermaidDsl, identity.UserId, cancellationToken);
@@ -963,7 +996,7 @@ api.MapPost("/natural-diagrams/{id:guid}/regenerate", async (
     var parent = await store.GetNaturalDiagramAsync(id, cancellationToken);
     if (parent is null) return Results.NotFound();
     var identity = context.GetInternalIdentity();
-    if (!CanAccessNaturalDiagram(parent, identity.UserId)) return Results.Forbid();
+    if (!CanAccessNaturalDiagram(parent, identity.UserId)) return Results.StatusCode(StatusCodes.Status403Forbidden);
 
     var request = parent.Request with { ParentDiagramId = id, ForceRegenerate = true };
     try
@@ -996,7 +1029,7 @@ api.MapPost("/natural-diagrams/{id:guid}/views/revise", async (
     var parent = await store.GetNaturalDiagramAsync(id, cancellationToken);
     if (parent is null) return Results.NotFound();
     var identity = context.GetInternalIdentity();
-    if (!CanAccessNaturalDiagram(parent, identity.UserId)) return Results.Forbid();
+    if (!CanAccessNaturalDiagram(parent, identity.UserId)) return Results.StatusCode(StatusCodes.Status403Forbidden);
     if (request.Views is null || request.Views.Count is < 1 or > 4)
         return Results.BadRequest(new { error = "One to four diagram views are required." });
     var requested = request.RegenerateViewIds?.ToHashSet(StringComparer.Ordinal) ?? [];
@@ -1043,7 +1076,7 @@ api.MapPost("/natural-diagrams/{id:guid}/views/{viewId}/edit-preview", async (
     var record = await store.GetNaturalDiagramAsync(id, cancellationToken);
     if (record is null) return Results.NotFound();
     var identity = context.GetInternalIdentity();
-    if (!CanAccessNaturalDiagram(record, identity.UserId)) return Results.Forbid();
+    if (!CanAccessNaturalDiagram(record, identity.UserId)) return Results.StatusCode(StatusCodes.Status403Forbidden);
     var artifact = FindNaturalDiagramArtifact(record, viewId, context.Request.Query["pageId"].FirstOrDefault());
     if (artifact is null) return Results.NotFound(new { error = "The diagram view does not exist." });
     try
@@ -1101,7 +1134,7 @@ api.MapPost("/natural-diagrams/{id:guid}/views/{viewId}/edits", async (
     var record = await store.GetNaturalDiagramAsync(id, cancellationToken);
     if (record is null) return Results.NotFound();
     var identity = context.GetInternalIdentity();
-    if (!CanAccessNaturalDiagram(record, identity.UserId)) return Results.Forbid();
+    if (!CanAccessNaturalDiagram(record, identity.UserId)) return Results.StatusCode(StatusCodes.Status403Forbidden);
     var pageId = context.Request.Query["pageId"].FirstOrDefault();
     var artifact = FindNaturalDiagramArtifact(record, viewId, pageId);
     if (artifact is null) return Results.NotFound(new { error = "The diagram view does not exist." });

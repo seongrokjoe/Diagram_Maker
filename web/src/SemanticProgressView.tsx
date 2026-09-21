@@ -26,7 +26,7 @@ export type SemanticProgress = {
   stageMilliseconds?: Record<string, number>;
 };
 
-export function SemanticProgressView({ value, running, diagnosticsUrl }: { value: SemanticProgress; running: boolean; diagnosticsUrl?: string }) {
+export function SemanticProgressView({ value, running, diagnosticsUrl, waitingForAnswer = false }: { value: SemanticProgress; running: boolean; diagnosticsUrl?: string; waitingForAnswer?: boolean }) {
   const [now, setNow] = useState(Date.now);
   const [records, setRecords] = useState<FailureDiagnostic[]>([]);
   const [loadError, setLoadError] = useState(false);
@@ -55,7 +55,7 @@ export function SemanticProgressView({ value, running, diagnosticsUrl }: { value
   const elapsed = running && value.startedAt ? Math.max(value.elapsedSeconds, Math.floor((now - Date.parse(value.startedAt)) / 1000)) : value.elapsedSeconds;
   const failures = diagnosticsUrl ? records : value.recentFailures ?? [];
   return <div className="help semantic-progress" aria-label="전체 및 이번 실행 진척">
-    <div className="semantic-progress-current"><p role="status">{running ? "생성 중" : "실행 종료"} · {value.lastRequest ? purpose(value.lastRequest) : "코드 구조 준비"}
+    <div className="semantic-progress-current"><p role="status">{waitingForAnswer ? "답변 대기" : running ? "생성 중" : "실행 종료"} · {value.lastRequest ? purpose(value.lastRequest) : "입력 준비"}
       {value.coverage && " · 의미 설명 검토 " + value.coverage.verifiedUnits + " / " + value.coverage.totalUnits + "개"}</p>
       <p>경과 {Math.floor(elapsed / 60)}분 {elapsed % 60}초</p></div>
     {value.coverage && <p>검토 통과 {value.coverage.verifiedUnits}개 · 대기 {Math.max(0, value.coverage.totalUnits - value.coverage.verifiedUnits - value.coverage.failedUnits)}개 · 실패 {value.coverage.failedUnits}개</p>}
@@ -110,6 +110,9 @@ function DiagnosticGrid({ records, running }: { records: FailureDiagnostic[]; ru
 }
 
 function purpose(value: FailureDiagnostic) { return value.purpose === "execution-plan" ? "함수 실행 의미 계획" :
+  value.purpose === "requirements" ? "요구사항 추출" : value.purpose === "requirements-repair" ? "요구사항 보정" :
+  value.purpose === "requirements-review" ? "원문·요구사항 검토" : value.purpose === "natural-final-review" ? "전체 형식 검토" :
+  value.purpose === "design" ? "다이어그램 설계" :
   value.purpose === "execution-review" ? "함수 전체 의미 검토" : value.purpose === "review" ? "의미 검토" : value.purpose === "repair" ? "응답 수정" : "의미 생성"; }
 
 function OutputDiagnostic({ value }: { value: FailureDiagnostic }) {

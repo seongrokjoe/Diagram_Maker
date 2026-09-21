@@ -186,7 +186,7 @@ export type NaturalDiagramRecord = {
   views?: NaturalDiagramViewResult[];
   revision: number;
   requirements?: { title: string; entities: string[]; requirements: Array<{ id: string; text: string; kind: string; origin: string; sourceQuote: string;
-      sourceRangeId?: string; scenarioId?: string }>;
+      sourceRangeId?: string; sourceRangeIds?: string[]; scenarioId?: string }>;
     sourceRanges?: Array<{ id: string; startOffset: number; endOffset: number; text: string }>;
     scenarios?: Array<{ id: string; title: string; requirementIds: string[]; sourceRangeIds: string[] }> };
 };
@@ -221,7 +221,7 @@ export type NaturalDiagramRun = {
   id: string;
   ownerUserId: string;
   request: NaturalDiagramRecord["request"];
-  state: "Queued" | "Generating" | "Completed" | "Partial" | "Failed" | "Cancelled";
+  state: "Queued" | "Generating" | "Completed" | "Partial" | "Failed" | "Cancelled" | "NeedsClarification";
   createdAt: string;
   updatedAt: string;
   revision: number;
@@ -230,6 +230,11 @@ export type NaturalDiagramRun = {
   sourceDiagramId?: string;
   regenerateViewIds?: string[];
   regeneratePageIds?: string[];
+  questions?: Array<{ id: string; text: string; reason: string; sourceRangeIds: string[]; choices: string[] }>;
+  questionVersion: number;
+  answerVersion: number;
+  answers?: Array<{ questionId: string; text: string }>;
+  execution?: import("./SemanticProgressView").SemanticProgress;
   requirements?: NaturalDiagramRecord["requirements"];
   views?: NaturalDiagramViewResult[];
   resultDiagramId?: string;

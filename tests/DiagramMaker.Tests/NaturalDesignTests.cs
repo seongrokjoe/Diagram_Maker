@@ -44,7 +44,7 @@ public sealed class NaturalDesignTests
         var client = Client(transport);
         var result = await client.GenerateDesignedNaturalAsync(Prompt, type, false,
             new DiagramPresetCatalog().Resolve(type, "balanced"), null, null, CancellationToken.None);
-        Assert.Equal(new[] { "requirements", "design", "review" }, transport.Purposes);
+        Assert.Equal(new[] { "requirements", "requirements-review", "design", "review" }, transport.Purposes);
         Assert.Equal("Reviewed", result!.Quality!.Status);
         Assert.Equal(new[] { "r1" }, result.Quality.ReviewedRequirementIds);
         Assert.NotEmpty(result.Quality.ElementRequirements!);
@@ -59,12 +59,13 @@ public sealed class NaturalDesignTests
     [InlineData(true)]
     public async Task RejectedDesignConsumesOnlyOneRepairAndNeverReturnsUnreviewedSuccess(bool alwaysReject)
     {
-        var model = new Model { Reject = alwaysReject ? 2 : 1 };
+        var model = new Model { Reject = alwaysReject ? 3 : 1 };
         var task = Client(model).GenerateDesignedNaturalAsync(Prompt, "flowchart", false,
             new DiagramPresetCatalog().Resolve("flowchart", "balanced"), null, null, CancellationToken.None);
         if (alwaysReject) Assert.Equal("NATURAL_REQUIREMENTS_REVIEW", (await Assert.ThrowsAsync<LlmClientException>(() => task)).Code);
         else Assert.True((await task)!.Quality!.RepairUsed);
-        Assert.Equal(new[] { "requirements", "design", "review", "repair", "review" }, model.Purposes);
+        Assert.Equal(alwaysReject ? new[] { "requirements", "requirements-review", "design", "review", "repair", "review", "repair", "review" } :
+            new[] { "requirements", "requirements-review", "design", "review", "repair", "review" }, model.Purposes);
     }
 
     [Fact]
@@ -82,6 +83,17 @@ public sealed class NaturalDesignTests
         var valid = design with { Nodes = [.. design.Nodes, extra with { Assumption = true }] };
         Assert.Null(NaturalDesignValidation.Design(valid, "flowchart", requirements));
         Assert.Contains("설계 가정", NaturalDesignValidation.Normalize(valid, "flowchart").Nodes.Last().Label);
+    }
+
+    [Fact]
+    public async Task TargetedRepairPreservesReviewedNodesOutsideTheFailedRequirement()
+    {
+        var model = new Model { Reject = 1, TargetedRepair = true };
+        var result = await Client(model).GenerateDesignedNaturalAsync(Prompt, "flowchart", false,
+            new DiagramPresetCatalog().Resolve("flowchart", "balanced"), null, Requirements(), CancellationToken.None);
+        Assert.NotNull(result);
+        Assert.Contains(result!.Diagram.Nodes, node => node.Label == "문이 닫혔는가");
+        Assert.DoesNotContain(result.Diagram.Nodes, node => node.Label == "임의 변경");
     }
 
     [Theory]
@@ -126,6 +138,7 @@ public sealed class NaturalDesignTests
     {
         public bool IsEnabled => true;
         public int Reject { get; set; }
+        public bool TargetedRepair { get; set; }
         public List<string> Purposes { get; } = [];
         public Task<VllmCompletionResult> CompleteAsync(VllmCompletionRequest request, CancellationToken ct)
         {
@@ -134,9 +147,14 @@ public sealed class NaturalDesignTests
             object result = request.Purpose switch
             {
                 "requirements" => Requirements(),
-                "review" => Reject-- > 0 ? new NaturalDesignReview(false, ["r1"], ["문 열림 차단을 확인하세요"]) : new NaturalDesignReview(true, ["r1"], []),
+                "requirements-review" => new NaturalRequirementsReview(true,
+                    json.RootElement.GetProperty("sourceRanges").EnumerateArray().Select(r => r.GetProperty("id").GetString()!).ToArray(), []),
+                "review" => Reject-- > 0 ? new NaturalDesignReview(false, ["r1"], ["문 열림 차단을 확인하세요"],
+                    TargetedRepair ? [new("e2", "label", "BranchLabelInvalid", "차단 분기를 수정하세요")] : null) : new NaturalDesignReview(true, ["r1"], []),
                 _ => Design(json.RootElement.GetProperty("type").GetString()!)
             };
+            if (TargetedRepair && request.Purpose == "repair" && result is NaturalDesign design)
+                result = design with { Nodes = design.Nodes.Select((node, index) => index == 0 ? node with { Label = "임의 변경" } : node).ToArray() };
             return Task.FromResult(new VllmCompletionResult(JsonSerializer.Serialize(result, new JsonSerializerOptions(JsonSerializerDefaults.Web)), "stop", 1, true, false, 0, request.MaxOutputTokens, 100, 100, 200));
         }
     }
