@@ -64,7 +64,8 @@
 [모바일 검사 요약](artifacts/internal13-validation/package-natural/natural-self-test-390.png),
 [데스크톱 검사 요약](artifacts/internal13-validation/package-natural/natural-self-test-1440.png).
 로컬 구현·전체 검증·패키징 완료, 미해결 로컬 실패 없음. 기존 변경과 checkpoint를 보존했고
-사용자 요청에 따라 소스·배포·문서 및 이전 ZIP 정리를 커밋·푸시한다.
+사용자 요청에 따라 소스·배포·문서 및 이전 ZIP 정리 커밋 `26e2bfb`를 `origin/main`에
+일반 푸시 완료했다. GitHub의 ZIP 크기 권장 한도 경고는 있었지만 푸시는 성공했다.
 
 ## 사내 확인
 

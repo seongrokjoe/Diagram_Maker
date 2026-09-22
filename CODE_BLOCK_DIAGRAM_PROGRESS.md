@@ -11,6 +11,7 @@
 - SHA-256: `9778ffbeefec6f390fa56e62831a980ecc615a80edec153ca4cc8173e2790edd`.
 - 기준 커밋은 `8cc4f1b`이며 internal.13 변경은 그 이후 작업이다.
 - 최신 변경·검증 결과: `NATURAL_DIAGRAM_EXTRACTION_REPORT.md`.
+- 구현·배포 커밋 `26e2bfb`를 `origin/main`에 일반 푸시 완료했다.
 - 코드 블럭 기능 구현 전 checkpoint `e53efc2`와 기존 사용자 변경은 Git 이력에 보존되어 있다.
 
 ## internal.11: 자연어 다이어그램 안정성 개선
@@ -166,3 +167,8 @@ checkpoint와 사용자 변경을 보존하며, 의미 있는 구현·검증·�
 - 소스·회귀 테스트·문서·internal.13 배포본·이전 ZIP 삭제를 함께 커밋하고 `origin/main`에
   일반 푸시한다. 전체 verify와 패키지 검사 9개의 통과 결과는 유지되며 실행 코드 추가 변경은 없다.
 - 다음: 원격 브랜치 상태 확인, 커밋/푸시, 원격 커밋 일치 및 깨끗한 작업 트리 확인.
+- 구현·회귀·문서·internal.13 ZIP/SHA·이전 배포 정리 커밋 `26e2bfb`의 `origin/main`
+  일반 푸시가 성공했다. GitHub는 ZIP 크기 권장 한도 경고를 표시했으나 푸시를 수락했다.
+  현재 배포에는 internal.13만 있으며 이전 버전과 checkpoint는 Git 이력에 보존되어 있다.
+  완료 기록을 문서 커밋으로 반영한 뒤 원격 HEAD 일치와 작업 트리를 최종 확인한다.
+  이후 남은 작업은 사내 실제 모델 및 PostgreSQL 검증이다.
