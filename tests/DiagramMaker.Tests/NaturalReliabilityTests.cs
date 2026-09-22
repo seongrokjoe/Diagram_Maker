@@ -164,6 +164,29 @@ public sealed class NaturalReliabilityTests
     }
 
     [Fact]
+    public async Task ProtocolUpgradeDiscardsOldRequirementsAndKeepsOldDiagnostics()
+    {
+        await using var store = new InMemoryAppStore();
+        var model = new Model { Ask = true };
+        using var cache = new NaturalDiagramSessionCache();
+        var options = Options.Create(new LlmOptions { Enabled = true });
+        var service = new NaturalDiagramService(Client(model), new(new()), store, cache, new(), options, new TestEnvironment());
+        var now = DateTimeOffset.UtcNow;
+        var run = new NaturalDiagramRun(Guid.NewGuid(), "alice", new("요청한다."), NaturalDiagramRunState.Queued, now, now,
+            Requirements: new("구형 추출", [], [new("old", "구형 가정", "behavior", "assumption", "")]),
+            InputFingerprint: "natural-v8", Checkpoints: [new("legacy", "llm-NaturalRequirements", "null")],
+            Diagnostics: [new("legacy-error", "natural-requirements", "old", "Failed", now,
+                ErrorCode: "NATURAL_REQUIREMENTS_INVALID", ProtocolVersion: "natural-design-v4", RecoveryState: "Exhausted")]);
+        await store.CreateNaturalDiagramRunAsync(run, Ct);
+        await new NaturalDiagramRunProcessor(store, service, options).ProcessAsync((await store.TryLeaseNaturalDiagramRunAsync(TimeSpan.FromMinutes(1), Ct))!, Ct);
+        var saved = (await store.GetNaturalDiagramRunAsync(run.Id, Ct))!;
+        Assert.Equal(NaturalDiagramRunState.NeedsClarification, saved.State);
+        Assert.DoesNotContain(saved.Requirements!.Requirements, item => item.Id == "old");
+        Assert.Contains(saved.Diagnostics!, item => item.Id == "legacy-error");
+        Assert.Single(model.Purposes, purpose => purpose == "requirements");
+    }
+
+    [Fact]
     public async Task LocalSaveFailureDoesNotExposeUnpersistedSuccess()
     {
         var directory = Path.Combine(Path.GetTempPath(), "natural-save-failure-" + Guid.NewGuid().ToString("N"));
@@ -196,7 +219,7 @@ public sealed class NaturalReliabilityTests
             if (TruncateLarge && ranges.Length > 1) return Result("{}", "length");
             if (InvalidJson) return Result("null");
             object value;
-            if (request.Purpose == "requirements-review") value = new NaturalRequirementsReview(true,
+            if (request.Purpose == "requirements-review") value = new NaturalSourceReview(
                 ranges.Select(r => r.GetProperty("id").GetString()!).ToArray(), []);
             else
             {
@@ -207,6 +230,7 @@ public sealed class NaturalReliabilityTests
                     Scenarios: [new("s1", "흐름", items.Select(item => item.Id).ToArray(), ranges.Select(r => r.GetProperty("id").GetString()!).ToArray())], Questions: Ask
                     ? [new("q1", "어떤 승인 방식을 사용합니까?", "흐름이 달라집니다.", [ranges[0].GetProperty("id").GetString()!], ["자동", "수동"])] : []);
             }
+            if (value is NaturalRequirements extracted) value = NaturalExtraction.FromRequirements(extracted);
             return Result(JsonSerializer.Serialize(value, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         }
         private static Task<VllmCompletionResult> Result(string text, string finish = "stop") =>

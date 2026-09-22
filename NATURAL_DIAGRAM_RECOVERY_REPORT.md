@@ -2,7 +2,9 @@
 
 2026-09-21, 기준 커밋 `516a579`. 승인 범위는
 [구현 계획](NATURAL_DIAGRAM_RECOVERY_PLAN.md)에 기록했다.
-기존 internal.11 배포와 기능 구현 전 checkpoint는 보존한다.
+기존 internal.11 배포와 기능 구현 전 checkpoint를 검증 당시 보존했다.
+2026-09-22 사용자 요청으로 이전 ZIP/SHA 파일은 현재 배포 폴더에서 제거했다.
+아래는 당시의 검증 기록이며 최신 배포는 [internal.13 검증 보고서](NATURAL_DIAGRAM_EXTRACTION_REPORT.md)를 따른다.
 
 ## 변경 동작
 
@@ -62,10 +64,11 @@ ZIP SHA-256: `ce2b04aa4b2d7a7c73ae73a72a840c4233708f6b7f9e63ce46ec691b7ddb1a5f`.
 | 공유 의미 기본/60,000자 | 통과, `shared-semantics-FdTZvB`, `shared-semantics-VZ9uVC` |
 | Windows CMD | 8개 통과, `windows-launchers-JVoVhy` |
 
-배포 파일: [internal.12 ZIP](artifacts/release/DiagramMaker-0.1.0-internal.12-win-x64.zip),
-[SHA-256](artifacts/release/DiagramMaker-0.1.0-internal.12-win-x64.zip.sha256).
+당시 배포 파일: `DiagramMaker-0.1.0-internal.12-win-x64.zip` 및 SHA-256 파일.
+현재 배포 폴더에서 제거했으며 커밋 `8cc4f1b`의 Git 이력에서 확인할 수 있다.
 최종 소스 301개를 검증 사본과 해시로 대조했다. `git diff --check` 통과.
 미해결 로컬 검증 실패 없음. 검증 로그·대표 화면은 로컬 `artifacts/internal12-validation/`에 보존했다.
+소스·배포·문서 커밋 `8cc4f1b`의 `origin/main` 일반 푸시를 완료했다.
 기존 서버 종료, data·설정 백업 후 새 비동기화 폴더에 설치한다. 세부 절차는 동봉
 `OFFLINE_INSTALL_KO.txt`, `INTERNAL_TEST_KO.txt`의 자연어 생성 검사 항목을 따른다.
 

@@ -8,10 +8,10 @@ import { checkZoomWheel } from './diagram-presentation-ui-checks.mjs';
 
 export const naturalPrompt = '문이 열려 있으면 장비 운전을 차단한다.';
 export function naturalDesignFixture(context, properties, mode) {
-  if (properties.reviewedSourceRangeIds) return { accepted: true,
+  if (properties.reviewedSourceRangeIds) return {
     reviewedSourceRangeIds: context.sourceRanges.map(range => range.id), issues: [] };
   if (properties.requirements) return { title: '장비 설계', entities: ['장비'], requirements: [
-    { id: 'r1', text: naturalPrompt, kind: 'interlock', origin: 'explicit', sourceQuote: '', sourceRangeIds: context.sourceRanges.map(range => range.id) }],
+    { id: 'r1', text: naturalPrompt, kind: 'interlock', sourceRangeIds: context.sourceRanges.map(range => range.id) }],
     scenarios: [{ id: 'scenario-1', title: '장비 설계', requirementIds: ['r1'], sourceRangeIds: context.sourceRanges.map(range => range.id) }], questions: [] };
   if (properties.reviewedRequirementIds) return { accepted: mode !== 'natural-reject', reviewedRequirementIds: ['r1'],
     issues: mode === 'natural-reject' ? ['문 열림 차단 경로를 보완하세요'] : [], itemIssues: [] };

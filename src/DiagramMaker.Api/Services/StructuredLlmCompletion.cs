@@ -160,7 +160,8 @@ public sealed class StructuredLlmCompletion(ILlmCompletionTransport client)
 
         try
         {
-            if (schema is { } contract && NaturalContractValidation.Check(normalized.Json, contract) is { } problem)
+            if (schema is { } contract && NaturalContractValidation.Check(normalized.Json, contract,
+                typeof(T) == typeof(NaturalExtraction) || typeof(T) == typeof(NaturalSourceReview)) is { } problem)
                 return new StructuredAttempt<T>(default, problem.Code, problem.Details);
             if (typeof(T) == typeof(SharedSemanticResponse) && SharedSemanticValidation.CheckJson(normalized.Json) is { } generationFailure)
                 return new StructuredAttempt<T>(default, generationFailure);

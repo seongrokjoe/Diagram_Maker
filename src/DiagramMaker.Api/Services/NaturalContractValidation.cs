@@ -7,13 +7,13 @@ namespace DiagramMaker.Services;
 // schema. Paths contain schema property names only, never model-provided keys.
 internal static class NaturalContractValidation
 {
-    public static SharedValidationProblem? Check(string json, JsonElement schema)
+    public static SharedValidationProblem? Check(string json, JsonElement schema, bool rejectUnknownProperties = false)
     {
         using var doc = JsonDocument.Parse(json);
-        return Visit(doc.RootElement, schema, "response", null);
+        return Visit(doc.RootElement, schema, "response", null, rejectUnknownProperties);
     }
 
-    private static SharedValidationProblem? Visit(JsonElement value, JsonElement schema, string field, int? index)
+    private static SharedValidationProblem? Visit(JsonElement value, JsonElement schema, string field, int? index, bool rejectUnknownProperties)
     {
         SharedValidationProblem Error(string code, int? actual = null, int? limit = null) =>
             new(code, new(1, value.ValueKind == JsonValueKind.Null ? 0 : 1, Field: field, ItemIndex: index,
@@ -40,9 +40,15 @@ internal static class NaturalContractValidation
                     if (!value.TryGetProperty(name.GetString()!, out _))
                         return new("NaturalFieldMissing", new(1, 0, 1, Field: field + "." + name.GetString(), ItemIndex: index));
             if (schema.TryGetProperty("properties", out var properties))
+            {
+                // Report the schema path only, never an untrusted property name.
+                if (rejectUnknownProperties && schema.TryGetProperty("additionalProperties", out var extra) &&
+                    extra.ValueKind == JsonValueKind.False && value.EnumerateObject().Any(p => !properties.TryGetProperty(p.Name, out _)))
+                    return Error("NaturalFieldUnexpected");
                 foreach (var property in properties.EnumerateObject())
-                    if (value.TryGetProperty(property.Name, out var child) && Visit(child, property.Value, field + "." + property.Name, index) is { } issue)
+                    if (value.TryGetProperty(property.Name, out var child) && Visit(child, property.Value, field + "." + property.Name, index, rejectUnknownProperties) is { } issue)
                         return issue;
+            }
         }
         if (value.ValueKind == JsonValueKind.Array)
         {
@@ -52,7 +58,7 @@ internal static class NaturalContractValidation
             {
                 var i = 0;
                 foreach (var child in value.EnumerateArray())
-                    if (Visit(child, itemSchema, field, i++) is { } issue) return issue;
+                    if (Visit(child, itemSchema, field, i++, rejectUnknownProperties) is { } issue) return issue;
             }
         }
         return null;

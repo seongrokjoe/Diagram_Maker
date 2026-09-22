@@ -5,7 +5,7 @@ namespace DiagramMaker.Services;
 
 internal static partial class NaturalDesignValidation
 {
-    public const string Protocol = "natural-design-v4";
+    public const string Protocol = "natural-design-v5";
     public static string? Requirements(NaturalRequirements value, string prompt)
     {
         if (string.IsNullOrWhiteSpace(value.Title) || value.Requirements is not { Count: > 0 and <= 150 } ||
@@ -160,12 +160,14 @@ internal static partial class NaturalDesignValidation
     public static readonly JsonElement RequirementsSchema = JsonSerializer.SerializeToElement(Obj(("title", Text()), ("entities", Strings()),
         ("requirements", List(Obj(("id", Text(80)), ("text", Text()),
             ("kind", Choice("entity", "behavior", "state", "interlock", "error", "data", "member")),
-            ("origin", Choice("explicit", "assumption")), ("sourceQuote", Text(1000)), ("sourceRangeIds", Strings())), 150)),
+            ("sourceRangeIds", Strings())), 150)),
         ("scenarios", List(Obj(("id", Text(80)), ("title", Text()), ("requirementIds", Strings()), ("sourceRangeIds", Strings())), 30)),
         ("questions", List(Obj(("id", Text(80)), ("text", Text()), ("reason", Text()), ("sourceRangeIds", Strings()), ("choices", Strings(6))), 5))));
     public static readonly JsonElement RequirementsReviewSchema = JsonSerializer.SerializeToElement(Obj(
-        ("accepted", new { type = "boolean" }), ("reviewedSourceRangeIds", Strings(1000)),
-        ("issues", List(Obj(("itemId", Text(80)), ("field", Text(80)), ("code", Text(80)), ("instruction", Text())), 30))));
+        ("reviewedSourceRangeIds", Strings(1000)),
+        ("issues", List(Obj(("code", Choice(SourceIssueCodes)),
+            ("field", Choice("text", "kind", "sourceRangeIds", "scenarios", "entities")),
+            ("requirementIds", Strings()), ("sourceRangeIds", Strings()), ("instruction", Text())), 30))));
     public static readonly JsonElement DesignSchema = JsonSerializer.SerializeToElement(Obj(("title", Text()),
         ("nodes", List(Obj(("id", Text(80)), ("label", Text(240)),
             ("kind", Choice("class", "interface", "participant", "state", "initial", "final", "operation", "decision", "terminal", "component")),

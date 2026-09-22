@@ -283,8 +283,8 @@ public sealed class VllmClientTests
     public async Task NaturalDiagramThinkingUsesThinkingBudget()
     {
         var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
-        var handler = new QueueHandler(Response(JsonSerializer.Serialize(NaturalDesignTests.Requirements(), jsonOptions)),
-            Response(JsonSerializer.Serialize(new NaturalRequirementsReview(true,
+        var handler = new QueueHandler(Response(JsonSerializer.Serialize(NaturalExtraction.FromRequirements(NaturalDesignTests.Requirements()), jsonOptions)),
+            Response(JsonSerializer.Serialize(new NaturalSourceReview(
                 NaturalRequirementEvidence.Prepare(NaturalDesignTests.Prompt).Select(r => r.Id).ToArray(), []), jsonOptions)),
             Response(JsonSerializer.Serialize(NaturalDesignTests.Design("flowchart"), jsonOptions)),
             Response("{\"accepted\":true,\"reviewedRequirementIds\":[\"r1\"],\"issues\":[],\"itemIssues\":[]}"));

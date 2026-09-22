@@ -39,6 +39,8 @@ internal static class LlmDiagnosticReport
             text.AppendLine($"Batch: {Code(d.RecoveryGroupId)}; parent: {Code(d.ParentGroupId)}; attempt: {d.Attempt}; protocol: {Code(d.ProtocolVersion)}; elapsed: {d.ElapsedMilliseconds}ms");
             if (d.ValidationDetails is { } v)
                 text.AppendLine($"Items expected/received: {v.ExpectedItems}/{v.ReceivedItems}; missing: {v.MissingItems}; duplicate: {v.DuplicateItems}; unknown: {v.UnknownItems}; field: {Code(v.Field?.Replace('.', '-'))}; index: {v.ItemIndex}; length: {v.ActualLength}/{v.AllowedLength}; issues: {string.Join(',', (v.IssueCodes ?? []).Select(code => Code(code)))}");
+            if (d.Extraction is { } m)
+                text.AppendLine($"Extraction: source={m.SourceRanges}; received={Count(m.Received)}; grounded={Count(m.Grounded)}; preserved={Count(m.Preserved)}; replaced={Count(m.Replaced)}; rejected={Count(m.Rejected)}; extraction attempts={m.ExtractionAttempts}; review attempts={m.ReviewAttempts}");
         }
         text.AppendLine("Source, prompts, model responses, endpoint and authentication values are excluded.");
         return text.ToString();
@@ -46,4 +48,5 @@ internal static class LlmDiagnosticReport
 
     private static string Code(string? value, string missing = "not-applicable") => value is null ? missing :
         value is { Length: > 0 and <= 80 } && Regex.IsMatch(value, "^[A-Za-z0-9_-]+$") ? value : "unrecognized";
+    private static string Count(int? value) => value?.ToString() ?? "not-recorded";
 }

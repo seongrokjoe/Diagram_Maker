@@ -102,8 +102,8 @@ public sealed class NaturalDiagramRunProcessor(IAppStore store, NaturalDiagramSe
     private static string StageLabel(SemanticExecution execution) => execution.Progress.LastRequest?.Purpose == "natural-final-review"
         ? "전체 결과의 누락·모순 검토" : execution.Stage switch
         {
-            "llm-NaturalRequirements" => "요구사항 추출·보정",
-            "llm-NaturalRequirementsReview" => "원문 근거와 요구사항 검토",
+            "llm-NaturalRequirements" or "llm-NaturalExtraction" => "요구사항 추출·보정",
+            "llm-NaturalRequirementsReview" or "llm-NaturalSourceReview" => "원문 근거와 요구사항 검토",
             "llm-NaturalDesign" => "형식별 다이어그램 설계·보정",
             "llm-NaturalDesignReview" => "조건·인터락·흐름 검토",
             "natural-page" => "시나리오 페이지 생성·저장",

@@ -9,6 +9,8 @@ export type FailureDiagnostic = {
   recoveryState?: string; requiredOutputTokens?: number; state?: string; estimatedInputTokens?: boolean;
   httpStatus?: number; serverErrorCategory?: string; nextAction?: string; schemaRelaxed?: boolean;
   kind?: string; requestId?: string;
+  extraction?: { sourceRanges: number; received?: number; grounded?: number; preserved?: number; replaced?: number;
+    rejected?: number; extractionAttempts: number; reviewAttempts: number };
   validationDetails?: { expectedItems: number; receivedItems: number; missingItems: number; duplicateItems: number;
     unknownItems: number; field?: string; itemIndex?: number; actualLength?: number; allowedLength?: number;
     nonTargetItems?: number; unknownAliases?: number; issueCodes?: string[] };
@@ -99,12 +101,13 @@ function DiagnosticGrid({ records, running }: { records: FailureDiagnostic[]; ru
         <p>{purpose(selected)} · {selected.kind === "Validation" ? "응답 내용 검증" : selected.kind === "Terminal" ? "단계 종료" : selected.sent ? "응답 수신·검증 단계" : "전송 전 검사"}</p>
         <p>복구 결과: {recoveryLabel(selected, running)} · 시도 {selected.attempt ?? 1}</p>
         {!!selected.validationDetails?.issueCodes?.length && <p>{selected.validationDetails.issueCodes.map(issueDescription).join(" · ")}</p>}
-        {selected.recoveryState === "Recovered" ? <p>후속 보정이 완료되었습니다. 최초 오류 기록은 보존됩니다.</p> : selected.recoveryState === "RequiresAction" ? <p>{serverFailure(selected.serverErrorCategory)}</p> : selected.recoveryState === "Exhausted" && selected.protocolVersion?.startsWith("natural-") ? <p>보정 횟수를 소진했습니다. 진단에서 원인을 확인한 뒤 새 실행을 시작하세요. 이전 정상 결과는 계속 확인할 수 있습니다.</p> : <p>완료된 AI/Code 다이어그램은 계속 확인할 수 있습니다. 재개 대기는 이어서 생성으로, 복구 실패는 해당 결과 재생성으로 다시 시도합니다.</p>}
+        {selected.recoveryState === "Recovered" ? <p>후속 보정이 완료되었습니다. 최초 오류 기록은 보존됩니다.</p> : selected.recoveryState === "RequiresAction" ? <p>{serverFailure(selected.serverErrorCategory)}</p> : selected.recoveryState === "Exhausted" && selected.protocolVersion?.startsWith("natural-") ? <p>자동 보정을 완료하지 못했습니다. 표시된 실패 원인과 검사 요약을 확인하세요. 이전 정상 결과는 계속 확인할 수 있습니다.</p> : <p>완료된 AI/Code 다이어그램은 계속 확인할 수 있습니다. 재개 대기는 이어서 생성으로, 복구 실패는 해당 결과 재생성으로 다시 시도합니다.</p>}
         <details><summary>기술 상세</summary><p>{selected.errorCode} / {selected.validationCode}</p><OutputDiagnostic value={selected} />
           <p>HTTP {selected.httpStatus ?? (selected.kind ? "해당 없음" : "미기록")} · 다음 행동: {actionLabel(selected.nextAction, selected.kind)}</p>
           <p>내부 묶음 {selected.recoveryGroupId ?? "미기록"} · 요청 {selected.id}</p>
           {selected.inputCharacters != null && <p>입력 {selected.inputCharacters.toLocaleString()}자 / {selected.inputCharacterLimit?.toLocaleString() ?? "미기록"}</p>}
           {selected.validationDetails && <p>필요 {selected.validationDetails.expectedItems} · 응답 {selected.validationDetails.receivedItems} · 누락 {selected.validationDetails.missingItems} · 중복 {selected.validationDetails.duplicateItems}{selected.validationDetails.field && " · 필드 " + selected.validationDetails.field}</p>}
+          {selected.extraction && <p>원문 범위 {selected.extraction.sourceRanges} · 응답 {selected.extraction.received ?? "미기록"} · 근거 통과 {selected.extraction.grounded ?? "미기록"} · 보존 {selected.extraction.preserved ?? "미기록"} · 교체 {selected.extraction.replaced ?? "미기록"} · 거부 {selected.extraction.rejected ?? "미기록"} · 추출 시도 {selected.extraction.extractionAttempts} · 검토 시도 {selected.extraction.reviewAttempts}</p>}
         </details>
       </div></div>
   </details>;
@@ -147,6 +150,11 @@ function issueDescription(code: string) {
 
 function failureDescription(validation?: string, error?: string) {
   const descriptions: Record<string, string> = { SharedSummaryInvalid: "전체 요약이 비었거나 너무 깁니다.", SharedRecommendedTypeInvalid: "추천한 다이어그램 형식이 허용 목록과 다릅니다.",
+    NaturalRequirementOmitted: "원문에 명시된 요구사항이 누락되었습니다.", NaturalConditionChanged: "원문의 조건이나 전이가 변경되었습니다.",
+    NaturalUnsupportedClaim: "원문에 없는 요구사항이 추가되었습니다.", NaturalEvidenceMismatch: "요구사항과 인용한 원문 근거가 다릅니다.",
+    NaturalEntityMismatch: "원문의 엔터티와 추출 결과가 다릅니다.", NaturalScenarioMismatch: "시나리오 연결이 원문과 다릅니다.",
+    NaturalRepairNoProgress: "보정 응답에 수정 내용이 반영되지 않았습니다.", NaturalFieldUnexpected: "응답에 계약 밖의 필드가 포함되었습니다.",
+    NaturalExplicitRequirementsMissing: "원문에 연결된 요구사항이 없습니다.",
     NaturalEvidenceUnknown: "응답이 제공되지 않은 원문 근거 ID를 참조했습니다.", NaturalEvidenceMissing: "요구사항의 원문 근거가 빠졌습니다.",
     NaturalEvidenceDuplicate: "같은 원문 근거 ID가 중복됐습니다.", NaturalEvidenceAmbiguous: "인용문을 원문의 한 위치로 연결할 수 없습니다.",
     NaturalScenarioInvalid: "시나리오가 요구사항을 누락했거나 잘못된 ID를 참조합니다.", NaturalAcceptedIdsChanged: "보정 응답이 정상 항목의 ID를 바꿨습니다.",

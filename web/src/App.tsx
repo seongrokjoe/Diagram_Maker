@@ -341,7 +341,7 @@ function NormalApp() {
             {naturalRunActive && <button type="button" className="secondary" onClick={() => void cancelNaturalRun()}>실행 취소</button>}
             {(naturalRun.state === "Partial" || naturalRun.state === "Failed" || naturalRun.state === "Cancelled") && (naturalRun.resumeAllowed !== false
               ? <button type="button" className="secondary" onClick={() => void resumeNaturalRun()}>저장 지점에서 이어하기</button>
-              : <p>보정 횟수를 소진했습니다. 진단의 원인을 확인하고 왼쪽의 ‘다이어그램 생성’으로 새 실행을 시작하세요.</p>)}
+              : <p>자동 보정을 완료하지 못했습니다. 아래 진단에서 실패 단계와 원인을 확인하세요. LLM 점검의 자연어 생성 검사에서도 전달용 요약을 확인할 수 있습니다.</p>)}
             <a href={`/api/v1/natural-diagram-runs/${naturalRun.id}/diagnostics`} download>진단 다운로드</a>
           </div></div>}
           {naturalPollError && <p role="status" className="warning">{naturalPollError}</p>}

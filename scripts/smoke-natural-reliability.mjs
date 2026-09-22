@@ -49,14 +49,17 @@ const llm = createServer(async (request, response) => {
     if (kind === 'requirements') {
       const ranges = context.sourceRanges;
       const items = ranges.map((range, index) => ({ id: `r${index + 1}`, text: `처리 ${index + 1}`, kind: 'behavior',
-        origin: 'explicit', sourceQuote: '', sourceRangeIds: [range.id] }));
+        sourceRangeIds: [range.id] }));
       value = { title: '합성 요청 설계', entities: ['장비'], requirements: items,
         scenarios: [{ id: 'scenario-1', title: '요청 처리', requirementIds: items.map(item => item.id), sourceRangeIds: ranges.map(range => range.id) }],
         questions: mode === 'question' && !JSON.stringify(ranges).includes('사용자 확인 답변') ?
           [{ id: 'q1', text: '승인을 어떻게 처리합니까?', reason: '승인 주체에 따라 호출 흐름이 달라집니다.', sourceRangeIds: [ranges[0].id], choices: ['자동 승인', '담당자 승인'] }] : [] };
       if (mode === 'unknown-id') value.requirements[0].sourceRangeIds = ['unknown'];
       if (mode === 'scenario-invalid') value.scenarios[0].requirementIds = ['unknown'];
-    } else if (kind === 'requirements-review') value = { accepted: true, reviewedSourceRangeIds: context.sourceRanges.map(r => r.id), issues: [] };
+      if (mode === 'all-assumptions-once' && attempt === 1)
+        for (const item of value.requirements) { item.origin = 'assumption'; item.sourceRangeIds = []; }
+      if (mode === 'review-contract-then-semantic') value.requirements[0].text = attempt === 1 ? '잘못된 조건' : '수정된 조건';
+    } else if (kind === 'requirements-review') value = { reviewedSourceRangeIds: context.sourceRanges.map(r => r.id), issues: [] };
     else if (kind === 'review' || kind === 'final-review') {
       const rejected = mode === 'contradiction' || mode === 'cross-view' && kind === 'final-review';
       value = { accepted: !rejected, reviewedRequirementIds: context.requirements.requirements.map(r => r.id),
@@ -67,9 +70,13 @@ const llm = createServer(async (request, response) => {
       const ids = context.requirements.requirements.map(r => r.id);
       for (const item of [...value.nodes, ...value.edges]) item.requirementIds = ids;
     }
-    if (kind === 'requirements-review' && mode === 'review-missing-field' && attempt === 1) delete value.accepted;
+    if (kind === 'requirements-review' && mode === 'review-missing-field' && attempt === 1) delete value.reviewedSourceRangeIds;
     if (kind === 'requirements-review' && mode === 'review-all-missing') value.reviewedSourceRangeIds = [];
     if (kind === 'review' && mode === 'design-review-once' && attempt === 1) delete value.accepted;
+    if (kind === 'requirements-review' && (mode === 'semantic-no-progress' || mode === 'review-contract-then-semantic' && attempt === 3))
+      value.issues = [{ code: 'NaturalConditionChanged', field: 'text', requirementIds: ['r1'],
+        sourceRangeIds: [context.sourceRanges[0].id], instruction: '원문의 조건을 보존하세요.' }];
+    if (kind === 'requirements-review' && mode === 'review-contract-then-semantic' && attempt <= 2) delete value.reviewedSourceRangeIds;
     await delay(mode === 'question' ? 100 : 1);
     response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
       choices: [{ message: { content: mode === 'null-json' ? 'null' : JSON.stringify(value) },
@@ -131,7 +138,7 @@ try {
   assert.equal(run.checkpoints, null);
   assert.equal(run.requirements.sourceRanges.length, 2);
   const original = await request(`/natural-diagrams/${run.resultDiagramId}`);
-  assert.equal(original.generatorVersion, 'natural-v8');
+  assert.equal(original.generatorVersion, 'natural-v9');
   await request(`/natural-diagram-runs/${run.id}`, 'GET', undefined, 403, 'other-owner');
   await request(`/natural-diagram-runs/${run.id}/diagnostics`, 'GET', undefined, 403, 'other-owner');
   await request(`/natural-diagram-runs/${run.id}/answers`, 'POST', {}, 403, 'other-owner');
@@ -141,7 +148,9 @@ try {
 
   for (const [testMode, stage, expected] of [['review-missing-field', 'requirements-review', 'Completed'],
     ['review-all-missing', 'requirements-review', 'Failed'], ['scenario-invalid', 'requirements', 'Failed'],
-    ['design-review-once', 'review', 'Completed'], ['grammar-once', 'requirements', 'Completed']]) {
+    ['design-review-once', 'review', 'Completed'], ['grammar-once', 'requirements', 'Completed'],
+    ['all-assumptions-once', 'requirements', 'Completed'], ['review-contract-then-semantic', 'requirements-review', 'Completed'],
+    ['semantic-no-progress', 'requirements-review', 'Failed']]) {
     mode = testMode; const before = calls.length;
     const checked = await poll((await create()).id);
     assert.equal(checked.state, expected, checked.errorMessage);
@@ -162,6 +171,22 @@ try {
     if (testMode === 'scenario-invalid') assert.equal(checked.errorCode, 'NATURAL_PLAN_INVALID');
     if (testMode === 'design-review-once') assert.equal(sent.filter(call => call.kind === 'design').length, 1);
     if (testMode === 'grammar-once') assert.ok(rows.some(row => row.schemaRelaxed));
+    if (testMode === 'all-assumptions-once') {
+      assert.equal(sent.filter(call => call.kind === 'requirements').length, 2);
+      assert.ok(rows.some(row => row.validationCode === 'NaturalFieldUnexpected' && row.recoveryState === 'Recovered'));
+    }
+    if (testMode === 'review-contract-then-semantic') {
+      assert.equal(sent.filter(call => call.kind === 'requirements').length, 2);
+      assert.equal(sent.filter(call => call.kind === 'requirements-review').length, 4);
+      assert.ok(rows.some(row => row.validationCode === 'NaturalConditionChanged' && row.recoveryState === 'Recovered'));
+      assert.ok(rows.some(row => row.extraction?.replaced === 1));
+    }
+    if (testMode === 'semantic-no-progress') {
+      assert.equal(sent.filter(call => call.kind === 'requirements').length, 3);
+      assert.equal(sent.filter(call => call.kind === 'requirements-review').length, 1);
+      assert.ok(rows.some(row => row.validationCode === 'NaturalRepairNoProgress' && row.kind === 'Terminal'));
+      assert.equal(checked.resumeAllowed, false);
+    }
     const text = await request(`/natural-diagram-runs/${checked.id}/diagnostics`);
     assert.ok(!/category: unknown|action: unknown|recovery: unknown/.test(text));
     checks.push({ name: testMode, requests: sent.length });
@@ -181,12 +206,25 @@ try {
   assert.equal(selfTest.cases.length, 2);
   assert.ok(selfTest.cases.every(item => item.reviewedPages > 0));
   assert.ok(!selfTest.report.includes(llmOrigin));
+  assert.equal(selfTest.summary.split('\n').length, 3);
+  assert.match(selfTest.summary, /natural-v9; protocol: natural-design-v5/);
+  assert.ok(!selfTest.summary.includes(llmOrigin));
+  assert.ok(selfTest.cases.every(item => item.extraction.extractionAttempts >= 1));
   if (packageRoot) {
     const manifest = JSON.parse((await readFile(path.join(packageRoot, 'manifest.json'), 'utf8')).replace(/^\uFEFF/, ''));
     assert.ok(selfTest.report.includes(`Build: ${manifest.version}`), 'The report identifies the shipped package version');
   }
   await writeFile(path.join(fixture, 'natural-self-test.txt'), selfTest.report);
   checks.push({ name: 'natural-self-test-real-pipeline-five-views-admin-acl' });
+  mode = 'semantic-no-progress';
+  const failedSelfTest = await request('/llm/tests/natural-diagram-contract', 'POST');
+  assert.equal(failedSelfTest.success, false);
+  assert.ok(failedSelfTest.cases.every(item => item.validationCode === 'NaturalRepairNoProgress'));
+  assert.ok(failedSelfTest.cases.every(item => item.extraction.extractionAttempts === 3 && item.extraction.reviewAttempts === 1));
+  assert.ok(failedSelfTest.cases.every(item => item.issueCounts.NaturalConditionChanged > 0));
+  assert.ok(!failedSelfTest.summary.includes('원문의 조건을 보존하세요'));
+  await writeFile(path.join(fixture, 'natural-self-test-failed-summary.txt'), failedSelfTest.summary);
+  checks.push({ name: 'self-test-failure-summary-isolates-cases-and-keeps-specific-reasons' });
 
   for (const failureMode of ['null-json', 'unknown-id']) {
     mode = failureMode; const before = calls.length;
@@ -292,7 +330,7 @@ try {
   await page.locator('.natural-run-history summary').click();
   await page.locator('.natural-run-history button').first().click();
   await page.locator('.natural-run-status').filter({ hasText: 'Failed' }).waitFor();
-  await page.getByText('보정 횟수를 소진했습니다. 진단의 원인을 확인하고', { exact: false }).waitFor();
+  await page.getByText('자동 보정을 완료하지 못했습니다. 아래 진단에서', { exact: false }).waitFor();
   const diagnosticsPanel = page.getByLabel('요청 오류 진단', { exact: true });
   await diagnosticsPanel.locator('tbody tr').first().waitFor();
   const exported = await request(`/natural-diagram-runs/${exhausted.id}/diagnostics?format=json`);
@@ -306,11 +344,16 @@ try {
   await page.getByRole('button', { name: '자연어 생성 검사', exact: true }).click();
   const testPanel = page.locator('.natural-diagram-test');
   await testPanel.getByText('검사 통과', { exact: true }).waitFor({ timeout: 30000 });
+  assert.match(await testPanel.getByLabel('전달용 검사 요약').inputValue(), /short-approval: Completed/);
+  await testPanel.getByRole('button', { name: '검사 요약 복사', exact: true }).click();
+  await testPanel.getByText(/검사 요약을 복사했습니다|요약 내용을 선택해 복사/).waitFor();
   const download = page.waitForEvent('download');
   await testPanel.getByRole('button', { name: '자연어 검사 보고서 다운로드', exact: true }).click();
   await (await download).saveAs(path.join(fixture, 'natural-self-test-ui.txt'));
   await page.screenshot({ path: path.join(fixture, 'natural-self-test-1440.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
+  const summaryBounds = await testPanel.getByLabel('전달용 검사 요약').boundingBox();
+  assert.ok(summaryBounds.width > 240 && summaryBounds.x + summaryBounds.width <= 390);
   await page.screenshot({ path: path.join(fixture, 'natural-self-test-390.png'), fullPage: true });
   assert.deepEqual(errors, []);
   checks.push({ name: 'exhausted-full-diagnostics-and-synthetic-test-ui-download' });

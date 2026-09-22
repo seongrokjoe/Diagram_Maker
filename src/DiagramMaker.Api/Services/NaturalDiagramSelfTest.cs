@@ -36,6 +36,7 @@ public sealed class NaturalDiagramSelfTest(IInternalLlmClient llm, MermaidCompil
         {
             if (execution.RequestFailure is not null || execution.Token.IsCancellationRequested)
             { cases.Add(new(input.Id, "Skipped", 0, 0, execution.RequestFailure?.Code ?? "NATURAL_EXECUTION_BUDGET")); continue; }
+            var diagnosticStart = execution.Diagnostics.Count;
             try
             {
                 if (!llm.IsEnabled) throw new LlmClientException("LLM_DISABLED", "The internal LLM is disabled.");
@@ -58,21 +59,44 @@ public sealed class NaturalDiagramSelfTest(IInternalLlmClient llm, MermaidCompil
                         ErrorCode: code, Purpose: "natural-test", ProtocolVersion: NaturalDesignValidation.Protocol,
                         RecoveryState: code == "LLM_DISABLED" ? "RequiresAction" : "Interrupted", NextAction: "CheckSettings", Kind: "Terminal"));
             }
+            cases[^1] = DescribeCase(cases[^1], execution.Diagnostics.Skip(diagnosticStart).ToArray());
         }
         var successAll = cases.All(item => item.State == "Completed");
         await execution.FinishNaturalAsync(successAll ? "Recovered" : "Exhausted");
         var settings = LlmDiagnosticReport.Settings(testOptions);
         var version = System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(
             typeof(NaturalDiagramSelfTest).Assembly)?.InformationalVersion;
+        var summary = $"Build: {version}; generator: {NaturalDiagramService.GeneratorVersion}; protocol: {NaturalDesignValidation.Protocol}\n" +
+            string.Join("\n", cases.Select(item => $"{item.Id}: {item.State}; stage={item.FailureStage ?? "none"}; reason={item.ValidationCode ?? item.ErrorCode ?? "none"}; " +
+                $"extract={item.Extraction?.ExtractionAttempts ?? 0}; review={item.Extraction?.ReviewAttempts ?? 0}; " +
+                $"grounded={item.Extraction?.Grounded?.ToString() ?? "not-recorded"}; replaced={item.Extraction?.Replaced?.ToString() ?? "not-recorded"}; " +
+                $"issues={string.Join(',', (item.IssueCounts ?? new Dictionary<string, int>()).Select(pair => pair.Key + ":" + pair.Value))}"));
         var report = $"Fixed synthetic natural diagram test; Thinking OFF\nBuild: {version}; generator: {NaturalDiagramService.GeneratorVersion}; protocol: {NaturalDesignValidation.Protocol}\n" +
             "Settings: " + JsonSerializer.Serialize(settings) + "\n" + string.Join("\n", cases.Select(item =>
                 $"{item.Id}: {item.State}; reviewed pages: {item.ReviewedPages}/{item.Pages}; stop: {item.ErrorCode ?? "not-applicable"}")) + "\n" +
-            LlmDiagnosticReport.Text(successAll ? "Completed" : "Failed", cases.FirstOrDefault(item => item.ErrorCode is not null)?.ErrorCode,
+            "Copy summary:\n" + summary + "\n" + LlmDiagnosticReport.Text(successAll ? "Completed" : "Failed", cases.FirstOrDefault(item => item.ErrorCode is not null)?.ErrorCode,
                 execution.Progress, execution.Diagnostics);
-        return new(successAll, true, false, cases, settings, execution.Progress, execution.Diagnostics, report);
+        return new(successAll, true, false, cases, settings, execution.Progress, execution.Diagnostics, report, summary);
+    }
+
+    internal static NaturalDiagramTestCase DescribeCase(NaturalDiagramTestCase item, IReadOnlyList<LlmDiagnostic> diagnostics)
+    {
+        var failure = item.State == "Completed" ? null : diagnostics.LastOrDefault(d => d.Kind == "Terminal") ??
+            diagnostics.LastOrDefault(d => d.ErrorCode is not null && d.RecoveryState != "Recovered");
+        var metrics = diagnostics.LastOrDefault(d => d.Extraction is not null)?.Extraction;
+        if (metrics is not null) metrics = metrics with {
+            ExtractionAttempts = diagnostics.Count(d => d.Kind == "Request" && d.Purpose is "requirements" or "requirements-repair"),
+            ReviewAttempts = diagnostics.Count(d => d.Kind == "Request" && d.Purpose == "requirements-review") };
+        return item with { FailureStage = failure?.Purpose, ValidationCode = failure?.ValidationCode is { } code ? NaturalDesignValidation.DiagnosticCode(code) : null,
+            Extraction = metrics, IssueCounts = diagnostics.Where(d => d.ErrorCode is not null && d.Kind != "Terminal" && d.ValidationCode is not null)
+                .GroupBy(d => NaturalDesignValidation.DiagnosticCode(d.ValidationCode)).OrderBy(g => g.Key, StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => g.Count()) };
     }
 }
 
-public sealed record NaturalDiagramTestCase(string Id, string State, int Pages, int ReviewedPages, string? ErrorCode = null);
+public sealed record NaturalDiagramTestCase(string Id, string State, int Pages, int ReviewedPages, string? ErrorCode = null,
+    string? FailureStage = null, string? ValidationCode = null, NaturalExtractionMetrics? Extraction = null,
+    IReadOnlyDictionary<string, int>? IssueCounts = null);
 public sealed record NaturalDiagramTestResult(bool Success, bool SyntheticOnly, bool ThinkingEnabled,
-    IReadOnlyList<NaturalDiagramTestCase> Cases, object Settings, SemanticProgress Execution, IReadOnlyList<LlmDiagnostic> Diagnostics, string Report);
+    IReadOnlyList<NaturalDiagramTestCase> Cases, object Settings, SemanticProgress Execution, IReadOnlyList<LlmDiagnostic> Diagnostics, string Report,
+    string? Summary = null);

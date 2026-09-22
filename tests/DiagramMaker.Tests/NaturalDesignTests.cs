@@ -147,8 +147,8 @@ public sealed class NaturalDesignTests
             using var json = JsonDocument.Parse(request.UserPrompt);
             object result = request.Purpose switch
             {
-                "requirements" => Requirements(),
-                "requirements-review" => new NaturalRequirementsReview(true,
+                "requirements" => NaturalExtraction.FromRequirements(Requirements()),
+                "requirements-review" => new NaturalSourceReview(
                     json.RootElement.GetProperty("sourceRanges").EnumerateArray().Select(r => r.GetProperty("id").GetString()!).ToArray(), []),
                 "review" => Reject-- > 0 ? new NaturalDesignReview(false, ["r1"], ["문 열림 차단을 확인하세요"],
                     TargetedRepair ? [new("e2", "label", "BranchLabelInvalid", "차단 분기를 수정하세요")] : []) : new NaturalDesignReview(true, ["r1"], [], []),

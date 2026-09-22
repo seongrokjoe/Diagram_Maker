@@ -6,8 +6,21 @@ public sealed partial class InternalLlmClient
 {
     private static LlmClientException NaturalFailure(string code, string? validation, LlmValidationDetails? details = null) =>
         new(code, $"{NaturalFailureLabel(code)} 보정 한도를 소진했습니다. 마지막 정상 결과는 보존됩니다. " +
-            $"진단: {NaturalDesignValidation.DiagnosticCode(validation)}. 수정 후 새 실행을 시작하세요.",
+            $"진단: {NaturalFailureReason(validation)} ({NaturalDesignValidation.DiagnosticCode(validation)}). 검사 요약으로 실패 원인을 확인할 수 있습니다.",
             failureKind: NaturalDesignValidation.DiagnosticCode(validation), validationDetails: details);
+
+    internal static string NaturalFailureReason(string? code) => code switch {
+        "NaturalRequirementOmitted" => "원문 요구사항 누락",
+        "NaturalConditionChanged" => "원문 조건 또는 전이 변경",
+        "NaturalUnsupportedClaim" => "원문에 없는 요구사항 추가",
+        "NaturalEvidenceMismatch" => "요구사항과 원문 근거 불일치",
+        "NaturalEntityMismatch" => "원문 엔터티 불일치",
+        "NaturalScenarioMismatch" => "시나리오 연결 불일치",
+        "NaturalRepairNoProgress" => "보정 응답에 수정 내용이 반영되지 않음",
+        "NaturalExplicitRequirementsMissing" => "원문에 연결된 요구사항 없음",
+        "NaturalFieldUnexpected" => "응답에 계약 밖의 필드 포함",
+        _ => "요구사항 또는 검토 응답 검증 실패"
+    };
 
     private static string NaturalFailureLabel(string code) => code switch {
         "NATURAL_REQUIREMENTS_INVALID" => "요구사항의 응답 형식 또는 원문 근거 검증에 실패했습니다.",
@@ -48,7 +61,9 @@ public sealed partial class InternalLlmClient
                 ValidationDetails: error?.ValidationDetails ?? last?.ValidationDetails,
                 Attempt: last?.Attempt,
                 RecoveryState: state, NextAction: state == "Interrupted" ? "Resume" : state == "RequiresAction" ? "CheckSettings" : "StartNewRun",
-                Kind: "Terminal", RequestId: last?.RequestId ?? last?.Id));
+                Kind: "Terminal", RequestId: last?.RequestId ?? last?.Id,
+                Extraction: execution.Diagnostics.LastOrDefault(d => d.Extraction is not null &&
+                    (d.RecoveryGroupId == group || d.AncestorGroupIds?.Contains(group) == true))?.Extraction));
             throw;
         }
     }

@@ -194,6 +194,11 @@ pre { overflow: auto; max-height: 260px; padding: 14px; background: #101c2d; col
 .llm-result-card { border: 1px solid #d6dee8; border-left: 4px solid #9aabba; background: #f8fafc; padding: 14px 16px; }
 .llm-result-card.success { border-left-color: #278457; background: #f1faf5; }
 .llm-result-card > div { display: flex; justify-content: space-between; color: #526981; }
+.llm-result-card > .natural-test-summary { display: grid; gap: 8px; margin-top: 12px; min-width: 0; }
+.natural-test-summary label { display: grid; gap: 6px; min-width: 0; }
+.natural-test-summary textarea { min-height: 180px; overflow-wrap: anywhere; }
+.natural-test-summary button { justify-self: start; }
+.natural-test-summary p { margin: 0; }
 .llm-result-card.success > div span { color: #176b43; font-weight: 800; }
 .llm-result-card dl { display: grid; grid-template-columns: 130px 1fr; gap: 7px 12px; margin: 14px 0 0; font-size: 12px; }
 .llm-result-card dt { color: #718198; }
