@@ -5,7 +5,7 @@ namespace DiagramMaker.Services;
 
 internal static partial class NaturalDesignValidation
 {
-    public const string Protocol = "natural-design-v6";
+    public const string Protocol = "natural-design-v7";
     public static string? Requirements(NaturalRequirements value, string prompt)
     {
         if (string.IsNullOrWhiteSpace(value.Title) || value.Requirements is not { Count: > 0 and <= 150 } ||
@@ -107,9 +107,15 @@ internal static partial class NaturalDesignValidation
             };
             if (!present) return "NaturalInterlockMissing";
         }
-        if (type == "state" && (!value.Nodes.Any(n => n.Kind == "initial") ||
-            value.Nodes.Where(n => n.Kind == "initial").Any(n => value.Edges.Count(e => e.SourceId == n.Id) != 1 || value.Edges.Any(e => e.TargetId == n.Id)) ||
-            value.Nodes.Where(n => n.Kind == "final").Any(n => value.Edges.Any(e => e.SourceId == n.Id)))) return "NaturalStateBoundaryInvalid";
+        if (type == "state")
+        {
+            if (value.Nodes.Where(n => n.Kind == "initial").Any(n => value.Edges.Any(e => e.TargetId == n.Id)))
+                return "NaturalInitialIncomingInvalid";
+            if (value.Nodes.Where(n => n.Kind == "initial").Any(n => value.Edges.Count(e => e.SourceId == n.Id) != 1))
+                return "NaturalInitialOutgoingInvalid";
+            if (value.Nodes.Where(n => n.Kind == "final").Any(n => value.Edges.Any(e => e.SourceId == n.Id)))
+                return "NaturalFinalOutgoingInvalid";
+        }
         var texts = value.Nodes.SelectMany(n => n.Details.Append(n.Label).Concat(n.Members.SelectMany(m =>
             m.Preconditions.Append(m.Name).Append(m.Type).Concat(m.Parameters.SelectMany(p => new[] { p.Name, p.Type })))))
             .Concat(value.Edges.SelectMany(e => new[] { e.Label, e.Event, e.Guard, e.Action }.Concat(e.ControlPath.SelectMany(c => new[] { c.Label, c.Branch }))))
@@ -201,6 +207,18 @@ internal static partial class NaturalDesignValidation
         if (type != "flowchart") Remove(node, "shape");
         if (type != "sequence") Remove(edge, "controlPath");
         if (type != "state") foreach (var field in new[] { "event", "guard", "action" }) Remove(edge, field);
+        node["properties"]!["kind"]!["enum"] = System.Text.Json.JsonSerializer.SerializeToNode(type switch {
+            "class" => new[] { "class", "interface" }, "sequence" => ["participant"],
+            "state" => ["state", "initial", "final"], _ => ["operation", "decision", "terminal", "component"] });
+        edge["properties"]!["type"]!["enum"] = System.Text.Json.JsonSerializer.SerializeToNode(type switch {
+            "class" => new[] { "inherits", "implements", "association", "depends", "aggregation", "composition" },
+            "sequence" => ["message", "response"], "state" => ["transition"], _ => ["flow"] });
+        if (type == "class")
+        {
+            var member = node["properties"]!["members"]!["items"]!;
+            member["properties"]!["assumption"] = new System.Text.Json.Nodes.JsonObject { ["type"] = "boolean" };
+            member["required"]!.AsArray().Add("assumption");
+        }
         return JsonSerializer.SerializeToElement(schema);
     }
 

@@ -12,7 +12,8 @@ public sealed record NaturalQuestion(string Id, string Text, string Reason, IRea
     IReadOnlyList<string> Choices);
 public sealed record NaturalAnswer(string QuestionId, string Text);
 public sealed record NaturalAnswersRequest(int ExpectedRevision, int QuestionVersion, IReadOnlyList<NaturalAnswer> Answers);
-public sealed record NaturalIssue(string ItemId, string Field, string Code, string Instruction);
+public sealed record NaturalIssue(string ItemId, string Field, string Code, string Instruction,
+    IReadOnlyList<string>? EvidenceIds = null);
 public sealed record NaturalRequirementsReview(bool Accepted, IReadOnlyList<string> ReviewedSourceRangeIds,
     IReadOnlyList<NaturalIssue> Issues);
 public sealed record NaturalParameter(string Name, string Type);

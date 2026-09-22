@@ -53,13 +53,14 @@ const llm = createServer(async (request, response) => {
     let context = JSON.parse(payload.messages[1].content);
     if (context.originalRequest) context = JSON.parse(context.originalRequest);
     if (!properties.concepts && !properties.reviewedRequirementIds) context = context.context ?? context;
-    const reviewing = !!properties.items?.items.properties.issues;
+    const reviewing = !!properties.items?.items.properties.findings;
     if (properties.items) batches.push({ source: context.sourceKind, reviewing, outputLimit: payload.max_tokens, items: context.items.length,
       kinds: context.items.map(item => item.kind), characters: payload.messages[1].content.length,
       facts: context.sources.facts.length, sourceCharacters: context.sources.facts.reduce((n, f) => n + (f.content?.length ?? 0), 0) });
     const result = naturalDesignFixture(context, properties, testMode) ?? (properties.steps ? executionMeaningFixture(context) : properties.accepted ? { accepted: true, issues: [] } :
       reviewing ? { items: context.items.map(item => ({ id: item.id,
-        issues: testMode === 'partial-git' && item.kind === 'change' ? ['G'] : [] })) } : {
+        findings: testMode === 'partial-git' && item.kind === 'change' ? [{ field: 'description', code: 'incorrect_change',
+          instruction: '변경 전후 근거를 구분하세요', evidenceIds: [item.id] }] : [] })) } : {
       summary: '원본 코드의 입력값을 가공하고 결과를 반환합니다', recommendedType: context.available[0],
       items: context.items.map(item => ({ id: item.id, summary: '입력값을 누적하고 반환합니다', description: '원본 근거에 표시된 값을 누적하고 호출한 곳으로 반환합니다' })),
     });

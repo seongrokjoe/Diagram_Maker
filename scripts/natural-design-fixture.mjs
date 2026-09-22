@@ -13,18 +13,20 @@ export function naturalDesignFixture(context, properties, mode) {
   if (properties.requirements) return { title: '장비 설계', entities: ['장비'], requirements: [
     { id: 'r1', text: naturalPrompt, kind: 'interlock', sourceRangeIds: context.sourceRanges.map(range => range.id) }],
     scenarios: [{ id: 'scenario-1', title: '장비 설계', requirementIds: ['r1'], sourceRangeIds: context.sourceRanges.map(range => range.id) }], questions: [] };
-  if (properties.reviewedRequirementIds) return { accepted: mode !== 'natural-reject', reviewedRequirementIds: context.requirements.requirements.map(r => r.id),
-    issues: mode === 'natural-reject' ? ['문 열림 차단 경로를 보완하세요'] : [], itemIssues: [] };
+  if (properties.reviewedRequirementIds) return { reviewedRequirementIds: context.requirements.requirements.map(r => r.id),
+    issues: mode === 'natural-reject' ? [{ itemId: context.requirements.requirements[0].id, field: 'guard', code: 'NaturalConditionChanged',
+      instruction: '문 열림 차단 경로를 보완하세요', evidenceIds: [context.requirements.requirements[0].id] }] : [] };
   if (properties.connections && !properties.concepts) return { connections: [] };
   if (!properties.concepts && !properties.nodes?.items?.properties?.requirementIds) return undefined;
-  const node = (id, label, kind, members = []) => ({ id, label, kind, shape: '', members, details: [], requirementIds: ['r1'], assumption: false });
+  const requirementIds = context.requirements?.requirements.map(r => r.id) ?? ['r1'];
+  const node = (id, label, kind, members = []) => ({ id, label, kind, shape: '', members, details: [], requirementIds, assumption: false });
   const edge = (id, sourceId, targetId, label, extras = {}) => ({ id, sourceId, targetId, label,
     type: context.type === 'state' ? 'transition' : context.type === 'sequence' ? 'message' : 'flow',
-    event: '', guard: '', action: '', controlPath: [], requirementIds: ['r1'], assumption: false, ...extras });
+    event: '', guard: '', action: '', controlPath: [], requirementIds, assumption: false, ...extras });
   const result = { title: '장비 설계', nodes: [], edges: [], notes: [] };
   if (context.type === 'class') result.nodes = [node('machine', '장비', 'class', [
-    { name: 'doorOpen', kind: 'field', visibility: 'private', type: 'bool', parameters: [], preconditions: [] },
-    { name: 'Run', kind: 'method', visibility: 'public', type: 'void', parameters: [], preconditions: ['문이 닫힘'] }])];
+    { name: 'doorOpen', kind: 'field', visibility: 'private', type: 'bool', parameters: [], preconditions: [], assumption: false },
+    { name: 'Run', kind: 'method', visibility: 'public', type: 'void', parameters: [], preconditions: ['문이 닫힘'], assumption: false }])];
   else if (context.type === 'state') {
     result.nodes = [node('start', '시작', 'initial'), node('idle', '대기', 'state'), node('run', '운전', 'state'), node('end', '종료', 'final')];
     result.edges = [edge('e1', 'start', 'idle', ''), edge('e2', 'idle', 'run', '', { event: '운전 요청', guard: '문이 닫힘', action: '가동' }), edge('e3', 'run', 'end', '정지')];
@@ -41,7 +43,15 @@ export function naturalDesignFixture(context, properties, mode) {
       members: node.members.map(member => ({ ...member, assumption: false })) })),
     connections: result.edges.map(({ id, sourceId, targetId, requirementIds, ...edge }) => ({ source: sourceId, target: targetId, ...edge })),
   };
-  return result;
+  return projectContract(result, { properties });
+}
+
+export function projectContract(value, schema) {
+  if (Array.isArray(value)) return value.map(item => projectContract(item, schema.items ?? {}));
+  if (value && typeof value === 'object' && schema.properties)
+    return Object.fromEntries(Object.entries(value).filter(([key]) => key in schema.properties)
+      .map(([key, child]) => [key, projectContract(child, schema.properties[key])]));
+  return value;
 }
 
 async function setZoom(editor, value) {

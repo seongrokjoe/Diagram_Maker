@@ -108,10 +108,10 @@ public sealed class NaturalReliabilityTests
             Assert.Equal("NATURAL_REQUIREMENTS_INVALID", error.Code);
             checkpoints = execution.Checkpoints;
         }
-        Assert.Equal(11, model.Purposes.Count);
+        Assert.Equal(2, model.Purposes.Count);
         using (var execution = new SemanticExecution(options, checkpoints, Ct))
             await Assert.ThrowsAsync<LlmClientException>(() => Client(model).ExtractNaturalRequirementsAsync("요청한다.", false, Ct));
-        Assert.Equal(11, model.Purposes.Count);
+        Assert.Equal(2, model.Purposes.Count);
     }
 
     [Fact]
@@ -213,6 +213,7 @@ public sealed class NaturalReliabilityTests
         public Task<VllmCompletionResult> CompleteAsync(VllmCompletionRequest request, CancellationToken ct)
         {
             Purposes.Add(request.Purpose!); Messages.Add(request.UserPrompt);
+            if (InvalidJson) return Result("null");
             using var doc = JsonDocument.Parse(request.UserPrompt);
             var ranges = doc.RootElement.GetProperty("sourceRanges").EnumerateArray().ToArray();
             if (InterruptReview && request.Purpose == "requirements-review") throw new LlmClientException("LLM_REQUEST_TIMEOUT", "synthetic interruption");

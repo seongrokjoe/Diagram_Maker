@@ -61,7 +61,9 @@ internal static partial class NaturalDesignValidation
     internal static string DiagnosticCode(string? code) => code switch {
         "NullItem" or "DuplicateId" or "MissingItems" or "NaturalRequirementIdMissing" or "NaturalRequirementTextMissing" or
         "NaturalFieldTooLong" or "NaturalFieldMissing" or "NaturalFieldTypeInvalid" or "NaturalFieldEnumInvalid" or
-        "NaturalTooManyItems" or "NaturalFieldUnexpected" or "NaturalRepairNoProgress" or
+        "NaturalTooManyItems" or "NaturalTooFewItems" or "NaturalFieldUnexpected" or "NaturalRepairNoProgress" or
+        "FormatRepairBudgetExhausted" or "ContentRepairBudgetExhausted" or "NaturalInitialMissing" or
+        "NaturalInitialIncomingInvalid" or "NaturalInitialOutgoingInvalid" or "NaturalFinalOutgoingInvalid" or
         "NaturalMeaningMissing" or "NaturalMeaningKeysInvalid" or "NaturalMeaningReferencesInvalid" or "NaturalIntegrationScopeInvalid" or
         "NaturalRequirementOmitted" or "NaturalConditionChanged" or "NaturalUnsupportedClaim" or
         "NaturalEvidenceMismatch" or "NaturalEntityMismatch" or "NaturalScenarioMismatch" or
@@ -74,7 +76,8 @@ internal static partial class NaturalDesignValidation
         "NaturalEdgeInvalid" or "NaturalClassRelationInvalid" or "NaturalRequirementCoverageMissing" or "NaturalInterlockMissing" or "NaturalStateBoundaryInvalid" or
         "NaturalReviewInvalid" or "NaturalAcceptedIdsChanged" or "NaturalRequirementsReviewInvalid" or
         "EmptyContent" or "MixedContent" or "WrongRoot" or "MalformedJson" or "Deserialization" or "InvalidFields" => code,
-        _ => "NaturalSemanticIssue"
+        "NaturalSemanticIssue" => code,
+        _ => "NaturalReviewIssueUnclassified"
     };
 
     internal static string DiagnosticField(string? field) => field switch {

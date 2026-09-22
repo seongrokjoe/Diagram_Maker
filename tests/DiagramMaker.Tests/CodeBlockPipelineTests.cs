@@ -237,9 +237,10 @@ public sealed class CodeBlockPipelineTests
             var properties = request.StructuredSchema!.Value.GetProperty("properties");
             var response = properties.TryGetProperty("steps", out _)
                 ? JsonSerializer.Serialize(WrongFact ? ExecutionPlan(json.RootElement) with { Steps = [] } : ExecutionPlan(json.RootElement), Json)
-                : properties.TryGetProperty("items", out var items) && items.GetProperty("items").GetProperty("properties").TryGetProperty("issues", out _)
-                ? JsonSerializer.Serialize(new SharedSemanticReview(json.RootElement.GetProperty("context").GetProperty("items").EnumerateArray()
-                    .Select(i => new SharedItemReview(i.GetProperty("id").GetString()!, RejectReview ? ["unsupported_role"] : [])).ToArray()), Json)
+                : properties.TryGetProperty("items", out var items) && items.GetProperty("items").GetProperty("properties").TryGetProperty("findings", out _)
+                ? JsonSerializer.Serialize(new GroundedSharedReview(json.RootElement.GetProperty("context").GetProperty("items").EnumerateArray()
+                    .Select(i => new GroundedSharedItemReview(i.GetProperty("id").GetString()!, RejectReview ?
+                        [new("description", "unsupported_role", "원본 근거에 맞는 역할로 수정하세요", [i.GetProperty("id").GetString()!])] : [])).ToArray()), Json)
                 : properties.TryGetProperty("items", out _)
                 ? JsonSerializer.Serialize(SharedPlan(json.RootElement, WrongFact), Json)
                 : properties.TryGetProperty("recommendedType", out _)

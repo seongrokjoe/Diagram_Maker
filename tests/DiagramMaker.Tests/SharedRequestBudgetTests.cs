@@ -176,9 +176,9 @@ public sealed class SharedRequestBudgetTests
             var root = data.RootElement;
             object response;
             if (body.RootElement.GetProperty("structured_outputs").GetProperty("json").GetProperty("properties")
-                .GetProperty("items").GetProperty("items").GetProperty("properties").TryGetProperty("issues", out _))
-            { ReviewRequests++; response = new SharedSemanticReview(root.GetProperty("context").GetProperty("items").EnumerateArray()
-                .Select(i => new SharedItemReview(i.GetProperty("id").GetString()!, [])).ToArray()); }
+                .GetProperty("items").GetProperty("items").GetProperty("properties").TryGetProperty("findings", out _))
+            { ReviewRequests++; response = new GroundedSharedReview(root.GetProperty("context").GetProperty("items").EnumerateArray()
+                .Select(i => new GroundedSharedItemReview(i.GetProperty("id").GetString()!, [])).ToArray()); }
             else
             {
                 GenerationRequests++;

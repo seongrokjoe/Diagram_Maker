@@ -33,5 +33,7 @@ public sealed record SemanticProgress(string Stage, string UnitId, int Completed
     long WaitMilliseconds = 0, long AttemptWaitMilliseconds = 0, DateTimeOffset? WaitingSince = null,
     IReadOnlyList<LlmDiagnostic>? RecentFailures = null, LlmDiagnostic? LastRequest = null,
     bool ProtocolUpgraded = false, DateTimeOffset? LastProgressAt = null, SemanticCoverage? Coverage = null,
-    IReadOnlyDictionary<string, long>? StageMilliseconds = null, int PreflightTokenizationRequests = 0);
+    IReadOnlyDictionary<string, long>? StageMilliseconds = null, int PreflightTokenizationRequests = 0,
+    IReadOnlyList<DiagramRepairUsage>? RepairBudgets = null);
+public sealed record DiagramRepairUsage(string ScopeId, int FormatUsed, int ContentUsed, int Limit = 10);
 public sealed record ResumeSemanticRequest(int ExpectedRevision);

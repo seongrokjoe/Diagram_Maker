@@ -156,13 +156,13 @@ public sealed class SharedReviewRecoveryTests
     }
 
     [Fact]
-    public async Task RepeatedInvalidReviewsSplitWithoutResettingCorrectionOrRegenerating()
+    public async Task RepeatedInvalidReviewsStopWithoutSplittingOrRegenerating()
     {
         using var handler = new Model("always-invalid-review");
         var result = await Run(handler, 4);
         Assert.Empty(result.Response.Items);
         Assert.Equal(1, handler.Generations);
-        Assert.Equal(17, handler.Reviews); // Parent eleven times, then each of six descendants once.
+        Assert.Equal(2, handler.Reviews);
         Assert.All(result.Diagnostics.Where(d => d.Purpose == "review"), d =>
         {
             Assert.InRange(d.Attempt!.Value, 1, 11); Assert.Equal("Exhausted", d.RecoveryState);
@@ -281,7 +281,7 @@ public sealed class SharedReviewRecoveryTests
         var result = await Run(model, 8, options);
         Assert.Equal(5, result.Response.Items.Count);
         Assert.Equal(3, result.Response.Failures!.SelectMany(f => f.ItemIds).Distinct().Count());
-        Assert.All(model.Counts.Where(p => p.Key is "work0" or "work1" or "work2"), p => Assert.Equal(11, p.Value));
+        Assert.All(model.Counts.Where(p => p.Key is "work0" or "work1" or "work2"), p => Assert.Equal(2, p.Value));
         Assert.All(model.Counts.Where(p => p.Key is not ("work0" or "work1" or "work2")), p => Assert.Equal(1, p.Value));
     }
 
@@ -305,16 +305,17 @@ public sealed class SharedReviewRecoveryTests
             var fields = schema.GetProperty("properties").GetProperty("items").GetProperty("items").GetProperty("properties");
             Assert.Equal(items.Select(i => i.GetProperty("id").GetString()).Order(),
                 fields.GetProperty("id").GetProperty("enum").EnumerateArray().Select(i => i.GetString()).Order());
-            var reviewing = fields.TryGetProperty("issues", out _);
+            var reviewing = fields.TryGetProperty("findings", out _);
             object result; var reason = "stop";
             if (reviewing)
             {
                 Reviews++; ReviewSizes.Add(items.Length); ReviewLimits.Add(wire.GetProperty("max_tokens").GetInt32());
                 if (mode == "http-review") return new(HttpStatusCode.BadRequest) { Content = new StringContent("PRIVATE response") };
                 if ((mode == "truncate-review" || mode == "four-errors") && Reviews == 1) reason = "length";
-                result = new SharedSemanticReview(items.Select(i => new SharedItemReview(i.GetProperty("id").GetString()!,
+                result = new GroundedSharedReview(items.Select(i => new GroundedSharedItemReview(i.GetProperty("id").GetString()!,
                     ((mode == "reject-once" && Counts[i.GetProperty("label").GetString()!] == 1) || mode == "reject-always" || mode == "four-errors") &&
-                    i.GetProperty("label").GetString() == "work0" ? ["reversed_condition"] : [])).ToArray());
+                    i.GetProperty("label").GetString() == "work0" ?
+                        [new("description", "reversed_condition", "원본 조건의 참·거짓 방향을 보존하세요", [i.GetProperty("id").GetString()!])] : [])).ToArray());
                 if (mode == "invalid-review" && Reviews == 1 || mode == "four-errors" && Reviews == 3 || mode == "always-invalid-review")
                     result = new { accepted = true, issues = new[] { "contradiction" } };
             }

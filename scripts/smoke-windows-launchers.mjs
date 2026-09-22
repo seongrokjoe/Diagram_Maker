@@ -104,7 +104,7 @@ try {
           const naturalName = (await readdir(path.join(app, 'diagnostics'))).find(name => name.startsWith('natural-diagram-'));
           assert.ok(naturalName);
           const naturalReport = await readFile(path.join(app, 'diagnostics', naturalName), 'utf8');
-          assert.match(naturalReport, /LLM_DISABLED/); assert.match(naturalReport, /natural-design-v6/);
+          assert.match(naturalReport, /LLM_DISABLED/); assert.match(naturalReport, /natural-design-v7/);
           await writeFile(path.join(fixture, 'natural-diagram-command.txt'), naturalReport);
           await writeFile(path.join(fixture, 'natural-diagram-command.log'), naturalOutput);
           checks.push('natural diagram command retains failure report and nonzero exit');

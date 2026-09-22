@@ -10,7 +10,7 @@ internal static class NaturalSemanticAssembly
 
     public static JsonElement Schema(string type)
     {
-        var original = JsonNode.Parse(NaturalDesignValidation.DesignSchema.GetRawText())!;
+        var original = JsonNode.Parse(NaturalDesignValidation.DesignSchemaFor(type).GetRawText())!;
         var concepts = original["properties"]!["nodes"]!.DeepClone();
         var connections = original["properties"]!["edges"]!.DeepClone();
         void Edit(JsonNode array, params (string Old, string? New)[] changes)
@@ -27,8 +27,13 @@ internal static class NaturalSemanticAssembly
             array["maxItems"] = 80;
         }
         Edit(concepts, ("id", "key"), ("requirementIds", null));
-        concepts["items"]!["properties"]!["members"]!["items"]!["properties"]!["assumption"] =
-            new JsonObject { ["type"] = "boolean" };
+        if (type == "class")
+        {
+            var member = concepts["items"]!["properties"]!["members"]!["items"]!;
+            member["properties"]!["assumption"] = new JsonObject { ["type"] = "boolean" };
+            if (!member["required"]!.AsArray().Any(v => v!.GetValue<string>() == "assumption"))
+                member["required"]!.AsArray().Add("assumption");
+        }
         Edit(connections, ("id", null), ("sourceId", "source"), ("targetId", "target"), ("requirementIds", null));
         return JsonSerializer.SerializeToElement(new JsonObject {
             ["type"] = "object", ["additionalProperties"] = false,

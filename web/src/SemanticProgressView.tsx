@@ -117,6 +117,9 @@ function actionLabel(action?: string, kind?: string) { return ({ StartNewRun: "�
   CheckSettings: "설정 확인", RepairInvalidItem: "실패 항목 보정" } as Record<string, string>)[action ?? ""] ?? action ?? (kind ? "해당 없음" : "미기록"); }
 
 function purpose(value: FailureDiagnostic) { return value.purpose === "requirements-validation" ? "요구사항 근거 검증" :
+  value.purpose === "scenario-design" ? "시나리오 설계" : value.purpose === "scenario-repair" ? "시나리오 보정" :
+  value.purpose === "scenario-review" ? "시나리오 의미 검토" : value.purpose === "scenario-design-validation" ? "시나리오 구조 검증" :
+  value.purpose === "scenario-mapping" ? "시나리오 연결 보정" :
   value.purpose?.endsWith("format-repair") ? "응답 형식 보정" :
   value.purpose === "meaning" ? "요구사항별 의미 설계" : value.purpose === "meaning-repair" ? "실패한 요구사항 설계 보정" :
   value.purpose === "meaning-review" ? "요구사항별 의미 검토" : value.purpose === "meaning-validation" ? "요구사항별 구조 검증" :
@@ -155,6 +158,12 @@ function issueDescription(code: string) {
 
 function failureDescription(validation?: string, error?: string) {
   const descriptions: Record<string, string> = { SharedSummaryInvalid: "전체 요약이 비었거나 너무 깁니다.", SharedRecommendedTypeInvalid: "추천한 다이어그램 형식이 허용 목록과 다릅니다.",
+    FormatRepairBudgetExhausted: "이 작업의 응답 형식 보정 예산을 소진했습니다.", ContentRepairBudgetExhausted: "이 작업의 내용 보정 예산을 소진했습니다.",
+    NaturalReviewIssueUnclassified: "검토 오류를 분류하지 못했습니다. 기술 상세를 확인하세요.",
+    NaturalInitialIncomingInvalid: "초기 의사 상태로 들어오는 전이는 허용되지 않습니다.",
+    NaturalInitialOutgoingInvalid: "초기 의사 상태는 하나의 시작 전이가 필요합니다.", NaturalFinalOutgoingInvalid: "종료 의사 상태에서 나가는 전이는 허용되지 않습니다.",
+    NaturalInitialMissing: "원문에 명시된 초기 상태가 누락됐습니다.", NaturalTooFewItems: "응답에 필요한 항목이 빠졌습니다.",
+    SharedReviewEvidenceUnknown: "검토 지시가 제공되지 않은 근거를 참조했습니다.",
     NaturalRequirementOmitted: "원문에 명시된 요구사항이 누락되었습니다.", NaturalConditionChanged: "원문의 조건이나 전이가 변경되었습니다.",
     NaturalUnsupportedClaim: "원문에 없는 요구사항이 추가되었습니다.", NaturalEvidenceMismatch: "요구사항과 인용한 원문 근거가 다릅니다.",
     NaturalEntityMismatch: "원문의 엔터티와 추출 결과가 다릅니다.", NaturalScenarioMismatch: "시나리오 연결이 원문과 다릅니다.",

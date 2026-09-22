@@ -51,7 +51,7 @@ public sealed class NaturalDesignTests
         var client = Client(transport);
         var result = await client.GenerateDesignedNaturalAsync(Prompt, type, false,
             new DiagramPresetCatalog().Resolve(type, "balanced"), null, null, CancellationToken.None);
-        Assert.Equal(new[] { "requirements", "requirements-review", "meaning", "meaning-review" }, transport.Purposes);
+        Assert.Equal(new[] { "requirements", "requirements-review", "scenario-design", "scenario-review" }, transport.Purposes);
         Assert.Equal("Reviewed", result!.Quality!.Status);
         Assert.Equal(new[] { "r1" }, result.Quality.ReviewedRequirementIds);
         Assert.NotEmpty(result.Quality.ElementRequirements!);
@@ -71,8 +71,8 @@ public sealed class NaturalDesignTests
             new DiagramPresetCatalog().Resolve("flowchart", "balanced"), null, null, CancellationToken.None);
         if (alwaysReject) Assert.Equal("NATURAL_DESIGN_REJECTED", (await Assert.ThrowsAsync<LlmClientException>(() => task)).Code);
         else Assert.True((await task)!.Quality!.RepairUsed);
-        Assert.Equal(alwaysReject ? new[] { "requirements", "requirements-review", "meaning", "meaning-review", "meaning-repair" } :
-            new[] { "requirements", "requirements-review", "meaning", "meaning-review", "meaning-repair", "meaning-review" }, model.Purposes);
+        Assert.Equal(alwaysReject ? new[] { "requirements", "requirements-review", "scenario-design", "scenario-review", "scenario-repair" } :
+            new[] { "requirements", "requirements-review", "scenario-design", "scenario-review", "scenario-repair", "scenario-review" }, model.Purposes);
     }
 
     [Fact]
@@ -156,13 +156,15 @@ public sealed class NaturalDesignTests
                 "requirements" => NaturalExtraction.FromRequirements(Requirements()),
                 "requirements-review" => new NaturalSourceReview(
                     json.RootElement.GetProperty("sourceRanges").EnumerateArray().Select(r => r.GetProperty("id").GetString()!).ToArray(), []),
-                "meaning-review" => Reject-- > 0 ? new NaturalDesignReview(false, ["r1"], ["문 열림 차단을 확인하세요"],
-                    [new("r1", "label", "BranchLabelInvalid", "차단 분기를 수정하세요")]) : new NaturalDesignReview(true, ["r1"], [], []),
-                _ => Meaning(json.RootElement.GetProperty("type").GetString()!)
+                "scenario-review" => Reject-- > 0 ? new NaturalScenarioReview(["r1"],
+                    [new("r1", "label", "NaturalConditionChanged", "차단 분기를 수정하세요", ["r1"])]) : new NaturalScenarioReview(["r1"], []),
+                _ => Design(json.RootElement.GetProperty("type").GetString()!)
             };
-            if (VaryRepair && request.Purpose == "meaning-repair" && result is NaturalSemanticUnit meaning)
-                result = meaning with { Concepts = meaning.Concepts.Select((node, index) => index == 1 ? node with { Label = "장비를 운전한다" } : node).ToArray() };
-            return Task.FromResult(new VllmCompletionResult(JsonSerializer.Serialize(result, new JsonSerializerOptions(JsonSerializerDefaults.Web)), "stop", 1, true, false, 0, request.MaxOutputTokens, 100, 100, 200));
+            if (VaryRepair && request.Purpose == "scenario-repair" && result is NaturalDesign design)
+                result = design with { Nodes = design.Nodes.Select((node, index) => index == 1 ? node with { Label = "장비를 운전한다" } : node).ToArray() };
+            var value = JsonSerializer.SerializeToNode(result, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+            ScenarioPipelineTests.ScenarioModel.Project(value, request.StructuredSchema!.Value);
+            return Task.FromResult(new VllmCompletionResult(value.ToJsonString(), "stop", 1, true, false, 0, request.MaxOutputTokens, 100, 100, 200));
         }
     }
 }

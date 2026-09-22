@@ -16,6 +16,7 @@ public sealed class SemanticExecution : IDisposable
     private readonly CancellationToken parent;
     private readonly Stopwatch watch = Stopwatch.StartNew();
     private readonly Dictionary<string, long> stageMilliseconds = new();
+    private readonly Dictionary<string, DiagramRepairUsage> repairBudgets = new();
     private long stageStartedAt;
     private int preflightTokenizationRequests;
     private readonly int initialPreflightTokenizationRequests;
@@ -46,7 +47,23 @@ public sealed class SemanticExecution : IDisposable
         preflightTokenizationRequests++;
         await NotifyAsync();
     }
-    internal const string SharedPolicyVersion = "shared-requests-v9";
+    internal const string SharedPolicyVersion = "shared-requests-v10";
+    internal T? ReadRecovery<T>(string key) where T : class
+    {
+        var value = checkpoints.FirstOrDefault(c => c.Key == Hash(fingerprint + "recovery:" + key));
+        return value is null ? null : JsonSerializer.Deserialize<T>(value.ValueJson);
+    }
+    internal async Task SaveRecoveryAsync<T>(string key, T state)
+    {
+        var id = Hash(fingerprint + "recovery:" + key);
+        checkpoints.RemoveAll(c => c.Key == id);
+        checkpoints.Add(new(id, "recovery-budget", JsonSerializer.Serialize(state)));
+        if (state is DiagramRecoveryBudget.RecoveryState recovery) UpdateRepairUsage(id, recovery);
+        foreach (var dependencies in activeDependencies) dependencies.Add(id);
+        await NotifyAsync();
+    }
+    private void UpdateRepairUsage(string key, DiagramRecoveryBudget.RecoveryState recovery) => repairBudgets[key] = new(key[..16],
+        recovery.Charges.Count(p => p.Value == "format"), recovery.Charges.Count(p => p.Value == "content"), DiagramRecoveryPolicy.MaximumRepairs);
     private DateTimeOffset lastProgressAt = DateTimeOffset.UtcNow;
     private readonly Dictionary<string, SemanticCoverage> coverage = new();
     private Func<SharedDiagramGroup, Task>? sharedProgress;
@@ -93,7 +110,7 @@ public sealed class SemanticExecution : IDisposable
     public IReadOnlyList<LlmDiagnostic> Diagnostics => diagnostics.ToArray();
     // Page wrappers and their constituent completion checkpoints describe the same
     // work; do not count both as independent completed units.
-    private static bool Counted(SemanticCheckpoint value) => value.Stage is not ("code-page" or "git-page" or "execution-meaning" or "structured-response" or "natural-meaning") &&
+    private static bool Counted(SemanticCheckpoint value) => value.Stage is not ("code-page" or "git-page" or "execution-meaning" or "structured-response" or "natural-meaning" or "recovery-budget" or "natural-scenario") &&
         !value.Stage.StartsWith("shared-", StringComparison.Ordinal);
     public SemanticProgress Progress => new(Stage, UnitId,
         checkpoints.Count(c => Counted(c) && c.State == "Completed"), reused.Count, diagnostics.Count,
@@ -112,7 +129,8 @@ public sealed class SemanticExecution : IDisposable
             .Concat(diagnostics.Where(d => d.ErrorCode is not null).TakeLast(3)).DistinctBy(d => d.Id).ToArray(),
         diagnostics.LastOrDefault(), protocolUpgraded, lastProgressAt,
         coverage.Count == 0 ? null : new(coverage.Values.Sum(c => c.TotalUnits), coverage.Values.Sum(c => c.VerifiedUnits),
-            coverage.Values.Sum(c => c.PendingUnits), coverage.Values.Sum(c => c.FailedUnits)), StageTimes(), preflightTokenizationRequests);
+            coverage.Values.Sum(c => c.PendingUnits), coverage.Values.Sum(c => c.FailedUnits)), StageTimes(), preflightTokenizationRequests,
+        repairBudgets.Values.ToArray());
 
     public SemanticExecution(LlmOptions options, IReadOnlyList<SemanticCheckpoint>? saved, CancellationToken cancellationToken, Func<Task>? onProgress = null,
         IReadOnlyList<LlmDiagnostic>? savedDiagnostics = null, SemanticProgress? savedProgress = null)
@@ -123,6 +141,8 @@ public sealed class SemanticExecution : IDisposable
         budget = CancellationTokenSource.CreateLinkedTokenSource(parent);
         budget.CancelAfter(TimeSpan.FromSeconds(BudgetSeconds));
         checkpoints = (saved ?? []).ToList();
+        foreach (var entry in checkpoints.Where(c => c.Stage == "recovery-budget"))
+            if (JsonSerializer.Deserialize<DiagramRecoveryBudget.RecoveryState>(entry.ValueJson) is { } recovery) UpdateRepairUsage(entry.Key, recovery);
         protocolUpgraded = savedProgress?.ProtocolUpgraded == true ||
             checkpoints.Any(c => c.Stage.StartsWith("shared-", StringComparison.Ordinal)) &&
             !(savedDiagnostics ?? []).Any(d => d.ProtocolVersion == SharedPolicyVersion);
@@ -175,6 +195,7 @@ public sealed class SemanticExecution : IDisposable
             current.checkpoints.Add(new(unitKey, stage, "null", "Pending"));
             await current.NotifyAsync();
             var result = await work();
+            current.Token.ThrowIfCancellationRequested();
             if (result is not null && current.RequestFailure is null)
             {
                 var success = accepted(result);

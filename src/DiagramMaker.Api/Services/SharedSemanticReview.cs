@@ -5,10 +5,47 @@ using DiagramMaker.Domain;
 namespace DiagramMaker.Services;
 
 internal sealed record SharedSemanticReview(IReadOnlyList<SharedItemReview> Items);
-internal sealed record SharedItemReview(string Id, IReadOnlyList<string> Issues);
+internal sealed record SharedItemReview(string Id, IReadOnlyList<string> Issues, IReadOnlyList<SharedReviewFinding>? Findings = null);
+internal sealed record SharedReviewFinding(string Field, string Code, string Instruction, IReadOnlyList<string> EvidenceIds);
+internal sealed record GroundedSharedItemReview(string Id, IReadOnlyList<SharedReviewFinding> Findings);
+internal sealed record GroundedSharedReview(IReadOnlyList<GroundedSharedItemReview> Items);
 
 internal static class SharedReviewValidation
 {
+    public static JsonElement GroundedSchema(int count) => JsonSerializer.SerializeToElement(new {
+        type = "object", additionalProperties = false, required = new[] { "items" },
+        properties = new { items = new { type = "array", minItems = count, maxItems = count,
+            items = new { type = "object", additionalProperties = false, required = new[] { "id", "findings" },
+                properties = new { id = new { type = "string" }, findings = new { type = "array", maxItems = 3,
+                    items = new { type = "object", additionalProperties = false,
+                        required = new[] { "field", "code", "instruction", "evidenceIds" }, properties = new {
+                            field = new { type = "string", @enum = new[] { "summary", "description" } },
+                            code = new { type = "string", @enum = Codes }, instruction = new { type = "string", maxLength = 300 },
+                            evidenceIds = new { type = "array", minItems = 1, maxItems = 6, items = new { type = "string" } }
+                        } } } } } } }
+    });
+
+    public static SharedValidationProblem? Check(GroundedSharedReview value, IReadOnlyList<SharedSemanticItem> items)
+    {
+        var expected = items.Select(i => i.Id).ToHashSet();
+        if (value.Items is null || value.Items.Any(i => i is null || i.Findings is null || i.Findings.Count > 3 || i.Findings.Any(f => f is null)))
+            return new("SharedReviewFieldsInvalid", new(expected.Count, value.Items?.Count ?? 0));
+        var legacy = new SharedSemanticReview(value.Items.Select(i => new SharedItemReview(i.Id, i.Findings.Select(f => f.Code).Distinct().ToArray())).ToArray());
+        if (Check(legacy, expected) is { } membership) return membership;
+        foreach (var item in value.Items)
+        {
+            var allowed = items.Single(i => i.Id == item.Id).FactIds.Append(item.Id).ToHashSet();
+            foreach (var finding in item.Findings)
+            {
+                if (finding is null || finding.Field is not ("summary" or "description") || string.IsNullOrWhiteSpace(finding.Instruction) ||
+                    finding.EvidenceIds is not { Count: > 0 and <= 6 })
+                    return new("SharedReviewIssuesInvalid", new(expected.Count, value.Items.Count, Field: "items.findings"));
+                if (finding.EvidenceIds.Any(id => !allowed.Contains(id)))
+                    return new("SharedReviewEvidenceUnknown", new(expected.Count, value.Items.Count, Field: "items.findings.evidenceIds"));
+            }
+        }
+        return null;
+    }
     internal static readonly string[] Aliases = ["M", "O", "C", "I", "R", "S", "G", "E"];
     internal static readonly string[] Codes = ["missing_action", "incorrect_outcome", "reversed_condition",
         "invented_call", "unsupported_role", "mixed_scope", "incorrect_change", "insufficient_evidence"];
@@ -61,11 +98,12 @@ internal static class SharedReviewValidation
     {
         var aliases = new PromptIds(ids);
         aliases.Encode(prompt);
-        var longest = Aliases.Take(3).ToArray();
-        var maximum = new SharedSemanticReview(ids.Select(id => new SharedItemReview(id, longest)).ToArray());
+        var maximum = new GroundedSharedReview(ids.Select(id => new GroundedSharedItemReview(id, [])).ToArray());
         // One token per UTF-8 byte is deliberately conservative; actual serving
         // tokenizers vary. Reserve room for the compact response's framing.
-        return 256 + Encoding.UTF8.GetByteCount(aliases.Encode(JsonSerializer.Serialize(maximum, PromptJson.Options)));
+        // Reserve a bounded set of concrete corrections. If actual rejection
+        // detail is larger, split the review using the same recovery budget.
+        return 1024 + Encoding.UTF8.GetByteCount(aliases.Encode(JsonSerializer.Serialize(maximum, PromptJson.Options)));
     }
 
     internal static string Expand(string code) => Array.IndexOf(Aliases, code) is var index && index >= 0 ? Codes[index] : code;
@@ -85,6 +123,7 @@ internal static class SharedReviewValidation
     public static object RepairIssues(IReadOnlyList<SharedItemReview> rejected) => rejected.Select(item => new
     {
         item.Id, item.Issues,
-        instructions = item.Issues.Select(RepairInstruction).ToArray()
+        findings = item.Findings,
+        instructions = item.Findings is { Count: > 0 } findings ? findings.Select(f => f.Instruction).ToArray() : item.Issues.Select(RepairInstruction).ToArray()
     }).ToArray();
 }

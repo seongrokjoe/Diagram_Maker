@@ -232,8 +232,8 @@ public sealed class SharedSemanticTests(ITestOutputHelper output)
             {
                 Assert.All(result!.Pages.Values, p => Assert.NotEqual("Semantic", p.Status));
                 // Every source unit is attempted even after other content failures.
-                // Format failures use all ten repairs; unchanged meanings stop early.
-                Assert.Equal(mode == "invalid" ? 30 * DiagramRecoveryPolicy.MaximumAttempts : 30 * 3, transport.Requests);
+                // Identical invalid contracts and unchanged meanings stop early.
+                Assert.Equal(mode == "invalid" ? 30 * 2 : 30 * 3, transport.Requests);
             }
         }
     }

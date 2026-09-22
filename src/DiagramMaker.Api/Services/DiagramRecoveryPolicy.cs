@@ -6,5 +6,5 @@ internal static class DiagramRecoveryPolicy
 {
     public const int MaximumRepairs = 10;
     public const int MaximumAttempts = MaximumRepairs + 1;
-    public const string Version = "diagram-recovery-v1";
+    public const string Version = "diagram-recovery-v2";
 }

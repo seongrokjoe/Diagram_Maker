@@ -1,7 +1,7 @@
 # AI Git Architecture Reviewer
 
-현재 사내 LLM 시험용 Windows 배포본은 [0.1.0-internal.14 ZIP](artifacts/release/DiagramMaker-0.1.0-internal.14-win-x64.zip)과
-[SHA-256](artifacts/release/DiagramMaker-0.1.0-internal.14-win-x64.zip.sha256)입니다.
+현재 사내 LLM 시험용 Windows 배포본은 [0.1.0-internal.15 ZIP](artifacts/release/DiagramMaker-0.1.0-internal.15-win-x64.zip)과
+[SHA-256](artifacts/release/DiagramMaker-0.1.0-internal.15-win-x64.zip.sha256)입니다.
 기능별 검증 결과는 [공통 다이어그램 안정화 검증 보고서](SHARED_DIAGRAM_RELIABILITY_REPORT.md), 사내 시험 절차는
 [INTERNAL_TEST_KO.txt](packaging/windows/INTERNAL_TEST_KO.txt)를 참조하세요.
 
@@ -68,7 +68,7 @@ LLM 구성 여부와 실패 단계가 표시되며 미설정·요청 실패·검
 
 **요청 오류 진단**은 화면에서도 최초·후속 오류, 응답 항목 검증 사유와 문자/토큰 한도를 보여줍니다. `MaxInputCharacters`는 문자 수이며 입력 토큰 상한인 `MaxInputTokens`와 다릅니다. 기본 문자 수 2,000,000, 입력 토큰 200,000을 사용하는 [완성 JSON 예제](packaging/windows/config/llm-policy.example.json)와 [설정 안내](packaging/windows/config/LLM_POLICY_KO.txt)를 제공합니다. 검토 입력만 커지면 생성된 의미를 보존하고 검토를 나눕니다.
 
-최신 Windows 시험 패키지는 [0.1.0-internal.14 ZIP](artifacts/release/DiagramMaker-0.1.0-internal.14-win-x64.zip)과 [SHA-256](artifacts/release/DiagramMaker-0.1.0-internal.14-win-x64.zip.sha256)입니다. 기능별 변경 사항과 검증 결과는 [최신 검증 보고서](SHARED_DIAGRAM_RELIABILITY_REPORT.md) 및 [진행 기록](CODE_BLOCK_DIAGRAM_PROGRESS.md)에 기록했습니다.
+최신 Windows 시험 패키지는 [0.1.0-internal.15 ZIP](artifacts/release/DiagramMaker-0.1.0-internal.15-win-x64.zip)과 [SHA-256](artifacts/release/DiagramMaker-0.1.0-internal.15-win-x64.zip.sha256)입니다. 기능별 변경 사항과 검증 결과는 [최신 검증 보고서](NATURAL_DIAGRAM_SCENARIO_REPORT.md) 및 [진행 기록](CODE_BLOCK_DIAGRAM_PROGRESS.md)에 기록했습니다.
 
 공유 의미 생성은 대상 ID를 요청 스키마로 제한하고 항목별 검토를 수행합니다. 검토 응답은 짧은 문제 코드만 반환하며 동봉 정책 예제의 2,000토큰 출력 예산에 맞춰 사전 분할합니다. 검토 형식 오류·잘림은 생성 결과를 보존한 채 검토만 복구합니다. **요청 오류 진단** 표는 오류마다 행을 보존하고 복구 완료·실패·재개 대기를 구분합니다. 행을 선택하면 우측 상세에서 원인과 다음 행동을 확인하고 **기술 상세**에서 입력·출력 한도를 확인합니다. 완료된 AI/Code 결과 수와 이전 AI 유지 수도 별도로 표시합니다.
 
@@ -90,12 +90,12 @@ node scripts/smoke-code-block-ui.mjs
 Windows 패키지는 아래 명령으로 빌드하고 검사합니다. 빌드 스크립트는 같은 버전의 기존 ZIP을 덮어쓰지 않습니다. 검증 결과와 실제 내부 LLM/PostgreSQL 연결 검증 상태는 [진행 기록](CODE_BLOCK_DIAGRAM_PROGRESS.md)에 기록합니다.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1 -Version '0.1.0-internal.14'
-node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.14-win-x64
-node scripts/smoke-code-block-ui.mjs artifacts/stage/DiagramMaker-0.1.0-internal.14-win-x64
-node scripts/smoke-packaged-llm.mjs artifacts/stage/DiagramMaker-0.1.0-internal.14-win-x64
-node scripts/smoke-packaged-llm.mjs artifacts/stage/DiagramMaker-0.1.0-internal.14-win-x64 --basic
-node scripts/smoke-windows-launchers.mjs artifacts/stage/DiagramMaker-0.1.0-internal.14-win-x64
+powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1 -Version '0.1.0-internal.15'
+node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.15-win-x64
+node scripts/smoke-code-block-ui.mjs artifacts/stage/DiagramMaker-0.1.0-internal.15-win-x64
+node scripts/smoke-packaged-llm.mjs artifacts/stage/DiagramMaker-0.1.0-internal.15-win-x64
+node scripts/smoke-packaged-llm.mjs artifacts/stage/DiagramMaker-0.1.0-internal.15-win-x64 --basic
+node scripts/smoke-windows-launchers.mjs artifacts/stage/DiagramMaker-0.1.0-internal.15-win-x64
 ```
 
 ## 로컬 실행
@@ -179,7 +179,7 @@ LLM 비활성화·입력 한도·근거 또는 의미 검토 실패 시 정적 �
 }
 ```
 
-**LLM 점검** 메뉴와 `test-llm.cmd`는 고정된 합성 데이터만 사용합니다. **코드 생성 검사**와 `test-code-diagram.cmd`는 C#/C++의 실제 파서·공유 생성·검토를 Thinking OFF로 확인하고 비민감 설정·오류 진단을 텍스트로 제공합니다. **자연어 생성 검사**와 `test-natural-diagram.cmd`는 짧은 승인 흐름과 표·공통 인터락 네 형식을 Thinking OFF로 검사합니다(관리자 전용, 최대 900초). 자연어는 원문 요구사항만 추출하고 설계 가정을 후속 단계에서 표시합니다. 추출 최대 3회와 각 후보의 검토 계약 최대 3회를 독립 관리하며 전체 오류 목록과 JSON/텍스트 진단을 제공합니다. ‘검사 요약 복사’로 빌드·실패 단계·고정 오류 분류·시도 수를 전달할 수 있습니다. 코드 블럭/Git 작업에도 텍스트 진단 다운로드가 있습니다. Git 다이어그램의 의미 설계에는 선택 변경과 관련 선언·제어 흐름·호출 근거 및 필요한 소스 조각을 전송합니다. 기존 내부 vLLM 연결·정확한 origin 검증·비밀 마스킹 정책을 그대로 사용하며 외부 모델로 자동 전환하지 않습니다.
+**LLM 점검** 메뉴와 `test-llm.cmd`는 고정된 합성 데이터만 사용합니다. **코드 생성 검사**와 `test-code-diagram.cmd`는 C#/C++의 실제 파서·공유 생성·검토를 Thinking OFF로 확인하고 비민감 설정·오류 진단을 텍스트로 제공합니다. **자연어 생성 검사**와 `test-natural-diagram.cmd`는 짧은 승인 흐름과 표·공통 인터락 네 형식을 Thinking OFF로 검사합니다(관리자 전용, 최대 900초). 화면에서 검사 문장·형식을 선택하고 진행 단계·남은 시간·완료 페이지를 보거나 검사를 취소할 수 있습니다. 자연어는 원문 요구사항만 추출하고 설계 가정을 후속 단계에서 표시합니다. 시나리오별 생성·근거 검토·형식 간 검토가 정상 결과를 보존하며, 단위별 보정 예산과 전체 실행 한도를 적용합니다. ‘검사 요약 복사’로 빌드·실패 단계·고정 오류 분류·시도 수를 전달할 수 있습니다. 코드 블럭/Git 작업에도 텍스트 진단 다운로드가 있습니다. Git 다이어그램의 의미 설계에는 선택 변경과 관련 선언·제어 흐름·호출 근거 및 필요한 소스 조각을 전송합니다. 기존 내부 vLLM 연결·정확한 origin 검증·비밀 마스킹 정책을 그대로 사용하며 외부 모델로 자동 전환하지 않습니다.
 
 ## 검증과 오프라인 패키지
 
@@ -192,15 +192,15 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 Windows x64 오프라인 패키지 생성:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1 -Version '0.1.0-internal.14'
+powershell -ExecutionPolicy Bypass -File .\scripts\build-offline-win-x64.ps1 -Version '0.1.0-internal.15'
 ```
 
-이번 시험의 명시적 패키징 버전은 `0.1.0-internal.14`이며 출력은 `artifacts/release/DiagramMaker-0.1.0-internal.14-win-x64.zip`과 SHA-256 파일입니다. 기존 ZIP이 있으면 새 버전명을 지정해야 합니다. 실제 사내 LLM의 의미 품질은 사내 환경에서 별도로 확인해야 합니다.
+이번 시험의 명시적 패키징 버전은 `0.1.0-internal.15`이며 출력은 `artifacts/release/DiagramMaker-0.1.0-internal.15-win-x64.zip`과 SHA-256 파일입니다. 기존 ZIP이 있으면 새 버전명을 지정해야 합니다. 실제 사내 LLM의 의미 품질은 사내 환경에서 별도로 확인해야 합니다.
 
 승인된 Playwright를 미리 반입하고 패키징을 완료한 뒤 실제 배포 실행 파일의 오프라인 샘플을 검사할 수 있습니다.
 
 ```powershell
-node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.14-win-x64
+node scripts/smoke-offline-preview.mjs artifacts/stage/DiagramMaker-0.1.0-internal.15-win-x64
 ```
 
 격리된 메모리 저장소·동적 loopback 포트와 배포 start.cmd와 동일한 Development 환경에서 LLM과 개발용 생성 스텁을 끄고, 외부 페이지 요청과 생성 요청을 차단합니다. 배포 HTML/JS/CSS/Mermaid 파일의 SHA-256 일치와 4개 종류 × 4개 화면 폭의 모든 샘플을 확인합니다. 단계별 결과·파일 해시·스크린샷·서버 로그는 `artifacts/offline-preview-*/`에 저장합니다. 기존 운영 서버·저장 데이터·LLM 설정은 변경하지 않습니다.

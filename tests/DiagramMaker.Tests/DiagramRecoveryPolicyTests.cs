@@ -15,7 +15,7 @@ public sealed class DiagramRecoveryPolicyTests
     {
         var model = new Model(succeedsAt);
         var work = new StructuredLlmCompletion(model).CompleteAsync<Value>("contract", "request", Schema, 100,
-            false, value => value.Text == "valid" ? null : "InvalidFields", CancellationToken.None);
+            false, value => value.Text == "valid" ? null : "Invalid" + value.Text, CancellationToken.None);
         if (success) Assert.True((await work).RepairUsed);
         else Assert.Equal("LLM_SCHEMA_INVALID", (await Assert.ThrowsAsync<LlmClientException>(() => work)).Code);
         Assert.Equal(11, model.Requests);
@@ -44,7 +44,7 @@ public sealed class DiagramRecoveryPolicyTests
         Assert.Equal(11, model.Requests);
 
         Task<StructuredCompletionResult<Value>> Complete(CancellationToken token) => structured.CompleteAsync<Value>(
-            "contract", "request", Schema, 100, false, value => value.Text == "valid" ? null : "InvalidFields", token);
+            "contract", "request", Schema, 100, false, value => value.Text == "valid" ? null : "Invalid" + value.Text, token);
     }
 
     public sealed record Value(string Text);
@@ -55,7 +55,7 @@ public sealed class DiagramRecoveryPolicyTests
         public Task<VllmCompletionResult> CompleteAsync(VllmCompletionRequest request, CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
-            var content = ++Requests >= succeedsAt ? "{\"text\":\"valid\"}" : "null";
+            var content = ++Requests >= succeedsAt ? "{\"text\":\"valid\"}" : JsonSerializer.Serialize(new Value("invalid" + Requests));
             return Task.FromResult(new VllmCompletionResult(content, "stop", 1, true, false, 0, request.MaxOutputTokens, 1, 1, 2));
         }
     }

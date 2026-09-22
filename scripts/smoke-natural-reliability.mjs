@@ -37,7 +37,7 @@ const llm = createServer(async (request, response) => {
     if (context.originalRequest) context = JSON.parse(context.originalRequest);
     const properties = (payload.structured_outputs?.json ?? payload.response_format?.json_schema?.schema).properties;
     const kind = properties.requirements ? 'requirements' : properties.reviewedSourceRangeIds ? 'requirements-review' :
-      properties.reviewedRequirementIds ? context.views ? 'final-review' : 'review' : properties.concepts ? 'design' : 'integration';
+      properties.reviewedRequirementIds ? context.views ? 'final-review' : 'review' : properties.nodes ? 'design' : 'scenario-mapping';
     calls.push({ kind, mode, at: Date.now(), target: context.target?.id, requirementCount: context.requirements?.requirements?.length });
     const attempt = calls.filter(call => call.mode === mode && call.kind === kind).length;
     if (mode === 'grammar-once' && calls.filter(call => call.mode === mode).length === 1) {
@@ -63,23 +63,27 @@ const llm = createServer(async (request, response) => {
     } else if (kind === 'requirements-review') value = { reviewedSourceRangeIds: context.sourceRanges.map(r => r.id), issues: [] };
     else if (kind === 'review' || kind === 'final-review') {
       const rejected = mode === 'contradiction' || mode === 'cross-view' && kind === 'final-review';
-      value = { accepted: !rejected, reviewedRequirementIds: context.requirements.requirements.map(r => r.id),
-        issues: rejected ? ['조건 반전을 수정하세요.'] : [], itemIssues: [] };
+      value = { reviewedRequirementIds: context.requirements.requirements.map(r => r.id),
+        issues: rejected ? [{ itemId: context.views?.[0]?.pages?.[0]?.id ?? context.requirements.requirements[0].id,
+          field: 'guard', code: 'NaturalConditionChanged', instruction: '조건 반전을 수정하세요.', evidenceIds: [context.requirements.requirements[0].id] }] : [] };
     }
+    else if (kind === 'scenario-mapping') value = { scenarios: [{ id: 'scenario-1', title: '요청 처리',
+      requirementIds: context.requirements.requirements.map(r => r.id), sourceRangeIds: context.requirements.sourceRanges.map(r => r.id) }], questions: [] };
     else {
       value = naturalDesignFixture(context, properties, 'valid');
     }
     if (kind === 'requirements-review' && mode === 'review-missing-field' && attempt === 1) delete value.reviewedSourceRangeIds;
     if (kind === 'requirements-review' && mode === 'review-all-missing') value.reviewedSourceRangeIds = [];
-    if (kind === 'review' && mode === 'design-review-once' && attempt === 1) delete value.accepted;
+    if (kind === 'review' && mode === 'design-review-once' && attempt === 1) delete value.reviewedRequirementIds;
     if (kind === 'requirements-review' && (mode === 'semantic-no-progress' || mode === 'review-contract-then-semantic' && attempt === 3))
       value.issues = [{ code: 'NaturalConditionChanged', field: 'text', requirementIds: ['r1'],
         sourceRangeIds: [context.sourceRanges[0].id], instruction: '원문의 조건을 보존하세요.' }];
-    if (kind === 'requirements-review' && mode === 'review-contract-then-semantic' && attempt <= 2) delete value.reviewedSourceRangeIds;
+    if (kind === 'requirements-review' && mode === 'review-contract-then-semantic' && attempt === 1) delete value.reviewedSourceRangeIds;
+    if (kind === 'requirements-review' && mode === 'review-contract-then-semantic' && attempt === 2) value.reviewedSourceRangeIds = null;
     await delay(mode === 'question' ? 100 : 1);
     response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
       choices: [{ message: { content: mode === 'null-json' ? 'null' : JSON.stringify(value) },
-        finish_reason: mode === 'split' && kind === 'integration' ? 'length' : 'stop' }],
+        finish_reason: mode === 'split' && kind === 'design' && context.requirements.requirements.length > 1 ? 'length' : 'stop' }],
       usage: { prompt_tokens: 100, completion_tokens: 100, total_tokens: 200 },
     }));
   } catch (error) { output += `fixture: ${error.stack}\n`; response.writeHead(500).end(); }
@@ -137,7 +141,7 @@ try {
   assert.equal(run.checkpoints, null);
   assert.equal(run.requirements.sourceRanges.length, 2);
   const original = await request(`/natural-diagrams/${run.resultDiagramId}`);
-  assert.equal(original.generatorVersion, 'natural-v10');
+  assert.equal(original.generatorVersion, 'natural-v11');
   await request(`/natural-diagram-runs/${run.id}`, 'GET', undefined, 403, 'other-owner');
   await request(`/natural-diagram-runs/${run.id}/diagnostics`, 'GET', undefined, 403, 'other-owner');
   await request(`/natural-diagram-runs/${run.id}/answers`, 'POST', {}, 403, 'other-owner');
@@ -146,7 +150,7 @@ try {
   checks.push({ name: 'generation-evidence-masking-acl-diagnostics', requests: calls.length });
 
   for (const [testMode, stage, expected] of [['review-missing-field', 'requirements-review', 'Completed'],
-    ['review-all-missing', 'requirements-review', 'Failed'], ['scenario-invalid', 'requirements', 'Failed'],
+    ['review-all-missing', 'requirements-review', 'Failed'], ['scenario-invalid', 'requirements', 'Completed'],
     ['design-review-once', 'review', 'Completed'], ['grammar-once', 'requirements', 'Completed'],
     ['all-assumptions-once', 'requirements', 'Completed'], ['review-contract-then-semantic', 'requirements-review', 'Completed'],
     ['semantic-no-progress', 'requirements-review', 'Failed']]) {
@@ -165,13 +169,16 @@ try {
     if (testMode === 'review-all-missing') {
       assert.equal(checked.errorCode, 'NATURAL_REQUIREMENTS_REVIEW_INVALID');
       assert.equal(sent.filter(call => call.kind === 'requirements').length, 1);
-      assert.equal(sent.filter(call => call.kind === stage).length, 11);
+      assert.equal(sent.filter(call => call.kind === stage).length, 2);
     }
-    if (testMode === 'scenario-invalid') assert.equal(checked.errorCode, 'NATURAL_PLAN_INVALID');
+    if (testMode === 'scenario-invalid') {
+      assert.equal(sent.filter(call => call.kind === 'requirements').length, 1);
+      assert.equal(sent.filter(call => call.kind === 'scenario-mapping').length, 1);
+    }
     if (testMode === 'design-review-once') {
       const generations = sent.filter(call => call.kind === 'design');
-      assert.equal(generations.length, 2);
-      assert.equal(new Set(generations.map(call => call.target)).size, 2, 'review format repair does not regenerate either requirement');
+      assert.equal(generations.length, 1, 'review format repair does not regenerate the scenario');
+      assert.equal(generations[0].requirementCount, 2);
     }
     if (testMode === 'grammar-once') assert.ok(rows.some(row => row.schemaRelaxed));
     if (testMode === 'all-assumptions-once') {
@@ -210,7 +217,7 @@ try {
   assert.ok(selfTest.cases.every(item => item.reviewedPages > 0));
   assert.ok(!selfTest.report.includes(llmOrigin));
   assert.equal(selfTest.summary.split('\n').length, 3);
-  assert.match(selfTest.summary, /natural-v10; protocol: natural-design-v6/);
+  assert.match(selfTest.summary, /natural-v11; protocol: natural-design-v7/);
   assert.ok(!selfTest.summary.includes(llmOrigin));
   assert.ok(selfTest.cases.every(item => item.extraction.extractionAttempts >= 1));
   if (packageRoot) {
@@ -219,10 +226,25 @@ try {
   }
   await writeFile(path.join(fixture, 'natural-self-test.txt'), selfTest.report);
   checks.push({ name: 'natural-self-test-real-pipeline-five-views-admin-acl' });
+  await request('/llm/tests/natural-diagram-contract?caseId=short-approval&diagramType=class', 'POST', undefined, 400);
+  const streamedResponse = await fetch(origin + '/api/v1/llm/tests/natural-diagram-contract?format=ndjson&caseId=table-interlock&diagramType=state',
+    { method: 'POST', signal: AbortSignal.timeout(30000) });
+  assert.equal(streamedResponse.status, 200);
+  assert.match(streamedResponse.headers.get('content-type') ?? '', /application\/x-ndjson/);
+  const streamedEvents = (await streamedResponse.text()).trim().split('\n').map(line => JSON.parse(line));
+  assert.ok(streamedEvents.some(event => event.type === 'progress' && event.caseId === 'table-interlock'));
+  assert.ok(streamedEvents.some(event => event.type === 'case-completed' && event.case.state === 'Completed'));
+  const streamedResult = streamedEvents.at(-1);
+  assert.equal(streamedResult.type, 'result');
+  assert.equal(streamedResult.result.success, true);
+  assert.deepEqual(streamedResult.result.cases.map(item => [item.id, item.types]), [['table-interlock', ['state']]]);
+  assert.ok(!JSON.stringify(streamedEvents).includes(llmOrigin));
+  await writeFile(path.join(fixture, 'natural-self-test-stream.json'), JSON.stringify(streamedEvents, null, 2));
+  checks.push({ name: 'natural-self-test-selected-ndjson-progress-result-and-invalid-selection' });
   mode = 'semantic-no-progress';
   const failedSelfTest = await request('/llm/tests/natural-diagram-contract', 'POST');
   assert.equal(failedSelfTest.success, false);
-  assert.ok(failedSelfTest.cases.every(item => item.validationCode === 'NaturalRepairNoProgress'));
+  assert.ok(failedSelfTest.cases.every(item => item.lastFailureCode === 'NaturalRepairNoProgress'));
   assert.ok(failedSelfTest.cases.every(item => item.extraction.extractionAttempts === 2 && item.extraction.reviewAttempts === 1));
   assert.ok(failedSelfTest.cases.every(item => item.issueCounts.NaturalConditionChanged > 0));
   assert.ok(!failedSelfTest.summary.includes('원문의 조건을 보존하세요'));
@@ -233,11 +255,11 @@ try {
     mode = failureMode; const before = calls.length;
     const failed = await poll((await create()).id);
     assert.equal(failed.state, 'Failed');
-    assert.equal(calls.length - before, 11);
+    assert.equal(calls.length - before, 2);
     assert.equal(failed.resumeAllowed, false);
     await request(`/natural-diagram-runs/${failed.id}/resume`, 'POST', { expectedRevision: failed.revision }, 409);
     assert.equal((await poll(failed.id)).state, 'Failed');
-    assert.equal(calls.length - before, 11, 'resume cannot reset exhausted repairs');
+    assert.equal(calls.length - before, 2, 'resume cannot reset exhausted repairs');
     checks.push({ name: failureMode, requests: calls.length - before });
   }
   mode = 'contradiction';
@@ -259,7 +281,7 @@ try {
   checks.push({ name: 'four-formats-common-requirement-coverage' });
 
   mode = 'cross-view';
-  const crossView = await poll((await create()).id);
+  const crossView = await poll((await request('/natural-diagram-runs', 'POST', { request: allFormats.request }, 202)).id);
   assert.equal(crossView.state, 'Partial');
   assert.equal(crossView.views[0].errorCode, 'NATURAL_CROSS_VIEW_REVIEW');
   assert.ok(crossView.views[0].pages.every(page => page.diagram && page.state === 'Completed'));
@@ -344,10 +366,13 @@ try {
   await page.screenshot({ path: path.join(fixture, 'exhausted-1440.png'), fullPage: true });
   mode = 'valid';
   await page.getByRole('button', { name: 'LLM 점검', exact: true }).click();
-  await page.getByRole('button', { name: '자연어 생성 검사', exact: true }).click();
   const testPanel = page.locator('.natural-diagram-test');
+  await testPanel.getByLabel('검사 문장').selectOption('table-interlock');
+  await testPanel.getByLabel('검사 형식').selectOption('state');
+  await page.getByRole('button', { name: '자연어 생성 검사', exact: true }).click();
   await testPanel.getByText('검사 통과', { exact: true }).waitFor({ timeout: 30000 });
-  assert.match(await testPanel.getByLabel('전달용 검사 요약').inputValue(), /short-approval: Completed/);
+  assert.match(await testPanel.getByLabel('전달용 검사 요약').inputValue(), /table-interlock: Completed/);
+  await testPanel.getByText('표·공통 조건 (상태도)', { exact: false }).waitFor();
   await testPanel.getByRole('button', { name: '검사 요약 복사', exact: true }).click();
   await testPanel.getByText(/검사 요약을 복사했습니다|요약 내용을 선택해 복사/).waitFor();
   const download = page.waitForEvent('download');

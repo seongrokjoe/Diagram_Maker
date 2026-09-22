@@ -20,46 +20,87 @@ public sealed class NaturalDiagramSelfTest(IInternalLlmClient llm, MermaidCompil
         "운전 중 오류가 발생하면 장비를 정지하고 오류 상태로 전환한다. 작업자가 오류를 확인하고 초기화하면 대기로 복귀한다.\n" +
         "문이 열려 있으면 모든 시작 경로에서 운전을 차단한다. 제어기는 현재 상태와 문 열림 여부를 보관한다.";
 
-    public async Task<NaturalDiagramTestResult> RunAsync(CancellationToken ct)
+    public static bool ValidSelection(string? caseId, string? diagramType) =>
+        (caseId is null or "short-approval" or "table-interlock") &&
+        (diagramType is null or "flowchart" or "sequence" or "state" or "class") &&
+        (caseId != "short-approval" || diagramType is null or "flowchart");
+
+    public async Task<NaturalDiagramTestResult> RunAsync(CancellationToken ct, string? caseId = null,
+        string? diagramType = null, Action<NaturalDiagramTestEvent>? reportProgress = null)
     {
+        if (!ValidSelection(caseId, diagramType)) throw new ArgumentException("Invalid synthetic test selection.");
         // A test cannot silently expand the administrator's configured budget.
         var testOptions = JsonSerializer.Deserialize<LlmOptions>(JsonSerializer.Serialize(options.Value))!;
         testOptions.SemanticJobBudgetSeconds = Math.Min(900, testOptions.SemanticJobBudgetSeconds);
-        using var execution = new SemanticExecution(testOptions, null, ct);
+        SemanticExecution? active = null;
+        string? activeCase = null;
+        var completedCases = new List<NaturalDiagramTestCase>();
+        NaturalGenerationProgress? latest = null;
+        void Report(string kind, NaturalDiagramTestCase? completed = null)
+        {
+            if (active is null) return;
+            reportProgress?.Invoke(new(kind, activeCase, latest?.StageMessage ?? active.Stage,
+                active.Progress, completed, CompletedPages: latest?.Views.Sum(v => v.Pages?.Count(p => p.State == "Completed") ?? 0) ?? 0,
+                TotalUnits: latest?.TotalUnits ?? 0));
+        }
+        using var execution = new SemanticExecution(testOptions, null, ct, () => { Report("progress"); return Task.CompletedTask; });
+        active = execution;
         await using var store = new InMemoryAppStore();
         using var cache = new NaturalDiagramSessionCache();
         var service = new NaturalDiagramService(llm, compiler, store, cache, presets, Options.Create(testOptions), environment);
-        var cases = new List<NaturalDiagramTestCase>();
+        var cases = completedCases;
         var inputs = new[] { (Id: "short-approval", Prompt: ShortPrompt, Types: new[] { "flowchart" }),
             (Id: "table-interlock", Prompt: TablePrompt, Types: new[] { "flowchart", "sequence", "state", "class" }) };
         foreach (var input in inputs)
         {
+            if (caseId is not null && caseId != input.Id || diagramType is not null && !input.Types.Contains(diagramType)) continue;
+            var types = diagramType is null ? input.Types : [diagramType];
+            activeCase = input.Id;
+            latest = null;
+            var remaining = Math.Max(0, execution.BudgetSeconds - execution.Progress.ElapsedSeconds);
             if (execution.RequestFailure is not null || execution.Token.IsCancellationRequested)
-            { cases.Add(new(input.Id, "Skipped", 0, 0, execution.RequestFailure?.Code ?? "NATURAL_EXECUTION_BUDGET")); continue; }
+            {
+                cases.Add(new(input.Id, "Skipped", 0, 0, execution.RequestFailure?.Code ?? (ct.IsCancellationRequested ? "NATURAL_CANCELLED" : "NATURAL_EXECUTION_BUDGET"),
+                    RemainingSecondsAtStart: remaining, Types: types));
+                Report("case-completed", cases[^1]); continue;
+            }
+            Report("progress");
             var diagnosticStart = execution.Diagnostics.Count;
+            var formatStart = execution.Progress.RepairBudgets?.Sum(b => b.FormatUsed) ?? 0;
+            var contentStart = execution.Progress.RepairBudgets?.Sum(b => b.ContentUsed) ?? 0;
+            var started = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 if (!llm.IsEnabled) throw new LlmClientException("LLM_DISABLED", "The internal LLM is disabled.");
-                var record = await service.GenerateAsync(new(input.Prompt, Views: input.Types.Select((type, index) =>
-                    new DiagramViewSelection("test-" + index, type, "balanced")).ToArray()), "synthetic-natural-test", execution.Token);
+                var record = await service.GenerateAsync(new(input.Prompt, Views: types.Select((type, index) =>
+                    new DiagramViewSelection("test-" + index, type, "balanced")).ToArray()), "synthetic-natural-test", execution.Token,
+                    (progress, token) => { token.ThrowIfCancellationRequested(); latest = progress; Report("progress"); return Task.CompletedTask; });
+                execution.Token.ThrowIfCancellationRequested();
                 var pages = (record.Views ?? []).SelectMany(view => view.Pages ?? []).ToArray();
                 var reviewed = pages.Count(page => page.State == "Completed" && page.DesignQuality?.Status == "Reviewed");
-                var success = record.Views?.Count == input.Types.Length && record.Views.All(view => view.State == "Completed") &&
+                var success = record.Views?.Count == types.Length && record.Views.All(view => view.State == "Completed") &&
                     pages.Length > 0 && reviewed == pages.Length;
                 cases.Add(new(input.Id, success ? "Completed" : "Partial", pages.Length, reviewed,
                     record.Views?.FirstOrDefault(view => view.ErrorCode is not null)?.ErrorCode));
             }
             catch (Exception error) when (error is LlmClientException or OperationCanceledException or DiagramValidationException or InvalidOperationException)
             {
-                var code = error is LlmClientException known ? known.Code : error is OperationCanceledException ? "NATURAL_EXECUTION_BUDGET" : "NATURAL_INTERNAL_ERROR";
+                var code = error is LlmClientException known ? known.Code : error is OperationCanceledException
+                    ? ct.IsCancellationRequested ? "NATURAL_CANCELLED" : "NATURAL_EXECUTION_BUDGET" : "NATURAL_INTERNAL_ERROR";
                 if (error is LlmClientException operational && LlmFailure.StopsRequests(operational)) execution.StopRequests(operational);
-                cases.Add(new(input.Id, "Failed", 0, 0, code));
+                var pages = latest?.Views.SelectMany(v => v.Pages ?? []).ToArray() ?? [];
+                cases.Add(new(input.Id, code == "NATURAL_CANCELLED" ? "Cancelled" : "Failed", pages.Length,
+                    pages.Count(p => p.State == "Completed" && p.DesignQuality?.Status == "Reviewed"), code));
                 if (!execution.Diagnostics.Any(d => d.ErrorCode == code))
                     await execution.RecordAsync(new(Guid.NewGuid().ToString("N"), "natural-test", input.Id, "Failed", DateTimeOffset.UtcNow,
                         ErrorCode: code, Purpose: "natural-test", ProtocolVersion: NaturalDesignValidation.Protocol,
                         RecoveryState: code == "LLM_DISABLED" ? "RequiresAction" : "Interrupted", NextAction: "CheckSettings", Kind: "Terminal"));
             }
-            cases[^1] = DescribeCase(cases[^1], execution.Diagnostics.Skip(diagnosticStart).ToArray());
+            cases[^1] = DescribeCase(cases[^1] with { RemainingSecondsAtStart = remaining, Types = types,
+                FormatRepairs = (execution.Progress.RepairBudgets?.Sum(b => b.FormatUsed) ?? 0) - formatStart,
+                ContentRepairs = (execution.Progress.RepairBudgets?.Sum(b => b.ContentUsed) ?? 0) - contentStart,
+                ElapsedMilliseconds = started.ElapsedMilliseconds }, execution.Diagnostics.Skip(diagnosticStart).ToArray());
+            Report("case-completed", cases[^1]);
         }
         var successAll = cases.All(item => item.State == "Completed");
         await execution.FinishNaturalAsync(successAll ? "Recovered" : "Exhausted");
@@ -70,6 +111,10 @@ public sealed class NaturalDiagramSelfTest(IInternalLlmClient llm, MermaidCompil
             string.Join("\n", cases.Select(item => $"{item.Id}: {item.State}; stage={item.FailureStage ?? "none"}; reason={item.ValidationCode ?? item.ErrorCode ?? "none"}; " +
                 $"extract={item.Extraction?.ExtractionAttempts ?? 0}; review={item.Extraction?.ReviewAttempts ?? 0}; " +
                 $"grounded={item.Extraction?.Grounded?.ToString() ?? "not-recorded"}; replaced={item.Extraction?.Replaced?.ToString() ?? "not-recorded"}; " +
+                $"root={item.RootFailureCode ?? "none"}; last={item.LastFailureCode ?? "none"}; stop={item.ErrorCode ?? "none"}; " +
+                $"remainingAtStart={item.RemainingSecondsAtStart}s; elapsed={item.ElapsedMilliseconds}ms; http={item.HttpRequests}; " +
+                $"repairs(format/content)={item.FormatRepairs}/{item.ContentRepairs}; " +
+                $"phases={string.Join(',', (item.PhaseRequests ?? new Dictionary<string, int>()).Select(p => p.Key + ":" + p.Value))}; " +
                 $"issues={string.Join(',', (item.IssueCounts ?? new Dictionary<string, int>()).Select(pair => pair.Key + ":" + pair.Value))}"));
         var report = $"Fixed synthetic natural diagram test; Thinking OFF\nBuild: {version}; generator: {NaturalDiagramService.GeneratorVersion}; protocol: {NaturalDesignValidation.Protocol}\n" +
             "Settings: " + JsonSerializer.Serialize(settings) + "\n" + string.Join("\n", cases.Select(item =>
@@ -81,13 +126,19 @@ public sealed class NaturalDiagramSelfTest(IInternalLlmClient llm, MermaidCompil
 
     internal static NaturalDiagramTestCase DescribeCase(NaturalDiagramTestCase item, IReadOnlyList<LlmDiagnostic> diagnostics)
     {
-        var failure = item.State == "Completed" ? null : diagnostics.LastOrDefault(d => d.Kind == "Terminal") ??
-            diagnostics.LastOrDefault(d => d.ErrorCode is not null && d.RecoveryState != "Recovered");
+        var causes = diagnostics.Where(d => d.ErrorCode is not null && d.Kind != "Terminal" && d.Purpose != "natural-test").ToArray();
+        var failure = item.State == "Completed" ? null : causes.LastOrDefault(d => d.RecoveryState != "Recovered") ?? causes.LastOrDefault() ??
+            diagnostics.LastOrDefault(d => d.Kind == "Terminal");
         var metrics = diagnostics.LastOrDefault(d => d.Extraction is not null)?.Extraction;
         if (metrics is not null) metrics = metrics with {
             ExtractionAttempts = diagnostics.Count(d => d.Kind == "Request" && d.Purpose is "requirements" or "requirements-repair"),
             ReviewAttempts = diagnostics.Count(d => d.Kind == "Request" && d.Purpose == "requirements-review") };
-        return item with { FailureStage = failure?.Purpose, ValidationCode = failure?.ValidationCode is { } code ? NaturalDesignValidation.DiagnosticCode(code) : null,
+        return item with { FailureStage = failure?.Purpose ?? failure?.Stage, ValidationCode = failure?.ValidationCode is { } code ? NaturalDesignValidation.DiagnosticCode(code) : null,
+            RootFailureCode = causes.FirstOrDefault()?.ValidationCode ?? causes.FirstOrDefault()?.ErrorCode,
+            LastFailureCode = causes.LastOrDefault()?.ValidationCode ?? causes.LastOrDefault()?.ErrorCode,
+            HttpRequests = diagnostics.Sum(d => d.TransportAttempts > 0 ? d.TransportAttempts : d.Sent ? 1 + d.Retries : 0),
+            PhaseRequests = diagnostics.Where(d => d.Kind == "Request").GroupBy(d => d.Purpose ?? d.Stage)
+                .ToDictionary(g => g.Key, g => g.Count()),
             Extraction = metrics, IssueCounts = diagnostics.Where(d => d.ErrorCode is not null && d.Kind != "Terminal" && d.ValidationCode is not null)
                 .GroupBy(d => NaturalDesignValidation.DiagnosticCode(d.ValidationCode)).OrderBy(g => g.Key, StringComparer.Ordinal)
                 .ToDictionary(g => g.Key, g => g.Count()) };
@@ -96,7 +147,11 @@ public sealed class NaturalDiagramSelfTest(IInternalLlmClient llm, MermaidCompil
 
 public sealed record NaturalDiagramTestCase(string Id, string State, int Pages, int ReviewedPages, string? ErrorCode = null,
     string? FailureStage = null, string? ValidationCode = null, NaturalExtractionMetrics? Extraction = null,
-    IReadOnlyDictionary<string, int>? IssueCounts = null);
+    IReadOnlyDictionary<string, int>? IssueCounts = null, string? RootFailureCode = null, string? LastFailureCode = null,
+    long RemainingSecondsAtStart = 0, long ElapsedMilliseconds = 0, int HttpRequests = 0,
+    IReadOnlyDictionary<string, int>? PhaseRequests = null, IReadOnlyList<string>? Types = null, int FormatRepairs = 0, int ContentRepairs = 0);
+public sealed record NaturalDiagramTestEvent(string Type, string? CaseId, string Stage, SemanticProgress Execution,
+    NaturalDiagramTestCase? Case = null, NaturalDiagramTestResult? Result = null, int CompletedPages = 0, int TotalUnits = 0);
 public sealed record NaturalDiagramTestResult(bool Success, bool SyntheticOnly, bool ThinkingEnabled,
     IReadOnlyList<NaturalDiagramTestCase> Cases, object Settings, SemanticProgress Execution, IReadOnlyList<LlmDiagnostic> Diagnostics, string Report,
     string? Summary = null);

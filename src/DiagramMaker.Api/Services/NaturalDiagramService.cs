@@ -17,7 +17,7 @@ public sealed class NaturalDiagramService(
     IOptions<LlmOptions> options,
     IWebHostEnvironment environment)
 {
-    public const string GeneratorVersion = "natural-v10";
+    public const string GeneratorVersion = "natural-v11";
     private readonly LlmOptions _options = options.Value;
 
     public NaturalDiagramRequest ValidateRequest(NaturalDiagramRequest request) => NormalizeRequest(request);
@@ -38,7 +38,8 @@ public sealed class NaturalDiagramService(
         return result is null ? null : NaturalRequirementEvidence.Attach(prompt, result);
     }
 
-    public async Task<NaturalDiagramRecord> GenerateAsync(NaturalDiagramRequest request, string ownerUserId, CancellationToken cancellationToken)
+    public async Task<NaturalDiagramRecord> GenerateAsync(NaturalDiagramRequest request, string ownerUserId, CancellationToken cancellationToken,
+        Func<NaturalGenerationProgress, CancellationToken, Task>? reportProgress = null)
     {
         using var execution = SemanticExecution.Current is null ? new SemanticExecution(_options, null, cancellationToken) : null;
         cancellationToken = execution?.Token ?? cancellationToken;
@@ -68,7 +69,8 @@ public sealed class NaturalDiagramService(
                 if (!string.IsNullOrEmpty(parent.OwnerUserId) && !parent.OwnerUserId.Equals(ownerUserId, StringComparison.Ordinal)) throw new UnauthorizedAccessException();
             }
             var requestedIds = normalizedRequest.EffectiveViews().Select(static view => view.Id).ToHashSet(StringComparer.Ordinal);
-            var record = await BuildRevisionAsync(normalizedRequest, parent, requestedIds, ownerUserId, cancellationToken);
+            var record = await BuildRevisionAsync(normalizedRequest, parent, requestedIds, ownerUserId, cancellationToken, reportProgress: reportProgress);
+            cancellationToken.ThrowIfCancellationRequested();
             await store.SaveNaturalDiagramAsync(record, cancellationToken);
             cache.Set(cacheKey, record.Id);
             return record;
@@ -334,18 +336,10 @@ public sealed class NaturalDiagramService(
                         "다이어그램 생성 실패 진단 저장"), cancellationToken);
             }
         }
-        if (requirements is not null && results.Any(result => result.State == "Completed" && !result.Reused))
+        if (requirements is not null && selections.Select(v => v.DiagramType).Distinct().Count() > 1 &&
+            results.Any(result => result.State == "Completed" && !result.Reused))
         {
-            try
-            {
-                if (!await llm.ReviewNaturalSetAsync(request.Prompt, requirements, results, request.EnableThinking, cancellationToken))
-                    throw new LlmClientException("NATURAL_CROSS_VIEW_REVIEW", "형식 간 누락 또는 모순 검토를 통과하지 못했습니다. 검증된 개별 페이지를 보존했습니다.");
-            }
-            catch (LlmClientException error)
-            {
-                for (var i = 0; i < results.Count; i++)
-                    if (results[i].State == "Completed") results[i] = results[i] with { State = "Partial", ErrorCode = error.Code, ErrorMessage = error.Message };
-            }
+            await RepairCrossViewAsync(request, requirements, results, reportProgress, cancellationToken);
         }
         if (reportProgress is not null)
             await reportProgress(new(requirements, results.ToArray(), Math.Max(completedUnits, totalUnits), totalUnits,
@@ -357,6 +351,81 @@ public sealed class NaturalDiagramService(
         var rootId = parent?.RootDiagramId ?? parent?.Id ?? recordId;
         return new NaturalDiagramRecord(recordId, request with { ForceRegenerate = false }, primaryArtifact, now,
             ownerUserId, rootId, parent?.Id, "generated", GeneratorVersion, false, results, (parent?.Revision ?? 0) + 1, requirements);
+    }
+
+    private async Task RepairCrossViewAsync(NaturalDiagramRequest request, NaturalRequirements requirements,
+        List<NaturalDiagramViewResult> results, Func<NaturalGenerationProgress, CancellationToken, Task>? reportProgress, CancellationToken ct)
+    {
+        var recovery = new DiagramRecoveryBudget("natural-consistency:" + request.Prompt);
+        var scenarios = NaturalRequirementEvidence.EffectiveScenarios(requirements);
+        for (var attempt = 0; attempt < DiagramRecoveryPolicy.MaximumAttempts; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                if (await llm.ReviewNaturalSetAsync(request.Prompt, requirements, results, request.EnableThinking, ct)) return;
+                throw new LlmClientException("NATURAL_CROSS_VIEW_REVIEW", "형식 간 의미 검토를 통과하지 못했습니다.");
+            }
+            catch (LlmClientException error)
+            {
+                IReadOnlyList<NaturalIssue> issues = [];
+                if (error.Code == "NATURAL_CROSS_VIEW_REVIEW" && error.RejectedContent is { } content)
+                {
+                    try { issues = System.Text.Json.JsonSerializer.Deserialize<NaturalIssue[]>(content, PromptJson.Options) ?? []; }
+                    catch (System.Text.Json.JsonException) { /* An invalid review cannot direct a content repair. */ }
+                }
+                bool Affected(NaturalDiagramPageResult page, NaturalIssue issue) => issue.ItemId == page.Id ||
+                    page.Diagram?.Ir.Nodes.Any(n => n.Id == issue.ItemId) == true ||
+                    page.Diagram?.Ir.Edges.Any(e => e.Id == issue.ItemId) == true ||
+                    page.DesignQuality?.ReviewedRequirementIds.Contains(issue.ItemId) == true;
+                var affected = results.SelectMany(v => v.Pages ?? []).Where(p => issues.Any(i => Affected(p, i))).Select(p => p.Id).ToHashSet();
+                var canRepair = affected.Count > 0 && attempt < DiagramRecoveryPolicy.MaximumRepairs &&
+                    await recovery.ObserveAsync("consistency:" + attempt, System.Text.Json.JsonSerializer.Serialize(results.Select(v =>
+                        new { v.ViewId, diagrams = v.Pages?.Select(p => p.Diagram?.Ir) })),
+                        issues.Select(i => i.ItemId + ":" + i.Field + ":" + i.Code), attempt > 0);
+                if (!canRepair)
+                {
+                    for (var index = 0; index < results.Count; index++)
+                        if (results[index].State == "Completed" && (affected.Count == 0 || results[index].Pages?.Any(p => affected.Contains(p.Id)) == true))
+                            results[index] = results[index] with { State = "Partial", ErrorCode = error.Code, ErrorMessage = error.Message };
+                    return;
+                }
+                for (var index = 0; index < results.Count; index++)
+                {
+                    var view = results[index];
+                    if (view.Pages is null || !view.Pages.Any(p => affected.Contains(p.Id))) continue;
+                    var pages = new List<NaturalDiagramPageResult>();
+                    Exception? failure = null;
+                    foreach (var page in view.Pages)
+                    {
+                        if (!affected.Contains(page.Id)) { pages.Add(page); continue; }
+                        var scenario = scenarios.Single(s => s.Id == page.ScenarioId);
+                        var subset = NaturalRequirementEvidence.ForScenario(requirements, scenario with {
+                            RequirementIds = page.DesignQuality?.ReviewedRequirementIds ?? scenario.RequirementIds });
+                        using var context = new NaturalGenerationContext(ScenarioRecoveryKey(request, view.Selection, scenario, view.ViewId + "-" + scenario.Id),
+                            issues.Where(i => Affected(page, i)).ToArray(), page.Diagram?.Ir, attempt + 1);
+                        try
+                        {
+                            pages.AddRange(await GenerateBoundedPagesAsync(request, view.Selection, scenario, page.Id,
+                                (page.Diagram?.Version ?? 0) + 1, subset, ct));
+                        }
+                        catch (LlmClientException repairError)
+                        {
+                            failure ??= repairError;
+                            pages.Add(page with { State = "Partial", ErrorCode = repairError.Code, ErrorMessage = repairError.Message,
+                                LastSuccessfulDiagram = page.Diagram ?? page.LastSuccessfulDiagram });
+                        }
+                    }
+                    results[index] = ProgressView(view.Selection, pages, failure, pages.Count);
+                }
+                if (reportProgress is not null)
+                {
+                    var count = results.Sum(v => v.Pages?.Count ?? 0);
+                    await reportProgress(new(requirements, results.ToArray(), count, count, "형식 간 검토에서 지적한 시나리오 보정 중"), ct);
+                }
+                if (results.Any(v => v.Pages?.Any(p => affected.Contains(p.Id) && p.State != "Completed") == true)) return;
+            }
+        }
     }
 
     private static NaturalDiagramViewResult ProgressView(DiagramViewSelection view,
@@ -375,10 +444,13 @@ public sealed class NaturalDiagramService(
         NaturalDiagramRequest request, DiagramViewSelection view, NaturalScenario scenario, string pageId, int version,
         NaturalRequirements? requirements, CancellationToken ct, int depth = 0)
     {
+        using var scope = NaturalGenerationContext.Current is null
+            ? new NaturalGenerationContext(ScenarioRecoveryKey(request, view, scenario, pageId)) : null;
         try
         {
             var page = await SemanticExecution.RunAsync("natural-page",
-                System.Text.Json.JsonSerializer.Serialize(new { request, view, scenario, pageId, version, requirements, GeneratorVersion }),
+                System.Text.Json.JsonSerializer.Serialize(new { request, view, scenario, pageId, version, requirements, GeneratorVersion,
+                    NaturalGenerationContext.Current?.Issues, NaturalGenerationContext.Current?.Revision }),
                 async () =>
                 {
                     var generated = await GenerateViewAsync(request, view, version, requirements, ct);
@@ -409,6 +481,9 @@ public sealed class NaturalDiagramService(
             return pages;
         }
     }
+
+    private static string ScenarioRecoveryKey(NaturalDiagramRequest request, DiagramViewSelection view, NaturalScenario scenario, string pageId) =>
+        System.Text.Json.JsonSerializer.Serialize(new { request.Prompt, request.EnableThinking, view, scenario.Id, pageId, GeneratorVersion });
 
     private async Task<(DiagramArtifact Artifact, NaturalDesignQuality? Quality)> GenerateViewAsync(
         NaturalDiagramRequest request,

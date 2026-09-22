@@ -176,7 +176,7 @@ public sealed class VllmClientTests
             "system", "synthetic user", schemaDocument.RootElement.Clone(), 100, false,
             _ => "SemanticValidation", CancellationToken.None));
 
-        Assert.Equal("LLM_SCHEMA_INVALID", error.Code);
+        Assert.Equal("LLM_REPAIR_NO_PROGRESS", error.Code);
         Assert.Equal("MixedContent", error.InitialFailureKind);
         Assert.Equal("SemanticValidation", error.FailureKind);
         Assert.True(error.RepairAttempted);
@@ -283,11 +283,13 @@ public sealed class VllmClientTests
     public async Task NaturalDiagramThinkingUsesThinkingBudget()
     {
         var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        var design = JsonSerializer.SerializeToNode(NaturalDesignTests.Design("flowchart"), jsonOptions)!;
+        ScenarioPipelineTests.ScenarioModel.Project(design, NaturalDesignValidation.DesignSchemaFor("flowchart"));
         var handler = new QueueHandler(Response(JsonSerializer.Serialize(NaturalExtraction.FromRequirements(NaturalDesignTests.Requirements()), jsonOptions)),
             Response(JsonSerializer.Serialize(new NaturalSourceReview(
                 NaturalRequirementEvidence.Prepare(NaturalDesignTests.Prompt).Select(r => r.Id).ToArray(), []), jsonOptions)),
-            Response(JsonSerializer.Serialize(NaturalDesignTests.Meaning("flowchart"), jsonOptions)),
-            Response("{\"accepted\":true,\"reviewedRequirementIds\":[\"r1\"],\"issues\":[],\"itemIssues\":[]}"));
+            Response(design.ToJsonString()),
+            Response("{\"reviewedRequirementIds\":[\"r1\"],\"issues\":[]}"));
         var options = Options();
         options.ThinkingOutputTokens = 1_750;
         using var transport = new VllmClient(options, handler: handler);
@@ -303,8 +305,8 @@ public sealed class VllmClientTests
         Assert.Equal(0, payload.RootElement.GetProperty("temperature").GetDouble());
         Assert.True(payload.RootElement.GetProperty("chat_template_kwargs").GetProperty("enable_thinking").GetBoolean());
         var properties = payload.RootElement.GetProperty("structured_outputs").GetProperty("json").GetProperty("properties");
-        Assert.True(properties.TryGetProperty("concepts", out _));
-        Assert.True(properties.TryGetProperty("connections", out _));
+        Assert.True(properties.TryGetProperty("nodes", out _));
+        Assert.True(properties.TryGetProperty("edges", out _));
         Assert.Equal(4, handler.Requests.Count);
     }
 
@@ -321,7 +323,7 @@ public sealed class VllmClientTests
             new DiagramPresetCatalog().Resolve("flowchart", "balanced"), null, CancellationToken.None));
 
         Assert.Equal("NATURAL_REQUIREMENTS_INVALID", error.Code);
-        Assert.Equal(11, handler.Requests.Count);
+        Assert.Equal(2, handler.Requests.Count);
     }
 
     [Fact]

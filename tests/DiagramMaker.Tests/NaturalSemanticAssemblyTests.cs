@@ -48,7 +48,7 @@ public sealed class NaturalSemanticAssemblyTests
     [Theory]
     [InlineData(10, true)]
     [InlineData(11, false)]
-    public async Task SemanticRepairsAreBoundedAndDoNotRegenerateAnApprovedRequirement(int rejectedReviews, bool success)
+    public async Task WholeScenarioRepairsShareTenCorrections(int rejectedReviews, bool success)
     {
         var model = new Model(rejectedReviews);
         var client = new InternalLlmClient(Options.Create(new LlmOptions { Enabled = true }), new(), new(), model, new(model));
@@ -59,40 +59,39 @@ public sealed class NaturalSemanticAssemblyTests
             var result = await task;
             Assert.True(result!.Quality!.RepairUsed);
             Assert.Equal(2, result.Quality.ReviewedRequirementIds.Count);
-            Assert.Equal(1, model.Integrations);
         }
         else Assert.Equal("NATURAL_DESIGN_REJECTED", (await Assert.ThrowsAsync<LlmClientException>(() => task)).Code);
-        Assert.Equal(1, model.Generations["r1"]);
-        Assert.Equal(11, model.Generations["r2"]);
+        Assert.Equal(11, model.Generations);
+        Assert.Equal(11, model.Reviews);
     }
 
     private sealed class Model(int rejectedReviews) : ILlmCompletionTransport
     {
         public bool IsEnabled => true;
-        public Dictionary<string, int> Generations { get; } = [];
-        public int Integrations { get; private set; }
+        public int Generations { get; private set; }
+        public int Reviews { get; private set; }
         public Task<VllmCompletionResult> CompleteAsync(VllmCompletionRequest request, CancellationToken ct)
         {
             using var json = JsonDocument.Parse(request.UserPrompt);
             var context = json.RootElement;
+            var ids = context.GetProperty("requirements").GetProperty("requirements").EnumerateArray().Select(r => r.GetProperty("id").GetString()!).ToArray();
             object value;
-            if (request.Purpose is "meaning" or "meaning-repair")
+            if (request.Purpose is "scenario-design" or "scenario-repair")
             {
-                var id = context.GetProperty("target").GetProperty("id").GetString()!;
-                Generations[id] = Generations.GetValueOrDefault(id) + 1;
-                var meaning = NaturalDesignTests.Meaning("flowchart");
-                value = meaning with { Concepts = meaning.Concepts.Select(n => n with { Label = n.Label + Generations[id] }).ToArray() };
+                Generations++;
+                var design = NaturalDesignTests.Design("flowchart");
+                value = design with { Nodes = design.Nodes.Select(n => n with { Label = n.Label + Generations, RequirementIds = ids }).ToArray(),
+                    Edges = design.Edges.Select(e => e with { RequirementIds = ids }).ToArray() };
             }
-            else if (request.Purpose == "meaning-integration") { Integrations++; value = new NaturalIntegration([]); }
             else
             {
-                var ids = context.GetProperty("requirements").GetProperty("requirements").EnumerateArray().Select(r => r.GetProperty("id").GetString()!).ToArray();
-                var reject = request.Purpose == "meaning-review" && ids[0] == "r2" && Generations["r2"] <= rejectedReviews;
-                value = new NaturalDesignReview(!reject, ids, reject ? ["조건을 보존하세요"] : [],
-                    reject ? [new("r2", "meaning", "NaturalConditionChanged", "조건을 보존하세요")] : []);
+                Reviews++;
+                value = new NaturalScenarioReview(ids, Reviews <= rejectedReviews ?
+                    [new("r2", "label", Reviews % 2 == 0 ? "NaturalConditionChanged" : "NaturalUnsupportedClaim", "조건을 보존하세요", ["r2"])] : []);
             }
-            return Task.FromResult(new VllmCompletionResult(JsonSerializer.Serialize(value, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
-                "stop", 1, true, false, 0, request.MaxOutputTokens, 10, 10, 20));
+            var wire = JsonSerializer.SerializeToNode(value, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+            ScenarioPipelineTests.ScenarioModel.Project(wire, request.StructuredSchema!.Value);
+            return Task.FromResult(new VllmCompletionResult(wire.ToJsonString(), "stop", 1, true, false, 0, request.MaxOutputTokens, 10, 10, 20));
         }
     }
 }

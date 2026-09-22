@@ -35,7 +35,8 @@ public sealed class NaturalRecoveryTests
     {
         using var model = new Model((kind, attempt, context, value) => {
             if (kind == "requirements") value["requirements"]![0]!["text"] = attempt == 1 ? "잘못된 처리" : "수정된 처리";
-            if (kind == "requirements-review" && attempt <= 2) value.AsObject().Remove("reviewedSourceRangeIds");
+            if (kind == "requirements-review" && attempt == 1) value.AsObject().Remove("reviewedSourceRangeIds");
+            if (kind == "requirements-review" && attempt == 2) value["reviewedSourceRangeIds"] = null;
             if (kind == "requirements-review" && attempt == 3) {
 
                 value["issues"] = Issues(context["sourceRanges"]![0]!["id"]!.GetValue<string>());
@@ -48,7 +49,7 @@ public sealed class NaturalRecoveryTests
     }
 
     [Fact]
-    public async Task ElevenSuccessfulHttpResponsesWithBadEvidenceHaveSpecificTerminalFailure()
+    public async Task RepeatedBadEvidenceStopsWithSpecificRootCauseAndNoProgressReason()
     {
         using var model = new Model((kind, _, _, value) => {
             if (kind == "requirements") value["requirements"]![0]!["sourceRangeIds"] = new JsonArray("unknown");
@@ -56,18 +57,19 @@ public sealed class NaturalRecoveryTests
         using var execution = new SemanticExecution(model.Options, null, Ct);
         var error = await Assert.ThrowsAsync<LlmClientException>(() => model.Client.ExtractNaturalRequirementsAsync(Prompt, false, Ct));
         Assert.Equal("NATURAL_REQUIREMENTS_INVALID", error.Code);
-        Assert.Equal("NaturalEvidenceUnknown", error.FailureKind);
-        Assert.Equal(11, execution.Progress.TransportRequests);
-        Assert.Equal(11, execution.Progress.CompletedUnits);
-        Assert.Equal(11, execution.Diagnostics.Count(d => d.Kind == "Request" && d.HttpStatus == 200));
-        Assert.Equal(11, execution.Diagnostics.Count(d => d.Kind == "Validation"));
+        Assert.Equal("NaturalRepairNoProgress", error.FailureKind);
+        Assert.Equal(2, execution.Progress.TransportRequests);
+        Assert.Equal(2, execution.Progress.CompletedUnits);
+        Assert.Equal(2, execution.Diagnostics.Count(d => d.Kind == "Request" && d.HttpStatus == 200));
+        Assert.Equal(2, execution.Diagnostics.Count(d => d.Kind == "Validation"));
         Assert.All(execution.Diagnostics.Where(d => d.ErrorCode is not null), d => Assert.Equal("Exhausted", d.RecoveryState));
         var terminal = Assert.Single(execution.Diagnostics, d => d.Kind == "Terminal");
         Assert.Equal("StartNewRun", terminal.NextAction);
-        Assert.Equal("NaturalEvidenceUnknown", terminal.ValidationCode);
+        Assert.Equal("NaturalRepairNoProgress", terminal.ValidationCode);
         var report = LlmDiagnosticReport.Text("Failed", error.Code, execution.Progress, execution.Diagnostics);
-        Assert.Contains("HTTP attempts: 11", report);
-        Assert.Contains("completed checkpoints: 11", report);
+        Assert.Contains("HTTP attempts: 2", report);
+        Assert.Contains("NaturalEvidenceUnknown", report);
+        Assert.Contains("completed checkpoints: 2", report);
         Assert.Contains("Final failure:", report);
         Assert.Contains("category: not-applicable", report);
         Assert.DoesNotContain("category: unknown", report);
@@ -117,14 +119,14 @@ public sealed class NaturalRecoveryTests
             Assert.Equal("NATURAL_REQUIREMENTS_REVIEW_INVALID", error.Code);
             saved = execution.Checkpoints; diagnostics = execution.Diagnostics; progress = execution.Progress;
         }
-        Assert.Equal(12, model.Kinds.Count);
+        Assert.Equal(3, model.Kinds.Count);
         using (var resumed = new SemanticExecution(model.Options, saved, Ct, savedDiagnostics: diagnostics, savedProgress: progress))
         {
             await Assert.ThrowsAsync<LlmClientException>(() => model.Client.ExtractNaturalRequirementsAsync(Prompt, false, Ct));
             Assert.Equal(0, resumed.Progress.AttemptTransportRequests);
             Assert.DoesNotContain(resumed.Diagnostics, d => d.RecoveryState == "Retrying");
         }
-        Assert.Equal(12, model.Kinds.Count);
+        Assert.Equal(3, model.Kinds.Count);
     }
 
     [Fact]
@@ -156,10 +158,10 @@ public sealed class NaturalRecoveryTests
             if (kind == "requirements") value["scenarios"]![0]!["requirementIds"] = new JsonArray("outside");
         });
         using var execution = new SemanticExecution(model.Options, null, Ct);
-        var error = await Assert.ThrowsAsync<LlmClientException>(() => model.Client.ExtractNaturalRequirementsAsync(Prompt, false, Ct));
-        Assert.Equal("NATURAL_PLAN_INVALID", error.Code);
-        Assert.Equal(11, execution.Diagnostics.Count(d => d.Purpose == "scenario-validation"));
-        Assert.DoesNotContain("requirements-review", model.Kinds);
+        var result = await model.Client.ExtractNaturalRequirementsAsync(Prompt, false, Ct);
+        Assert.Null(NaturalDesignValidation.Plan(result!));
+        Assert.Single(execution.Diagnostics, d => d.Purpose == "scenario-validation");
+        Assert.Equal(new[] { "requirements", "scenario-mapping", "requirements-review" }, model.Kinds);
     }
 
     [Fact]
@@ -185,9 +187,9 @@ public sealed class NaturalRecoveryTests
         using var model = new Model((kind, _, _, value) => { if (kind == "requirements") value["requirements"]![0]!["text"] = new string('가', 501); }, rejectGrammar: true);
         using var execution = new SemanticExecution(model.Options, null, Ct);
         var error = await Assert.ThrowsAsync<LlmClientException>(() => model.Client.ExtractNaturalRequirementsAsync(Prompt, false, Ct));
-        Assert.Equal("NaturalFieldTooLong", error.FailureKind);
+        Assert.Equal("NaturalRepairNoProgress", error.FailureKind);
         Assert.Contains(execution.Diagnostics, d => d.SchemaRelaxed && d.ValidationDetails?.ActualLength == 501 && d.ValidationDetails.AllowedLength == 500);
-        Assert.Equal(12, execution.Progress.TransportRequests);
+        Assert.Equal(3, execution.Progress.TransportRequests);
     }
 
     [Fact]
@@ -220,20 +222,19 @@ public sealed class NaturalRecoveryTests
     }
 
     [Fact]
-    public async Task ElevenDistinctCandidatesHaveIndependentReviewBudgets()
+    public async Task DistinctCandidatesShareTenReviewRepairs()
     {
         using var model = new Model((kind, attempt, _, value) => {
             if (kind == "requirements") value["requirements"]![0]!["text"] = "조건 후보 " + attempt;
-            else if (attempt % 3 != 0) value.AsObject().Remove("reviewedSourceRangeIds");
-            else value["issues"] = Issues("r1");
+            else if (attempt % 3 != 0) value["unexpected"] = attempt;
+            else { value["issues"] = Issues("r1"); value["issues"]![0]!["code"] = attempt % 2 == 0 ? "NaturalConditionChanged" : "NaturalUnsupportedClaim"; }
         });
         using var execution = new SemanticExecution(model.Options, null, Ct);
         var error = await Assert.ThrowsAsync<LlmClientException>(() => model.Client.ExtractNaturalRequirementsAsync(Prompt, false, Ct));
-        Assert.Equal("NaturalConditionChanged", error.FailureKind);
-        Assert.Equal(44, model.Kinds.Count);
-        Assert.Equal(11, model.Kinds.Count(k => k == "requirements"));
-        Assert.Equal(33, model.Kinds.Count(k => k == "requirements-review"));
-        Assert.Equal(33, execution.Diagnostics.Last(d => d.Extraction is not null).Extraction!.ReviewAttempts);
+        Assert.Equal("FormatRepairBudgetExhausted", error.FailureKind);
+        Assert.Equal(22, model.Kinds.Count);
+        Assert.Equal(6, model.Kinds.Count(k => k == "requirements"));
+        Assert.Equal(16, model.Kinds.Count(k => k == "requirements-review"));
     }
 
     [Theory]
@@ -253,11 +254,11 @@ public sealed class NaturalRecoveryTests
         });
         using var execution = new SemanticExecution(model.Options, null, Ct);
         var result = await model.Client.ExtractNaturalRequirementsAsync(Prompt, false, Ct);
-        Assert.Equal("수정 조건", result!.Requirements.Single(r => r.Id == "r1").Text);
+        Assert.Equal(code == "NaturalScenarioMismatch" ? "오류 조건" : "수정 조건", result!.Requirements.Single(r => r.Id == "r1").Text);
         Assert.Contains(execution.Diagnostics, d => d.ValidationCode == code && d.RecoveryState == "Recovered");
         var report = LlmDiagnosticReport.Text("Completed", null, execution.Progress, execution.Diagnostics);
         Assert.Contains(code, report);
-        Assert.Contains("replaced=1", report);
+        Assert.Contains(code == "NaturalScenarioMismatch" ? "replaced=0" : "replaced=1", report);
         Assert.DoesNotContain("오류 조건", report);
         Assert.DoesNotContain("수정 조건", report);
     }
@@ -303,7 +304,7 @@ public sealed class NaturalRecoveryTests
             new("t", "natural-requirements", "unit", "Failed", DateTimeOffset.UtcNow, ErrorCode: "NATURAL_REQUIREMENTS_REJECTED",
                 ValidationCode: "NaturalConditionChanged", Purpose: "requirements-result", Kind: "Terminal", Extraction: metrics)]);
         Assert.Equal("NaturalConditionChanged", result.ValidationCode);
-        Assert.Equal("requirements-result", result.FailureStage);
+        Assert.Equal("natural-validation", result.FailureStage);
         Assert.Equal(1, result.IssueCounts!["NaturalConditionChanged"]);
         Assert.Equal(1, result.Extraction!.Replaced);
     }
@@ -337,16 +338,24 @@ public sealed class NaturalRecoveryTests
                 return new(HttpStatusCode.BadRequest) { Content = new StringContent("The provided JSON schema contains features not supported by xgrammar.") };
             }
             var context = JsonNode.Parse(body["messages"]![1]!["content"]!.GetValue<string>())!;
-            var review = body["structured_outputs"]!["json"]!["properties"]!["reviewedSourceRangeIds"] is not null;
-            var kind = review ? "requirements-review" : "requirements";
+            if (context["originalRequest"] is { } original)
+            {
+                var restored = JsonNode.Parse(original.GetValue<string>())!;
+                restored["rejectedResponse"] = context["rejectedResponse"]!.DeepClone(); context = restored;
+            }
+            var properties = body["structured_outputs"]!["json"]!["properties"]!;
+            var review = properties["reviewedSourceRangeIds"] is not null;
+            var mapping = !review && properties["requirements"] is null;
+            var kind = review ? "requirements-review" : mapping ? "scenario-mapping" : "requirements";
             Kinds.Add(kind);
-            var source = context["sourceRanges"]!.AsArray();
+            var source = (context["sourceRanges"] ?? context["requirements"]!["sourceRanges"])!.AsArray();
             var ids = source.Select(r => r!["id"]!.GetValue<string>()).ToArray();
             object result = review ? new { reviewedSourceRangeIds = ids, issues = Array.Empty<NaturalSourceIssue>() } :
                 new { title = "요청 흐름", entities = Array.Empty<string>(), requirements = ids.Select((id, i) => new {
                     id = "r" + (i + 1), text = "처리 " + (i + 1), kind = "behavior", sourceRangeIds = new[] { id } }),
                     scenarios = new[] { new { id = "s1", title = "흐름", requirementIds = ids.Select((_, i) => "r" + (i + 1)), sourceRangeIds = ids } }, questions = Array.Empty<NaturalQuestion>() };
             var value = JsonSerializer.SerializeToNode(result)!;
+            if (mapping) { value.AsObject().Remove("title"); value.AsObject().Remove("entities"); value.AsObject().Remove("requirements"); }
             mutate(kind, Kinds.Count(k => k == kind), context, value);
             return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new {
                 choices = new[] { new { message = new { content = value.ToJsonString() }, finish_reason = "stop" } },

@@ -52,6 +52,8 @@ internal static class NaturalContractValidation
         }
         if (value.ValueKind == JsonValueKind.Array)
         {
+            if (schema.TryGetProperty("minItems", out var minItems) && value.GetArrayLength() < minItems.GetInt32())
+                return Error("NaturalTooFewItems", value.GetArrayLength(), minItems.GetInt32());
             if (schema.TryGetProperty("maxItems", out var maxItems) && value.GetArrayLength() > maxItems.GetInt32())
                 return Error("NaturalTooManyItems", value.GetArrayLength(), maxItems.GetInt32());
             if (schema.TryGetProperty("items", out var itemSchema))

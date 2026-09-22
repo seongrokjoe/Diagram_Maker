@@ -879,7 +879,38 @@ api.MapPost("/llm/tests/code-diagram-contract", async (HttpContext context, Code
 api.MapPost("/llm/tests/natural-diagram-contract", async (HttpContext context, NaturalDiagramSelfTest test, CancellationToken ct) =>
 {
     if (!context.GetInternalIdentity().Roles.Contains("Admin")) return Results.StatusCode(StatusCodes.Status403Forbidden);
-    var result = await test.RunAsync(ct);
+    var caseId = context.Request.Query["caseId"].FirstOrDefault();
+    var diagramType = context.Request.Query["diagramType"].FirstOrDefault();
+    if (!NaturalDiagramSelfTest.ValidSelection(caseId, diagramType))
+        return Results.BadRequest(new { error = "지원하지 않는 검사 문장 또는 다이어그램 형식입니다." });
+    if (context.Request.Query["format"] == "ndjson")
+    {
+        context.Response.ContentType = "application/x-ndjson; charset=utf-8";
+        context.Response.Headers.CacheControl = "no-store";
+        var events = System.Threading.Channels.Channel.CreateUnbounded<NaturalDiagramTestEvent>(new() { SingleReader = true, SingleWriter = true });
+        async Task Produce()
+        {
+            try
+            {
+                var completed = await test.RunAsync(ct, caseId, diagramType, value => events.Writer.TryWrite(value));
+                events.Writer.TryWrite(new("result", null, "finished", completed.Execution, Result: completed));
+                events.Writer.TryComplete();
+            }
+            catch (Exception error) { events.Writer.TryComplete(error); }
+        }
+        var producing = Produce();
+        try
+        {
+            await foreach (var value in events.Reader.ReadAllAsync(ct))
+            {
+                await context.Response.WriteAsync(JsonSerializer.Serialize(value, new JsonSerializerOptions(JsonSerializerDefaults.Web)) + "\n", ct);
+                await context.Response.Body.FlushAsync(ct);
+            }
+        }
+        finally { await producing; }
+        return Results.Empty;
+    }
+    var result = await test.RunAsync(ct, caseId, diagramType);
     return context.Request.Query["format"] == "text"
         ? Results.Text(result.Report, "text/plain; charset=utf-8", statusCode: result.Success ? 200 : 503)
         : Results.Ok(result);

@@ -8,6 +8,7 @@ internal sealed class PromptIds(IReadOnlySet<string>? responseIds = null)
     private readonly Dictionary<string, string> names = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> originals = new(StringComparer.Ordinal);
     private static bool Reference(string key) => key.Equals("id", StringComparison.OrdinalIgnoreCase) || key.EndsWith("Id", StringComparison.OrdinalIgnoreCase) || key.EndsWith("Ids", StringComparison.OrdinalIgnoreCase);
+    private static bool Link(string key) => key is "source" or "target";
     public string Encode(string json)
     {
         try
@@ -26,17 +27,34 @@ internal sealed class PromptIds(IReadOnlySet<string>? responseIds = null)
                 }
                 return alias;
             });
+            // Link fields reference declared IDs; a prose field named source must
+            // never create an alias of its own.
+            Visit(root, "", (value, key) => Link(key) ? names.GetValueOrDefault(value, value) : value);
             return root?.ToJsonString(PromptJson.Options) ?? json;
         }
         catch (JsonException) { return json; }
     }
     public JsonElement BindSchema(JsonElement schema)
     {
-        if (responseIds is null) return schema;
         var node = JsonNode.Parse(schema.GetRawText())!;
-        node["properties"]!["items"]!["items"]!["properties"]!["id"]!["enum"] =
-            JsonSerializer.SerializeToNode(responseIds.Select(id => names.GetValueOrDefault(id, id)).Order(StringComparer.Ordinal));
+        Bind(node, "");
+        if (responseIds is not null)
+            node["properties"]!["items"]!["items"]!["properties"]!["id"]!["enum"] =
+                JsonSerializer.SerializeToNode(responseIds.Select(id => names.GetValueOrDefault(id, id)).Order(StringComparer.Ordinal));
         return JsonSerializer.SerializeToElement(node);
+
+        void Bind(JsonNode value, string field)
+        {
+            if (value is not JsonObject obj) return;
+            if ((Reference(field) || Link(field)) && obj["enum"] is JsonArray choices)
+                for (var i = 0; i < choices.Count; i++)
+                    if (choices[i] is JsonValue choice && choice.TryGetValue<string>(out var text))
+                        choices[i] = names.GetValueOrDefault(text, text);
+            if (obj["properties"] is JsonObject properties)
+                foreach (var (name, child) in properties)
+                    if (child is not null) Bind(child, name);
+            if (obj["items"] is { } items) Bind(items, field);
+        }
     }
     public int CountNonTargetIds(IEnumerable<string> ids) => ids.Count(id =>
         responseIds?.Contains(id) != true && names.ContainsKey(id));
@@ -60,7 +78,7 @@ internal sealed class PromptIds(IReadOnlySet<string>? responseIds = null)
         try
         {
             var root = JsonNode.Parse(json);
-            Visit(root, "", (value, key) => Reference(key) ? originals.GetValueOrDefault(value, value) : value);
+            Visit(root, "", (value, key) => Reference(key) || Link(key) ? originals.GetValueOrDefault(value, value) : value);
             return root?.ToJsonString(PromptJson.Options) ?? json;
         }
         catch (JsonException) { return json; }
