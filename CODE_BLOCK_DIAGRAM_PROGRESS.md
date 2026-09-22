@@ -29,7 +29,9 @@
   전체 verify·패키지 빌드·검사 로그, 결과 JSON과 390/1440px 화면 증적은
   `artifacts/internal15-validation/`에 보존했다. 보고서는 `NATURAL_DIAGRAM_SCENARIO_REPORT.md`.
   사내 실제 LLM/PostgreSQL·egress·실제 응답 시간은 연결 정보가 없어 미검증이다.
-  다음: 변경 파일과 배포 목록 최종 대조 후 커밋·푸시.
+  구현·문서·internal.15 ZIP과 이전 ZIP 정리는 `b36d663`으로 커밋해 `origin/main`에 푸시했다.
+  다음: 사내 환경에서 고정 자연어·코드 검사와 기존 실패 입력을 새 생성으로 실행하고 실제
+  조건 보존·의미 품질·응답 시간 및 PostgreSQL 연결·egress를 별도로 기록한다.
 
 ## 2026-09-22 생성 파이프라인 근본 수정 시작
 
