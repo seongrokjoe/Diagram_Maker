@@ -89,14 +89,16 @@ public sealed class CodeBlockSemanticTests
     [InlineData("malformed", "plan-validation", 2)]
     [InlineData("null-element", "plan-validation", 2)]
     [InlineData("timeout", "llm-request", 2)]
-    public async Task InvalidSyntheticResponsesAreIncompleteAfterAtMostOneRepair(string mode, string stage, int requests)
+    public async Task InvalidSyntheticResponsesAreIncompleteAfterAtMostTenRepairs(string mode, string stage, int requests)
     {
         var (input, graph, ir) = Candidate(GuardSource);
         var transport = new SyntheticTransport(mode);
         var client = new InternalLlmClient(Options.Create(new LlmOptions { Enabled = true }), new(), new(), transport, new(transport));
         var result = await client.PlanCodeBlockDiagramAsync(ir, input, graph, null, new("v", "flowchart", "balanced"), CancellationToken.None);
         Assert.Equal("Incomplete", result!.Status); Assert.Same(ir, result.Diagram);
-        Assert.Equal(stage, result.FailureStage); Assert.Equal(2, result.Attempts); Assert.Equal(requests, transport.Requests.Count);
+        Assert.Equal(stage, result.FailureStage);
+        Assert.Equal(mode == "timeout" ? 1 : mode == "inverted-branch" ? 2 : 11, result.Attempts);
+        Assert.Equal(mode == "timeout" ? 1 : mode == "inverted-branch" ? 3 : requests / 2 * 11, transport.Requests.Count);
     }
 
     [Fact]

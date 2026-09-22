@@ -5,7 +5,7 @@ namespace DiagramMaker.Services;
 
 internal static partial class NaturalDesignValidation
 {
-    public const string Protocol = "natural-design-v5";
+    public const string Protocol = "natural-design-v6";
     public static string? Requirements(NaturalRequirements value, string prompt)
     {
         if (string.IsNullOrWhiteSpace(value.Title) || value.Requirements is not { Count: > 0 and <= 150 } ||
@@ -75,21 +75,21 @@ internal static partial class NaturalDesignValidation
         var mapped = new HashSet<string>();
         foreach (var node in value.Nodes)
         {
-            if (node.RequirementIds is null || node.Members is null || node.Details is null ||
+            if (node is null || node.RequirementIds is null || node.Members is null || node.Details is null ||
                 node.Kind is not ("class" or "interface" or "participant" or "state" or "initial" or "final" or "operation" or "decision" or "terminal" or "component") ||
                 node.Shape is not ("" or "decision" or "terminal" or "call" or "process") ||
                 !References(node.RequirementIds, node.Assumption)) return "NaturalNodeInvalid";
             if (type == "class" && (node.Kind is not ("class" or "interface") || node.Members.Count == 0)) return "NaturalClassMembersMissing";
             foreach (var member in node.Members)
-                if (member.Kind is not ("field" or "method") || member.Visibility is not ("public" or "private" or "protected" or "internal") ||
+                if (member is null || member.Kind is not ("field" or "method") || member.Visibility is not ("public" or "private" or "protected" or "internal") ||
                     string.IsNullOrWhiteSpace(member.Name) || string.IsNullOrWhiteSpace(member.Type) || member.Parameters is null || member.Preconditions is null ||
-                    member.Parameters.Any(p => string.IsNullOrWhiteSpace(p.Name) || string.IsNullOrWhiteSpace(p.Type))) return "NaturalMemberInvalid";
+                    member.Parameters.Any(p => p is null || string.IsNullOrWhiteSpace(p.Name) || string.IsNullOrWhiteSpace(p.Type))) return "NaturalMemberInvalid";
         }
         foreach (var edge in value.Edges)
         {
-            if (edge.RequirementIds is null || edge.ControlPath is null || edge.ControlPath.Count > 32 ||
+            if (edge is null || edge.RequirementIds is null || edge.ControlPath is null || edge.ControlPath.Count > 32 ||
                 !References(edge.RequirementIds, edge.Assumption) ||
-                edge.ControlPath.Any(c => c.Kind is not ("alt" or "opt" or "loop") || string.IsNullOrWhiteSpace(c.Id))) return "NaturalEdgeInvalid";
+                edge.ControlPath.Any(c => c is null || c.Kind is not ("alt" or "opt" or "loop") || string.IsNullOrWhiteSpace(c.Id))) return "NaturalEdgeInvalid";
             if (type == "class" && edge.Type is not ("inherits" or "implements" or "association" or "depends" or "aggregation" or "composition"))
                 return "NaturalClassRelationInvalid";
         }
@@ -138,7 +138,8 @@ internal static partial class NaturalDesignValidation
     {
         string Mark(string text, bool assumption) => assumption ? text + " (설계 가정)" : text;
         string Member(NaturalMember m) => (m.Visibility switch { "private" => "-", "protected" => "#", "internal" => "~", _ => "+" }) +
-            (m.Kind == "field" ? m.Type + " " + m.Name : m.Name + "(" + string.Join(", ", m.Parameters.Select(p => p.Type + " " + p.Name)) + ") " + m.Type);
+            (m.Kind == "field" ? m.Type + " " + m.Name : m.Name + "(" + string.Join(", ", m.Parameters.Select(p => p.Type + " " + p.Name)) + ") " + m.Type) +
+            (m.Assumption ? " (설계 가정)" : "");
         var nodes = value.Nodes.Select(n => new DiagramNode(n.Id, Mark(n.Label, n.Assumption), n.Kind, null, "unchanged", Confidence.Inferred, [],
             Shape: n.Shape == "" ? n.Kind == "decision" ? "decision" : null : n.Shape,
             Details: n.Members.Select(Member).Concat(n.Members.SelectMany(m => m.Preconditions.Select(p => "전제조건 " + m.Name + ": " + p)))

@@ -51,7 +51,8 @@ const llm = createServer(async (request, response) => {
     }
     const properties = schema.properties;
     let context = JSON.parse(payload.messages[1].content);
-    context = context.context ?? context;
+    if (context.originalRequest) context = JSON.parse(context.originalRequest);
+    if (!properties.concepts && !properties.reviewedRequirementIds) context = context.context ?? context;
     const reviewing = !!properties.items?.items.properties.issues;
     if (properties.items) batches.push({ source: context.sourceKind, reviewing, outputLimit: payload.max_tokens, items: context.items.length,
       kinds: context.items.map(item => item.kind), characters: payload.messages[1].content.length,

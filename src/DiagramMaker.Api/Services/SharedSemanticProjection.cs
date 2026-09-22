@@ -9,7 +9,7 @@ internal sealed record SharedPreparedDiagram(SharedDiagramInput Input, DiagramIr
 
 internal sealed class SharedSemanticProjection
 {
-    public const string Version = "shared-semantic-v6";
+    public const string Version = "shared-semantic-v7";
     private readonly Dictionary<string, (string Signature, SemanticGeneration Value)> pageCache = new();
     internal static bool Improves(DiagramArtifact saved, SemanticGeneration incoming) =>
         incoming.Status == "Semantic" || saved.Explanation?.Status != "Semantic" &&

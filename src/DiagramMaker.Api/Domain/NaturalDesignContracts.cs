@@ -17,7 +17,7 @@ public sealed record NaturalRequirementsReview(bool Accepted, IReadOnlyList<stri
     IReadOnlyList<NaturalIssue> Issues);
 public sealed record NaturalParameter(string Name, string Type);
 public sealed record NaturalMember(string Name, string Kind, string Visibility, string Type,
-    IReadOnlyList<NaturalParameter> Parameters, IReadOnlyList<string> Preconditions);
+    IReadOnlyList<NaturalParameter> Parameters, IReadOnlyList<string> Preconditions, bool Assumption = false);
 public sealed record NaturalDesignNode(string Id, string Label, string Kind, string Shape,
     IReadOnlyList<NaturalMember> Members, IReadOnlyList<string> Details, IReadOnlyList<string> RequirementIds, bool Assumption);
 public sealed record NaturalDesignEdge(string Id, string SourceId, string TargetId, string Type, string Label,

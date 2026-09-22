@@ -46,7 +46,7 @@ public sealed class SemanticExecution : IDisposable
         preflightTokenizationRequests++;
         await NotifyAsync();
     }
-    internal const string SharedPolicyVersion = "shared-requests-v8";
+    internal const string SharedPolicyVersion = "shared-requests-v9";
     private DateTimeOffset lastProgressAt = DateTimeOffset.UtcNow;
     private readonly Dictionary<string, SemanticCoverage> coverage = new();
     private Func<SharedDiagramGroup, Task>? sharedProgress;
@@ -88,12 +88,12 @@ public sealed class SemanticExecution : IDisposable
         await NotifyAsync();
     }
     internal static string PolicyFingerprint(LlmOptions options) =>
-        Hash(JsonSerializer.Serialize(options) + InternalLlmClient.SemanticPromptVersion + InternalLlmClient.CodeBlockPromptVersion + SharedPolicyVersion);
+        Hash(JsonSerializer.Serialize(options) + InternalLlmClient.SemanticPromptVersion + InternalLlmClient.CodeBlockPromptVersion + SharedPolicyVersion + DiagramRecoveryPolicy.Version);
     public IReadOnlyList<SemanticCheckpoint> Checkpoints => checkpoints.ToArray();
     public IReadOnlyList<LlmDiagnostic> Diagnostics => diagnostics.ToArray();
     // Page wrappers and their constituent completion checkpoints describe the same
     // work; do not count both as independent completed units.
-    private static bool Counted(SemanticCheckpoint value) => value.Stage is not ("code-page" or "git-page" or "execution-meaning") &&
+    private static bool Counted(SemanticCheckpoint value) => value.Stage is not ("code-page" or "git-page" or "execution-meaning" or "structured-response" or "natural-meaning") &&
         !value.Stage.StartsWith("shared-", StringComparison.Ordinal);
     public SemanticProgress Progress => new(Stage, UnitId,
         checkpoints.Count(c => Counted(c) && c.State == "Completed"), reused.Count, diagnostics.Count,

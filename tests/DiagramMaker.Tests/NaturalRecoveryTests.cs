@@ -48,7 +48,7 @@ public sealed class NaturalRecoveryTests
     }
 
     [Fact]
-    public async Task ThreeSuccessfulHttpResponsesWithBadEvidenceHaveSpecificTerminalFailure()
+    public async Task ElevenSuccessfulHttpResponsesWithBadEvidenceHaveSpecificTerminalFailure()
     {
         using var model = new Model((kind, _, _, value) => {
             if (kind == "requirements") value["requirements"]![0]!["sourceRangeIds"] = new JsonArray("unknown");
@@ -57,17 +57,17 @@ public sealed class NaturalRecoveryTests
         var error = await Assert.ThrowsAsync<LlmClientException>(() => model.Client.ExtractNaturalRequirementsAsync(Prompt, false, Ct));
         Assert.Equal("NATURAL_REQUIREMENTS_INVALID", error.Code);
         Assert.Equal("NaturalEvidenceUnknown", error.FailureKind);
-        Assert.Equal(3, execution.Progress.TransportRequests);
-        Assert.Equal(3, execution.Progress.CompletedUnits);
-        Assert.Equal(3, execution.Diagnostics.Count(d => d.Kind == "Request" && d.HttpStatus == 200));
-        Assert.Equal(3, execution.Diagnostics.Count(d => d.Kind == "Validation"));
+        Assert.Equal(11, execution.Progress.TransportRequests);
+        Assert.Equal(11, execution.Progress.CompletedUnits);
+        Assert.Equal(11, execution.Diagnostics.Count(d => d.Kind == "Request" && d.HttpStatus == 200));
+        Assert.Equal(11, execution.Diagnostics.Count(d => d.Kind == "Validation"));
         Assert.All(execution.Diagnostics.Where(d => d.ErrorCode is not null), d => Assert.Equal("Exhausted", d.RecoveryState));
         var terminal = Assert.Single(execution.Diagnostics, d => d.Kind == "Terminal");
         Assert.Equal("StartNewRun", terminal.NextAction);
         Assert.Equal("NaturalEvidenceUnknown", terminal.ValidationCode);
         var report = LlmDiagnosticReport.Text("Failed", error.Code, execution.Progress, execution.Diagnostics);
-        Assert.Contains("HTTP attempts: 3", report);
-        Assert.Contains("completed checkpoints: 3", report);
+        Assert.Contains("HTTP attempts: 11", report);
+        Assert.Contains("completed checkpoints: 11", report);
         Assert.Contains("Final failure:", report);
         Assert.Contains("category: not-applicable", report);
         Assert.DoesNotContain("category: unknown", report);
@@ -117,14 +117,14 @@ public sealed class NaturalRecoveryTests
             Assert.Equal("NATURAL_REQUIREMENTS_REVIEW_INVALID", error.Code);
             saved = execution.Checkpoints; diagnostics = execution.Diagnostics; progress = execution.Progress;
         }
-        Assert.Equal(4, model.Kinds.Count);
+        Assert.Equal(12, model.Kinds.Count);
         using (var resumed = new SemanticExecution(model.Options, saved, Ct, savedDiagnostics: diagnostics, savedProgress: progress))
         {
             await Assert.ThrowsAsync<LlmClientException>(() => model.Client.ExtractNaturalRequirementsAsync(Prompt, false, Ct));
             Assert.Equal(0, resumed.Progress.AttemptTransportRequests);
             Assert.DoesNotContain(resumed.Diagnostics, d => d.RecoveryState == "Retrying");
         }
-        Assert.Equal(4, model.Kinds.Count);
+        Assert.Equal(12, model.Kinds.Count);
     }
 
     [Fact]
@@ -158,7 +158,7 @@ public sealed class NaturalRecoveryTests
         using var execution = new SemanticExecution(model.Options, null, Ct);
         var error = await Assert.ThrowsAsync<LlmClientException>(() => model.Client.ExtractNaturalRequirementsAsync(Prompt, false, Ct));
         Assert.Equal("NATURAL_PLAN_INVALID", error.Code);
-        Assert.Equal(3, execution.Diagnostics.Count(d => d.Purpose == "scenario-validation"));
+        Assert.Equal(11, execution.Diagnostics.Count(d => d.Purpose == "scenario-validation"));
         Assert.DoesNotContain("requirements-review", model.Kinds);
     }
 
@@ -187,7 +187,7 @@ public sealed class NaturalRecoveryTests
         var error = await Assert.ThrowsAsync<LlmClientException>(() => model.Client.ExtractNaturalRequirementsAsync(Prompt, false, Ct));
         Assert.Equal("NaturalFieldTooLong", error.FailureKind);
         Assert.Contains(execution.Diagnostics, d => d.SchemaRelaxed && d.ValidationDetails?.ActualLength == 501 && d.ValidationDetails.AllowedLength == 500);
-        Assert.Equal(4, execution.Progress.TransportRequests);
+        Assert.Equal(12, execution.Progress.TransportRequests);
     }
 
     [Fact]
@@ -209,18 +209,18 @@ public sealed class NaturalRecoveryTests
         using (var execution = new SemanticExecution(model.Options, null, Ct)) {
             var error = await Assert.ThrowsAsync<LlmClientException>(() => model.Client.ExtractNaturalRequirementsAsync(Prompt, false, Ct));
             Assert.Equal("NaturalRepairNoProgress", error.FailureKind);
-            Assert.Equal(3, model.Kinds.Count(k => k == "requirements"));
+            Assert.Equal(2, model.Kinds.Count(k => k == "requirements"));
             Assert.Equal(1, model.Kinds.Count(k => k == "requirements-review"));
             Assert.Equal(1, execution.Diagnostics.Last(d => d.Extraction is not null).Extraction!.ReviewAttempts);
             saved = execution.Checkpoints;
         }
         using (var resumed = new SemanticExecution(model.Options, saved, Ct))
             await Assert.ThrowsAsync<LlmClientException>(() => model.Client.ExtractNaturalRequirementsAsync(Prompt, false, Ct));
-        Assert.Equal(4, model.Kinds.Count);
+        Assert.Equal(3, model.Kinds.Count);
     }
 
     [Fact]
-    public async Task ThreeDistinctCandidatesHaveAtMostTwelveLogicalRequests()
+    public async Task ElevenDistinctCandidatesHaveIndependentReviewBudgets()
     {
         using var model = new Model((kind, attempt, _, value) => {
             if (kind == "requirements") value["requirements"]![0]!["text"] = "조건 후보 " + attempt;
@@ -230,10 +230,10 @@ public sealed class NaturalRecoveryTests
         using var execution = new SemanticExecution(model.Options, null, Ct);
         var error = await Assert.ThrowsAsync<LlmClientException>(() => model.Client.ExtractNaturalRequirementsAsync(Prompt, false, Ct));
         Assert.Equal("NaturalConditionChanged", error.FailureKind);
-        Assert.Equal(12, model.Kinds.Count);
-        Assert.Equal(3, model.Kinds.Count(k => k == "requirements"));
-        Assert.Equal(9, model.Kinds.Count(k => k == "requirements-review"));
-        Assert.Equal(9, execution.Diagnostics.Last(d => d.Extraction is not null).Extraction!.ReviewAttempts);
+        Assert.Equal(44, model.Kinds.Count);
+        Assert.Equal(11, model.Kinds.Count(k => k == "requirements"));
+        Assert.Equal(33, model.Kinds.Count(k => k == "requirements-review"));
+        Assert.Equal(33, execution.Diagnostics.Last(d => d.Extraction is not null).Extraction!.ReviewAttempts);
     }
 
     [Theory]

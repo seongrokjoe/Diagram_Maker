@@ -139,12 +139,14 @@ public sealed partial class InternalLlmClient
         object? rejectedPlan = null;
         IReadOnlyList<string> issues = [];
         var attempts = 0;
-        for (var attempt = 0; attempt < 2; attempt++)
+        var reviewedCandidates = new HashSet<string>();
+        for (var attempt = 0; attempt < DiagramRecoveryPolicy.MaximumAttempts; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var reviewing = false;
             try
             {
-                var input = attempt == 0 ? CodeContextJson(baseInput) : CodeContextJson(new { context = baseInput, previousPlan = (object?)plan ?? rejectedPlan, repairIssues = issues });
+                var input = attempt == 0 ? CodeContextJson(baseInput) : CodeContextJson(new { context = baseInput, previousPlan = (object?)plan ?? rejectedPlan, repairIssues = issues, attempt });
                 attempts++;
                 var planned = await structured.CompleteAsync<DiagramPlan>(system, input, PlanSchema,
                     GetOutputTokens(_options.DiagramOutputTokens, enableThinking), enableThinking,
@@ -155,8 +157,10 @@ public sealed partial class InternalLlmClient
                 validator.Validate(projected);
                 // Compilation is part of acceptance, not a later failure that loses fallback.
                 _ = new MermaidCompiler(validator).Compile(projected);
+                if (!reviewedCandidates.Add(SemanticExecution.Hash(CodeContextJson(plan)))) break;
                 var reviewInput = CodeContextJson(new { context = baseInput, proposedPlan = plan });
                 attempts++;
+                reviewing = true;
                 var reviewed = await structured.CompleteAsync<DiagramPlanReview>(EvidencePolicy +
                     "Independently check this proposed plan against the supplied code facts. Reject unsupported meaning, reversed conditions, " +
                     "missing core actions (including an outer Export hidden by a nested DateTime constructor), merged distinct assertions, " +
@@ -166,7 +170,7 @@ public sealed partial class InternalLlmClient
                     reviewInput, PlanReviewSchema,
                     GetOutputTokens(_options.ReviewOutputTokens, enableThinking), enableThinking,
                     value => value.Issues is null || value.Accepted && value.Issues.Count > 0 || !value.Accepted && value.Issues.Count == 0 ? "InvalidReview" : null,
-                    cancellationToken, _options.NaturalDiagramTemperature, _options.NaturalDiagramSeed, allowRepair: false);
+                    cancellationToken, _options.NaturalDiagramTemperature, _options.NaturalDiagramSeed, allowRepair: true);
                 if (reviewed.Value.Accepted) return new SemanticGeneration(projected, "Semantic", [], plan.InstructionResults, attempts,
                     BuildExplanation(projected, candidate, plan, relevant));
                 issues = reviewed.Value.Issues;
@@ -191,7 +195,8 @@ public sealed partial class InternalLlmClient
                     LlmClientException { FailureKind: "MergesCoreActionOrAssertion" or "CrossesControlBoundary" or "UnsafeAbstraction" } => "의미 단계가 핵심 호출·검증 또는 제어 경계를 보존하지 못했습니다.",
                     _ => "생성 계약 또는 의미 검증에 실패했습니다."
                 }];
-                if (exception is DiagramGenerationException { Code: "EVIDENCE_INPUT_LIMIT" }) break;
+                if (reviewing || exception is DiagramGenerationException { Code: "EVIDENCE_INPUT_LIMIT" } ||
+                    exception is LlmClientException operational && operational.Code != "LLM_SCHEMA_INVALID") break;
             }
         }
         return new SemanticGeneration(candidate, "Deterministic",

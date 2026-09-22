@@ -108,8 +108,9 @@ public sealed class SharedReviewRecoveryTests
         using var handler = new Model("four-errors");
         var result = await Run(handler, 8);
         Assert.Equal(7, result.Response.Items.Count);
-        Assert.Equal(2, handler.Generations);
-        Assert.All(handler.Counts.Values, count => Assert.Equal(2, count));
+        Assert.Equal(3, handler.Generations);
+        Assert.Equal(3, handler.Counts["work0"]);
+        Assert.All(handler.Counts.Where(pair => pair.Key != "work0"), pair => Assert.Equal(1, pair.Value));
         Assert.Contains(result.Diagnostics, d => d.ValidationCode == "SharedUnknownIds" && d.ValidationDetails!.NonTargetItems == 1);
         Assert.Contains(result.Diagnostics, d => d.ErrorCode == "LLM_RESPONSE_TRUNCATED" && d.OutputLimit == 2000 && d.CompletionTokens == 2000);
         Assert.Contains(result.Diagnostics, d => d.ValidationCode == "SemanticReviewRejected" && d.RecoveryState == "Exhausted");
@@ -161,10 +162,10 @@ public sealed class SharedReviewRecoveryTests
         var result = await Run(handler, 4);
         Assert.Empty(result.Response.Items);
         Assert.Equal(1, handler.Generations);
-        Assert.Equal(8, handler.Reviews); // Parent twice, two children once, four singletons once.
+        Assert.Equal(17, handler.Reviews); // Parent eleven times, then each of six descendants once.
         Assert.All(result.Diagnostics.Where(d => d.Purpose == "review"), d =>
         {
-            Assert.InRange(d.Attempt!.Value, 1, 2); Assert.Equal("Exhausted", d.RecoveryState);
+            Assert.InRange(d.Attempt!.Value, 1, 11); Assert.Equal("Exhausted", d.RecoveryState);
         });
     }
 
@@ -225,7 +226,7 @@ public sealed class SharedReviewRecoveryTests
         Assert.Equal(2, result.Response.Items.Count);
         var failure = Assert.Single(result.Response.Failures!);
         Assert.Equal("semantic-review", failure.Stage);
-        Assert.Equal("LLM_SEMANTIC_REVIEW", failure.Code);
+        Assert.Equal("LLM_REPAIR_NO_PROGRESS", failure.Code);
         Assert.Equal(new[] { "reversed_condition" }, failure.IssueCodes);
         Assert.NotEmpty(failure.CorrectionInstructions!);
     }
@@ -271,6 +272,19 @@ public sealed class SharedReviewRecoveryTests
         return (response!, diagnostics!);
     }
 
+    [Fact]
+    public async Task ContentFailuresInThreeBatchesDoNotSuppressLaterValidBatches()
+    {
+        using var model = new Model("first-three-invalid");
+        var options = Config();
+        options.DiagramOutputTokens = 300;
+        var result = await Run(model, 8, options);
+        Assert.Equal(5, result.Response.Items.Count);
+        Assert.Equal(3, result.Response.Failures!.SelectMany(f => f.ItemIds).Distinct().Count());
+        Assert.All(model.Counts.Where(p => p.Key is "work0" or "work1" or "work2"), p => Assert.Equal(11, p.Value));
+        Assert.All(model.Counts.Where(p => p.Key is not ("work0" or "work1" or "work2")), p => Assert.Equal(1, p.Value));
+    }
+
     private sealed class Model(string mode) : HttpMessageHandler
     {
         public int Generations { get; private set; }
@@ -311,7 +325,8 @@ public sealed class SharedReviewRecoveryTests
                 result = new SharedSemanticResponse("원본 코드의 동작", "flowchart", items.Select((i, index) =>
                 {
                     var label = i.GetProperty("label").GetString()!; Counts[label] = Counts.GetValueOrDefault(label) + 1;
-                    return new SharedSemanticAnnotation(mode == "four-errors" && Generations == 1 && index == 0
+                    return new SharedSemanticAnnotation((mode == "four-errors" && Generations == 1 && index == 0) ||
+                        (mode == "first-three-invalid" && label is "work0" or "work1" or "work2")
                         ? context.GetProperty("sources").GetProperty("factId").GetString()! : i.GetProperty("id").GetString()!,
                         mode == "bad-text-once" && label == "work0" && Counts[label] == 1 ? "값 <script>처리</script>" : "값을 처리합니다", "원본 근거의 조건과 결과를 보존합니다");
                 }).ToArray());

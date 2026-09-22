@@ -101,14 +101,14 @@ public sealed class CodeBlockPipelineTests
     [Theory]
     [InlineData(true, false)]
     [InlineData(false, true)]
-    public async Task InvalidOrRejectedCodePlansStopAfterOneRepair(bool wrongFact, bool rejectReview)
+    public async Task InvalidOrRejectedCodePlansStopAfterTenRepairs(bool wrongFact, bool rejectReview)
     {
         var (input, graph, candidate) = Candidate();
         var transport = new CodeTransport { WrongFact = wrongFact, RejectReview = rejectReview };
         var result = await Client(new() { Enabled = true }, transport).PlanCodeBlockDiagramAsync(candidate, input, graph, null, new("v", "flowchart", "balanced"), Ct);
         Assert.Equal("Incomplete", result!.Status); Assert.Null(result.Explanation);
-        Assert.Equal(2, result.Attempts); Assert.Same(candidate, result.Diagram);
-        Assert.Equal(wrongFact ? 2 : 4, transport.Requests.Count);
+        Assert.Equal(wrongFact ? 11 : 2, result.Attempts); Assert.Same(candidate, result.Diagram);
+        Assert.Equal(wrongFact ? 11 : 3, transport.Requests.Count);
     }
     [Fact]
     public async Task ManualRelationshipChangesLoseCodeProvenance()

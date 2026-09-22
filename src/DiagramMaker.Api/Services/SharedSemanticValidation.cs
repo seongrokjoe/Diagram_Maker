@@ -7,6 +7,34 @@ internal sealed record SharedValidationProblem(string Code, LlmValidationDetails
 
 internal static class SharedSemanticValidation
 {
+    internal static IReadOnlyList<SharedSemanticAnnotation> RecoverItems(string? json, IReadOnlySet<string> expected)
+    {
+        if (json is null) return [];
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object ||
+                document.RootElement.EnumerateObject().Count(p => p.Name == "items") != 1 ||
+                !document.RootElement.TryGetProperty("items", out var items) || items.ValueKind != System.Text.Json.JsonValueKind.Array) return [];
+            var candidates = new List<SharedSemanticAnnotation>();
+            var seen = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var item in items.EnumerateArray())
+            {
+                if (item.ValueKind != System.Text.Json.JsonValueKind.Object || !item.TryGetProperty("id", out var id) ||
+                    id.ValueKind != System.Text.Json.JsonValueKind.String || !expected.Contains(id.GetString()!)) continue;
+                var key = id.GetString()!;
+                seen[key] = seen.GetValueOrDefault(key) + 1;
+                if (item.EnumerateObject().Count() != 3 || !item.TryGetProperty("summary", out var summary) ||
+                    summary.ValueKind != System.Text.Json.JsonValueKind.String || !item.TryGetProperty("description", out var description) ||
+                    description.ValueKind != System.Text.Json.JsonValueKind.String) continue;
+                var candidate = new SharedSemanticAnnotation(key, PlainText(summary.GetString()!), PlainText(description.GetString()!));
+                if (CheckItem(candidate, 0) is null) candidates.Add(candidate);
+            }
+            return candidates.Where(c => seen[c.Id] == 1).ToArray();
+        }
+        catch (System.Text.Json.JsonException) { return []; }
+    }
+
     // Normalize harmless presentation only. Code fences, executable markup,
     // links and Mermaid directives still fail the security/content checks.
     public static string PlainText(string value)

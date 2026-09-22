@@ -34,6 +34,12 @@ public sealed class NaturalDesignTests
         };
     }
 
+    internal static NaturalSemanticUnit Meaning(string type) => Meaning(Design(type));
+    internal static NaturalSemanticUnit Meaning(NaturalDesign design) => new(
+        design.Nodes.Select(n => new NaturalConcept(n.Id, n.Label, n.Kind, n.Assumption, n.Shape, n.Members, n.Details)).ToArray(),
+        design.Edges.Select(e => new NaturalConnection(e.SourceId, e.TargetId, e.Type, e.Label, e.Assumption,
+            e.Event, e.Guard, e.Action, e.ControlPath)).ToArray());
+
     [Theory]
     [InlineData("class")]
     [InlineData("flowchart")]
@@ -45,7 +51,7 @@ public sealed class NaturalDesignTests
         var client = Client(transport);
         var result = await client.GenerateDesignedNaturalAsync(Prompt, type, false,
             new DiagramPresetCatalog().Resolve(type, "balanced"), null, null, CancellationToken.None);
-        Assert.Equal(new[] { "requirements", "requirements-review", "design", "review" }, transport.Purposes);
+        Assert.Equal(new[] { "requirements", "requirements-review", "meaning", "meaning-review" }, transport.Purposes);
         Assert.Equal("Reviewed", result!.Quality!.Status);
         Assert.Equal(new[] { "r1" }, result.Quality.ReviewedRequirementIds);
         Assert.NotEmpty(result.Quality.ElementRequirements!);
@@ -58,15 +64,15 @@ public sealed class NaturalDesignTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task RejectedDesignConsumesAtMostTwoRepairsAndNeverReturnsUnreviewedSuccess(bool alwaysReject)
+    public async Task UnchangedRejectedMeaningStopsWithoutRepeatingItsReview(bool alwaysReject)
     {
-        var model = new Model { Reject = alwaysReject ? 3 : 1 };
+        var model = new Model { Reject = alwaysReject ? 100 : 1, VaryRepair = !alwaysReject };
         var task = Client(model).GenerateDesignedNaturalAsync(Prompt, "flowchart", false,
             new DiagramPresetCatalog().Resolve("flowchart", "balanced"), null, null, CancellationToken.None);
         if (alwaysReject) Assert.Equal("NATURAL_DESIGN_REJECTED", (await Assert.ThrowsAsync<LlmClientException>(() => task)).Code);
         else Assert.True((await task)!.Quality!.RepairUsed);
-        Assert.Equal(alwaysReject ? new[] { "requirements", "requirements-review", "design", "review", "repair", "review", "repair", "review" } :
-            new[] { "requirements", "requirements-review", "design", "review", "repair", "review" }, model.Purposes);
+        Assert.Equal(alwaysReject ? new[] { "requirements", "requirements-review", "meaning", "meaning-review", "meaning-repair" } :
+            new[] { "requirements", "requirements-review", "meaning", "meaning-review", "meaning-repair", "meaning-review" }, model.Purposes);
     }
 
     [Fact]
@@ -89,7 +95,7 @@ public sealed class NaturalDesignTests
     [Fact]
     public async Task TargetedRepairPreservesReviewedNodesOutsideTheFailedRequirement()
     {
-        var model = new Model { Reject = 1, TargetedRepair = true };
+        var model = new Model { Reject = 1, VaryRepair = true };
         var result = await Client(model).GenerateDesignedNaturalAsync(Prompt, "flowchart", false,
             new DiagramPresetCatalog().Resolve("flowchart", "balanced"), null, Requirements(), CancellationToken.None);
         Assert.NotNull(result);
@@ -139,7 +145,7 @@ public sealed class NaturalDesignTests
     {
         public bool IsEnabled => true;
         public int Reject { get; set; }
-        public bool TargetedRepair { get; set; }
+        public bool VaryRepair { get; set; }
         public List<string> Purposes { get; } = [];
         public Task<VllmCompletionResult> CompleteAsync(VllmCompletionRequest request, CancellationToken ct)
         {
@@ -150,12 +156,12 @@ public sealed class NaturalDesignTests
                 "requirements" => NaturalExtraction.FromRequirements(Requirements()),
                 "requirements-review" => new NaturalSourceReview(
                     json.RootElement.GetProperty("sourceRanges").EnumerateArray().Select(r => r.GetProperty("id").GetString()!).ToArray(), []),
-                "review" => Reject-- > 0 ? new NaturalDesignReview(false, ["r1"], ["문 열림 차단을 확인하세요"],
-                    TargetedRepair ? [new("e2", "label", "BranchLabelInvalid", "차단 분기를 수정하세요")] : []) : new NaturalDesignReview(true, ["r1"], [], []),
-                _ => Design(json.RootElement.GetProperty("type").GetString()!)
+                "meaning-review" => Reject-- > 0 ? new NaturalDesignReview(false, ["r1"], ["문 열림 차단을 확인하세요"],
+                    [new("r1", "label", "BranchLabelInvalid", "차단 분기를 수정하세요")]) : new NaturalDesignReview(true, ["r1"], [], []),
+                _ => Meaning(json.RootElement.GetProperty("type").GetString()!)
             };
-            if (TargetedRepair && request.Purpose == "repair" && result is NaturalDesign design)
-                result = design with { Nodes = design.Nodes.Select((node, index) => index == 0 ? node with { Label = "임의 변경" } : node).ToArray() };
+            if (VaryRepair && request.Purpose == "meaning-repair" && result is NaturalSemanticUnit meaning)
+                result = meaning with { Concepts = meaning.Concepts.Select((node, index) => index == 1 ? node with { Label = "장비를 운전한다" } : node).ToArray() };
             return Task.FromResult(new VllmCompletionResult(JsonSerializer.Serialize(result, new JsonSerializerOptions(JsonSerializerDefaults.Web)), "stop", 1, true, false, 0, request.MaxOutputTokens, 100, 100, 200));
         }
     }

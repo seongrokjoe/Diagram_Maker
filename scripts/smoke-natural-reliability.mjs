@@ -33,11 +33,12 @@ const llm = createServer(async (request, response) => {
     let body = ''; for await (const chunk of request) body += chunk;
     assert.ok(!body.includes('secret_for_mask_test'));
     const payload = JSON.parse(body);
-    const context = JSON.parse(payload.messages[1].content);
+    let context = JSON.parse(payload.messages[1].content);
+    if (context.originalRequest) context = JSON.parse(context.originalRequest);
     const properties = (payload.structured_outputs?.json ?? payload.response_format?.json_schema?.schema).properties;
     const kind = properties.requirements ? 'requirements' : properties.reviewedSourceRangeIds ? 'requirements-review' :
-      properties.reviewedRequirementIds ? context.views ? 'final-review' : 'review' : 'design';
-    calls.push({ kind, mode, at: Date.now(), requirementCount: context.requirements?.requirements?.length });
+      properties.reviewedRequirementIds ? context.views ? 'final-review' : 'review' : properties.concepts ? 'design' : 'integration';
+    calls.push({ kind, mode, at: Date.now(), target: context.target?.id, requirementCount: context.requirements?.requirements?.length });
     const attempt = calls.filter(call => call.mode === mode && call.kind === kind).length;
     if (mode === 'grammar-once' && calls.filter(call => call.mode === mode).length === 1) {
       response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: 'The provided JSON schema contains features not supported by xgrammar.' } })); return;
@@ -67,8 +68,6 @@ const llm = createServer(async (request, response) => {
     }
     else {
       value = naturalDesignFixture(context, properties, 'valid');
-      const ids = context.requirements.requirements.map(r => r.id);
-      for (const item of [...value.nodes, ...value.edges]) item.requirementIds = ids;
     }
     if (kind === 'requirements-review' && mode === 'review-missing-field' && attempt === 1) delete value.reviewedSourceRangeIds;
     if (kind === 'requirements-review' && mode === 'review-all-missing') value.reviewedSourceRangeIds = [];
@@ -80,7 +79,7 @@ const llm = createServer(async (request, response) => {
     await delay(mode === 'question' ? 100 : 1);
     response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
       choices: [{ message: { content: mode === 'null-json' ? 'null' : JSON.stringify(value) },
-        finish_reason: mode === 'split' && kind === 'design' && context.requirements.requirements.length > 1 ? 'length' : 'stop' }],
+        finish_reason: mode === 'split' && kind === 'integration' ? 'length' : 'stop' }],
       usage: { prompt_tokens: 100, completion_tokens: 100, total_tokens: 200 },
     }));
   } catch (error) { output += `fixture: ${error.stack}\n`; response.writeHead(500).end(); }
@@ -138,7 +137,7 @@ try {
   assert.equal(run.checkpoints, null);
   assert.equal(run.requirements.sourceRanges.length, 2);
   const original = await request(`/natural-diagrams/${run.resultDiagramId}`);
-  assert.equal(original.generatorVersion, 'natural-v9');
+  assert.equal(original.generatorVersion, 'natural-v10');
   await request(`/natural-diagram-runs/${run.id}`, 'GET', undefined, 403, 'other-owner');
   await request(`/natural-diagram-runs/${run.id}/diagnostics`, 'GET', undefined, 403, 'other-owner');
   await request(`/natural-diagram-runs/${run.id}/answers`, 'POST', {}, 403, 'other-owner');
@@ -166,10 +165,14 @@ try {
     if (testMode === 'review-all-missing') {
       assert.equal(checked.errorCode, 'NATURAL_REQUIREMENTS_REVIEW_INVALID');
       assert.equal(sent.filter(call => call.kind === 'requirements').length, 1);
-      assert.equal(sent.filter(call => call.kind === stage).length, 3);
+      assert.equal(sent.filter(call => call.kind === stage).length, 11);
     }
     if (testMode === 'scenario-invalid') assert.equal(checked.errorCode, 'NATURAL_PLAN_INVALID');
-    if (testMode === 'design-review-once') assert.equal(sent.filter(call => call.kind === 'design').length, 1);
+    if (testMode === 'design-review-once') {
+      const generations = sent.filter(call => call.kind === 'design');
+      assert.equal(generations.length, 2);
+      assert.equal(new Set(generations.map(call => call.target)).size, 2, 'review format repair does not regenerate either requirement');
+    }
     if (testMode === 'grammar-once') assert.ok(rows.some(row => row.schemaRelaxed));
     if (testMode === 'all-assumptions-once') {
       assert.equal(sent.filter(call => call.kind === 'requirements').length, 2);
@@ -182,7 +185,7 @@ try {
       assert.ok(rows.some(row => row.extraction?.replaced === 1));
     }
     if (testMode === 'semantic-no-progress') {
-      assert.equal(sent.filter(call => call.kind === 'requirements').length, 3);
+      assert.equal(sent.filter(call => call.kind === 'requirements').length, 2);
       assert.equal(sent.filter(call => call.kind === 'requirements-review').length, 1);
       assert.ok(rows.some(row => row.validationCode === 'NaturalRepairNoProgress' && row.kind === 'Terminal'));
       assert.equal(checked.resumeAllowed, false);
@@ -207,7 +210,7 @@ try {
   assert.ok(selfTest.cases.every(item => item.reviewedPages > 0));
   assert.ok(!selfTest.report.includes(llmOrigin));
   assert.equal(selfTest.summary.split('\n').length, 3);
-  assert.match(selfTest.summary, /natural-v9; protocol: natural-design-v5/);
+  assert.match(selfTest.summary, /natural-v10; protocol: natural-design-v6/);
   assert.ok(!selfTest.summary.includes(llmOrigin));
   assert.ok(selfTest.cases.every(item => item.extraction.extractionAttempts >= 1));
   if (packageRoot) {
@@ -220,7 +223,7 @@ try {
   const failedSelfTest = await request('/llm/tests/natural-diagram-contract', 'POST');
   assert.equal(failedSelfTest.success, false);
   assert.ok(failedSelfTest.cases.every(item => item.validationCode === 'NaturalRepairNoProgress'));
-  assert.ok(failedSelfTest.cases.every(item => item.extraction.extractionAttempts === 3 && item.extraction.reviewAttempts === 1));
+  assert.ok(failedSelfTest.cases.every(item => item.extraction.extractionAttempts === 2 && item.extraction.reviewAttempts === 1));
   assert.ok(failedSelfTest.cases.every(item => item.issueCounts.NaturalConditionChanged > 0));
   assert.ok(!failedSelfTest.summary.includes('원문의 조건을 보존하세요'));
   await writeFile(path.join(fixture, 'natural-self-test-failed-summary.txt'), failedSelfTest.summary);
@@ -230,11 +233,11 @@ try {
     mode = failureMode; const before = calls.length;
     const failed = await poll((await create()).id);
     assert.equal(failed.state, 'Failed');
-    assert.equal(calls.length - before, 3);
+    assert.equal(calls.length - before, 11);
     assert.equal(failed.resumeAllowed, false);
     await request(`/natural-diagram-runs/${failed.id}/resume`, 'POST', { expectedRevision: failed.revision }, 409);
     assert.equal((await poll(failed.id)).state, 'Failed');
-    assert.equal(calls.length - before, 3, 'resume cannot reset exhausted repairs');
+    assert.equal(calls.length - before, 11, 'resume cannot reset exhausted repairs');
     checks.push({ name: failureMode, requests: calls.length - before });
   }
   mode = 'contradiction';

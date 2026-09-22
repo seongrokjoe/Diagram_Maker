@@ -1,17 +1,94 @@
 # 코드 블럭·자연어 다이어그램 진행 기록
 
+## 2026-09-22 internal.14 공통 안정화 시작
+
+- 승인 계획: `SHARED_DIAGRAM_RELIABILITY_PLAN.md`. 시작 HEAD `65c381f`, 작업 트리 깨끗함.
+- 자연어 설계 제안 유지, 검증된 부분 결과 보존. 자연어 실제 오류는 `NaturalRequirementCoverageMissing`.
+  코드 블록은 보정 소진 문구만 확인되어 원인을 동일하다고 단정하지 않는다.
+- 추가 승인: 횟수 제한으로 실패하는 경로의 자동 보정은 최초 요청 이후 최대 10회로 변경한다.
+- 계획 수립 기준선: 자연어/공통 검토/실행 관련 .NET 85개 통과. 실제 사내 모델 검증은 미수행.
+- 다음: 공통 복구 정책/후보별 검토/연속 내용 실패 격리 회귀와 자연어 의미 계획 계약 구현.
+- 1차 구현: 공통 보정 한도 최초+10회, 응답별 체크포인트, 코드/Git 연속 내용 실패 시 뒤 묶음 건너뛰기 제거,
+  자연어 요구사항별 의미 계약과 서버 ID/근거 조립 및 통합 검토를 추가했다. 새 버전은 natural-v10,
+  natural-design-v6, shared-semantic-v7/shared-requests-v9이다.
+- API 빌드 통과, 자연어 설계 관련 15개 통과. 전체 .NET 기준선은 373 통과/26 실패.
+  기존 보정 횟수·응답 계약을 가정한 회귀를 갱신 중이며 저장소 경로 테스트 1개는 OneDrive 환경 영향이다.
+  완료로 간주하지 않는다. 다음: 10회 경계/실행 격리/선택 재생성 회귀, 자연어 통합 연결, UI·사내 검사.
+
+### 2026-09-22 internal.14 재개
+
+- 중단된 변경을 보존하고 `%TEMP%/DiagramMaker-natural-internal14`에 비동기화 검증 복사본을 만들었다.
+  최초 재개 .NET 검증은 397 통과/2 실패. 두 실패는 폐기된 연속 3회 중단 정책을 가정한 요청 수 검사이며,
+  새 단위별 실패 격리 정책과 재개 시 추가 요청 없음 검사를 유지하도록 갱신했다.
+- 자연어 통합 시 기존 단위 내부 구조 변경을 거부하고, 독립 요구사항의 Sequence 구분을 실제 출력에 연결했다.
+  서버 ID/근거 조립, 개별 멤버의 설계 가정, 최초+10회 경계와 형식 보정 도중 재개 회귀를 추가했다.
+  UI 진단 단계와 합성 HTTP 검사도 새 의미 계약에 맞춰 갱신 중이다.
+- 추가 테스트의 컴파일 오류 2개(일반 클래스에 with 사용, xUnit 분석 규칙)를 수정했다.
+  다음: 새 회귀 실행, 실제 loopback/API/UI 검증 및 전체 verify, internal.14 패키지와 문서 마감.
+  사내 실제 모델과 PostgreSQL 연결 정보는 미제공이며 해당 검증은 아직 수행하지 않았다.
+- .NET 410개 통과, 프런트엔드 빌드 성공. esbuild 상위 폴더 읽기 제한은 승인된 확장 권한으로 해결했다.
+  자연어 loopback/API/Edge 회귀 `natural-reliability-LJIhxD`가 통과했다.
+  요구사항 추출의 무진행 후보는 최초+1회 뒤 중단하도록 보완했으며 코드/Git 개별 계획 경로에도
+  후보 검토 재사용, 별도 검토 형식 보정과 요청별 시도 식별을 반영했다. 다음: 전체 verify와 패키징.
+- 전체 verify 재실행에서 .NET 410, 작업자 43, 웹 62, 정책 13, 시작 정책 11 및 API 두 모드가 통과했다.
+  공유 합성 서버가 자연어 의미 요청의 context를 구형 코드 요청 포장으로 오인해 클래스 계약을 깨뜨렸다.
+  합성 서버에서 새 요청 계약을 구별하도록 수정했다. 다음: 공유 검증 재실행과 전체 verify 마감.
+
+### 2026-09-22 internal.14 최종 검증 재개
+
+- HEAD `65c381f`와 기존 미커밋 변경 및 checkpoint를 보존했다. 이전 전체 verify는 공유 합성 서버의
+  구형 계약 처리에서 실패했고, 후속 검사는 화면 밖으로 끝나는 드래그에서 실패한 기록을 확인했다.
+- 드래그 검사 좌표가 전체 이동 중 화면 안에 머물도록 보완하고 실패 시 전후 스크롤 위치를 남긴다.
+  비동기화 검증 복사본에 최신 소스를 반영했다. 다음: 공유 검사 결과 확인 → 전체 verify →
+  internal.14 패키지 생성·검증·원본 artifacts 보존 → 보고서 마감.
+- 이전 패키지 빌드는 publish 이후 중단되어 ZIP이 생성되지 않았다. 실제 사내 LLM·PostgreSQL은
+  여전히 연결 정보 미제공으로 미검증이며 합성 검사와 구분한다.
+- 공유 합성/API/Edge 검사 `shared-semantics-gJPTqn` exit 0. 자연어 네 형식의 직접 편집·빈 공간/
+  Space 드래그·리비전 복원과 코드/Git 정상·부분 결과 보존을 확인했다. 전체 verify를 재실행한다.
+- 재개 전체 verify에서 .NET 410, 작업자 43, 웹 62, 정책 13, 시작 정책 11개가 통과했고
+  프런트엔드 빌드와 라이선스 검증이 성공했다. API/브라우저/실행기 검증 종료를 기다린다.
+- internal.14 패키지 빌드 exit 0. 소스·빌드·검사 파일 312개의 원본/복사본 SHA-256이 일치하며
+  ZIP 96,528,255바이트·1,832파일이 stage와 일치한다. SHA-256은
+  `78bc146f54f121269195aeb7a891dcb1593e52b07714fb6febf540bf9a57c2db`이다.
+  manifest는 기준 `65c381f`와 dirty 상태를 기록한다. 다음: 전체 verify 종료와 패키지 검사 9개 확인.
+- 전체 verify의 공유 의미 기본/60,000자 검사(`shared-semantics-BIK9uI`/`shared-semantics-Jq5XFG`),
+  SVG 안전성 6개와 Sequence 배치 4개가 통과했다. 패키지 API/미리보기·코드 UI·디자인 UI도 통과했다.
+- 자연어 회귀 20개가 소스 `natural-reliability-mA9qFF`와 패키지 `natural-reliability-cAyjh6`에서
+  각각 406회 합성 요청으로 통과했다. 소스 32.657초, 패키지 37.533초이며 실제 모델 성능 측정이 아니다.
+  패키지 검사 7개가 exit 0이며, 공유 60,000자와 Windows CMD 검사가 남았다.
+- 패키지 공유 60,000자 검사에서 코드 리비전 저장 버튼의 Playwright click 10초 시간 초과가 발생했다.
+  앞선 동일 소스 검사는 통과했다. 실패 로그와 첫 시도 결과를 보존하며 전체 verify의 실행기 빌드가
+  끝난 뒤 해당 검사만 단독 재실행하여 재현 여부를 확인한다. 현재 패키지 검증 완료로 간주하지 않는다.
+- 전체 `verify.ps1` 최종 exit 0. Windows UI 실행기 14개(`ui-test-launchers-SMIKm5`)까지 통과했다.
+  이제 패키지의 실패한 60,000자 검사와 마지막 Windows CMD 검사만 단독 실행한다.
+- 재개 보조 스크립트가 PowerShell의 JSON 배열 파이프 처리를 잘못 가정해 앞선 패키지 검사를
+  다시 시작했다. 중복 실행을 중단하고 배열을 먼저 변수로 받아 통과한 7개를 보존하도록 수정했다.
+  제품 소스/패키지는 변경하지 않았으며 첫 시도 결과 JSON과 실패 로그는 유지한다.
+- 패키지 공유 60,000자 검사는 제품/시간 제한 변경 없이 단독 재실행에서 통과했다.
+  마지막 Windows CMD 검사는 구형 `natural-design-v5` 기대값 때문에 실패했다. 실제 v6에 맞게
+  검사만 갱신했으며 통과한 8개를 보존하고 CMD 검사만 다시 실행한다. ZIP 내용은 동일하다.
+- Windows CMD 8개(`windows-launchers-acbynb`)가 통과했고 패키지 검사 9개 명령 모두 최종 exit 0이다.
+  최신 원본/복사본 소스 312개와 `git diff --check`를 확인했다. ZIP/SHA를 원본 `artifacts/release/`에
+  복사하고 해시를 확인했다. internal.13 ZIP과 checkpoint는 보존했다.
+- 전체 verify·패키지 빌드·검사 로그, 첫 실패 및 최종 결과 JSON, 파일 해시와 화면 증적은
+  `artifacts/internal14-validation/`에 보존했다. 보고서는 `SHARED_DIAGRAM_RELIABILITY_REPORT.md`이다.
+- internal.14 로컬 구현·전체 검증·패키징 완료. 미해결 로컬 실패 없음. 커밋·푸시는 수행하지 않았다.
+  다음: 사내 환경에서 `test-natural-diagram.cmd`, 코드 검사와 기존 실패 입력을 신규 생성으로 검증하고
+  실제 의미 품질·조건 보존·응답 시간을 기록한다. 사내 실제 LLM/PostgreSQL 연결 정보 미제공이며
+  실제 모델·DB·호스트 egress·외부 취약점 피드 검증은 미수행으로 남긴다.
+
 다음 작업은 `AGENTS.md`, `CODE_BLOCK_DIAGRAM_IMPLEMENTATION_PLAN.txt`, 이 파일을 먼저 읽는다.
 전체 제품 설명과 사용법은 `README.md`, 보안 기준은 `SECURITY.md`를 따른다.
 
 ## 현재 배포 상태
 
-- 최신 사내 시험 패키지: `0.1.0-internal.13` (현재 배포 폴더에는 최신 ZIP/SHA만 유지).
-- 배포 파일: `artifacts/release/DiagramMaker-0.1.0-internal.13-win-x64.zip` 및 SHA-256 파일.
-- ZIP 크기 96,508,426바이트, 1,832파일.
-- SHA-256: `9778ffbeefec6f390fa56e62831a980ecc615a80edec153ca4cc8173e2790edd`.
-- 기준 커밋은 `8cc4f1b`이며 internal.13 변경은 그 이후 작업이다.
-- 최신 변경·검증 결과: `NATURAL_DIAGRAM_EXTRACTION_REPORT.md`.
-- 구현·배포 커밋 `26e2bfb`를 `origin/main`에 일반 푸시 완료했다.
+- 최신 사내 시험 패키지: `0.1.0-internal.14`. 이전 internal.13 ZIP/SHA도 보존했다.
+- 배포 파일: `artifacts/release/DiagramMaker-0.1.0-internal.14-win-x64.zip` 및 SHA-256 파일.
+- ZIP 크기 96,528,255바이트, 1,832파일.
+- SHA-256: `78bc146f54f121269195aeb7a891dcb1593e52b07714fb6febf540bf9a57c2db`.
+- 기준 커밋은 `65c381f`이며 internal.14 구현은 미커밋 작업이다.
+- 최신 변경·검증 결과: `SHARED_DIAGRAM_RELIABILITY_REPORT.md`.
+- 이전 internal.13 구현·배포 커밋 `26e2bfb`와 전달 기록 `65c381f`는 보존했다.
 - 코드 블럭 기능 구현 전 checkpoint `e53efc2`와 기존 사용자 변경은 Git 이력에 보존되어 있다.
 
 ## internal.11: 자연어 다이어그램 안정성 개선

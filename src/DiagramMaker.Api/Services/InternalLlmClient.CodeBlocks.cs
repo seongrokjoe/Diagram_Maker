@@ -129,8 +129,13 @@ public sealed partial class InternalLlmClient
         var failureStage = "plan-validation";
         object? rejectedPlan = null;
         string? failureMessage = null;
-        for (var attempt = 0; attempt < 2; attempt++)
+        var attempts = 0;
+        var reviews = new Dictionary<string, DiagramPlanReview>();
+        for (var attempt = 0; attempt < DiagramRecoveryPolicy.MaximumAttempts; attempt++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            attempts++;
+            var reviewing = false;
             try
             {
                 var result = await structured.CompleteAsync<CodeBlockSemanticPlan>(CodeBehaviorPolicy +
@@ -143,16 +148,24 @@ public sealed partial class InternalLlmClient
                     "Preserve the original predicate polarity: true still means the original condition is true. Do not reverse a question's meaning. " +
                     "Each behavior must reference actual nodes/edges and retain original conditions, exceptions and relevant argument values. " +
                     "Use selection.overrides.detailLevel and presetId: compact groups more eligible chains; detailed explains individual actions. Never omit control paths for brevity.",
-                    CodeContextJson(new { context, repairIssues = issues, rejectedPlan }), CodePlanSchema,
+                    CodeContextJson(new { context, repairIssues = issues, rejectedPlan, attempt }), CodePlanSchema,
                     GetOutputTokens(_options.DiagramOutputTokens, input.EnableThinking), input.EnableThinking,
                     value => ValidateCodePlan(candidate, value), cancellationToken, allowRepair: false);
                 rejectedPlan = result.Value;
+                var candidateKey = SemanticExecution.Hash(CodeContextJson(result.Value));
+                if (reviews.ContainsKey(candidateKey))
+                {
+                    failureMessage = "보정 응답에 수정 내용이 반영되지 않아 중단했습니다. 정적 구조는 보존됩니다.";
+                    break;
+                }
+                reviewing = true;
                 var review = await structured.CompleteAsync<DiagramPlanReview>(CodeBehaviorPolicy +
                     "Review the plan against the supplied source. Reject unsupported behavior, lost core actions/arguments/assertions, incorrect branches or invented execution order. " +
                     "Check that source facts support every semantic explanation. Return accepted and issues.",
                     CodeContextJson(new { context, proposedPlan = result.Value }), PlanReviewSchema,
                     GetOutputTokens(_options.ReviewOutputTokens, input.EnableThinking), input.EnableThinking,
-                    value => value.Issues is null || value.Accepted && value.Issues.Count > 0 || !value.Accepted && value.Issues.Count == 0 ? "InvalidReview" : null, cancellationToken, allowRepair: false);
+                    value => value.Issues is null || value.Accepted && value.Issues.Count > 0 || !value.Accepted && value.Issues.Count == 0 ? "InvalidReview" : null, cancellationToken, allowRepair: true);
+                reviews[candidateKey] = review.Value;
                 if (!review.Value.Accepted) { failureStage = "semantic-review"; issues = review.Value.Issues.ToArray(); continue; }
                 var plan = new DiagramPlan(result.Value.Summary, result.Value.Elements.Select(e => new SemanticElement(e.Id, e.Summary, e.NodeIds)).ToArray(), result.Value.Messages, []);
                 var projected = ApplyCodePlan(candidate, result.Value);
@@ -179,6 +192,7 @@ public sealed partial class InternalLlmClient
                     try { rejectedPlan = JsonSerializer.Deserialize<JsonElement>(content); }
                     catch (JsonException) { rejectedPlan = content; }
                 }
+                if (reviewing || e is LlmClientException operational && operational.Code != "LLM_SCHEMA_INVALID") break;
             }
         }
         return new SemanticGeneration(candidate, "Incomplete", [failureMessage ?? (failureStage switch
@@ -186,7 +200,7 @@ public sealed partial class InternalLlmClient
             "semantic-review" => "의미 검토 실패: 원본 동작과 설명의 일치를 확인하지 못했습니다.",
             "llm-request" => "LLM 요청 실패: 응답 또는 시간 제한을 확인하세요.",
             _ => "의미 계획 검증 실패: 구조·근거·분기 또는 코드 범위를 확인하지 못했습니다."
-        })], [], 2, FailureStage: failureStage);
+        })], [], attempts, FailureStage: failureStage);
     }
 
     internal static string? ValidateCodePlan(DiagramIr candidate, CodeBlockSemanticPlan plan)

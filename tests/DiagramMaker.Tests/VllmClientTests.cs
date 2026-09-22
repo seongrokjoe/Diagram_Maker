@@ -167,7 +167,7 @@ public sealed class VllmClientTests
     {
         const string firstRejected = "prefix {\"result\":\"secret-one\"}";
         const string secondRejected = "secret-two";
-        var handler = new QueueHandler(Response(firstRejected), Response($"{{\"result\":\"{secondRejected}\"}}"));
+        var handler = new QueueHandler(new[] { Response(firstRejected) }.Concat(Enumerable.Range(0, 10).Select(_ => Response($"{{\"result\":\"{secondRejected}\"}}"))).ToArray());
         using var client = CreateClient(handler);
         var structured = new StructuredLlmCompletion(client);
         using var schemaDocument = JsonDocument.Parse("""{"type":"object"}""");
@@ -286,7 +286,7 @@ public sealed class VllmClientTests
         var handler = new QueueHandler(Response(JsonSerializer.Serialize(NaturalExtraction.FromRequirements(NaturalDesignTests.Requirements()), jsonOptions)),
             Response(JsonSerializer.Serialize(new NaturalSourceReview(
                 NaturalRequirementEvidence.Prepare(NaturalDesignTests.Prompt).Select(r => r.Id).ToArray(), []), jsonOptions)),
-            Response(JsonSerializer.Serialize(NaturalDesignTests.Design("flowchart"), jsonOptions)),
+            Response(JsonSerializer.Serialize(NaturalDesignTests.Meaning("flowchart"), jsonOptions)),
             Response("{\"accepted\":true,\"reviewedRequirementIds\":[\"r1\"],\"issues\":[],\"itemIssues\":[]}"));
         var options = Options();
         options.ThinkingOutputTokens = 1_750;
@@ -303,15 +303,15 @@ public sealed class VllmClientTests
         Assert.Equal(0, payload.RootElement.GetProperty("temperature").GetDouble());
         Assert.True(payload.RootElement.GetProperty("chat_template_kwargs").GetProperty("enable_thinking").GetBoolean());
         var properties = payload.RootElement.GetProperty("structured_outputs").GetProperty("json").GetProperty("properties");
-        Assert.True(properties.TryGetProperty("nodes", out _));
-        Assert.True(properties.TryGetProperty("edges", out _));
+        Assert.True(properties.TryGetProperty("concepts", out _));
+        Assert.True(properties.TryGetProperty("connections", out _));
         Assert.Equal(4, handler.Requests.Count);
     }
 
     [Fact]
-    public async Task NaturalDiagram_InvalidRequirementsStopAfterTwoContractRepairs()
+    public async Task NaturalDiagram_InvalidRequirementsStopAfterTenContractRepairs()
     {
-        var handler = new QueueHandler(Response(ValidDiagramContent), Response(ValidDiagramContent), Response(ValidDiagramContent));
+        var handler = new QueueHandler(Enumerable.Range(0, 11).Select(_ => Response(ValidDiagramContent)).ToArray());
         var options = Options();
         using var transport = new VllmClient(options, handler: handler);
         var llm = CreateInternalClient(options, transport);
@@ -321,7 +321,7 @@ public sealed class VllmClientTests
             new DiagramPresetCatalog().Resolve("flowchart", "balanced"), null, CancellationToken.None));
 
         Assert.Equal("NATURAL_REQUIREMENTS_INVALID", error.Code);
-        Assert.Equal(3, handler.Requests.Count);
+        Assert.Equal(11, handler.Requests.Count);
     }
 
     [Fact]
@@ -342,7 +342,8 @@ public sealed class VllmClientTests
     {
         const string plan = """{"summary":"헤더 변경","elements":[{"id":"operation","summary":"Header 포인터 할당","nodeIds":["operation"]}],"messages":[],"changes":[{"changeId":"change","summary":"포인터 형 변환을 명시했습니다.","factIds":["before","after"],"nodeIds":["operation"],"edgeIds":[]}],"instructionResults":["포인터 할당 의미를 강조했습니다."]}""";
         const string accepted = """{"accepted":true,"issues":[]}""";
-        var handler = repair ? new QueueHandler(Response(plan), Response("""{"accepted":false,"issues":["이전 버전 차이를 설명하세요."]}"""), Response(plan), Response(accepted)) :
+        var handler = repair ? new QueueHandler(Response(plan), Response("""{"accepted":false,"issues":["이전 버전 차이를 설명하세요."]}"""),
+            Response(plan.Replace("포인터 형 변환을 명시했습니다.", "이전 암시적 포인터 형 변환을 명시적 형 변환으로 바꿨습니다.")), Response(accepted)) :
             new QueueHandler(Response(plan), Response(accepted));
         var options = Options();
         using var transport = new VllmClient(options, handler: handler);

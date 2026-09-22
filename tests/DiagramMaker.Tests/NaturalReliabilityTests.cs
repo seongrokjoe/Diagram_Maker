@@ -97,7 +97,7 @@ public sealed class NaturalReliabilityTests
     }
 
     [Fact]
-    public async Task NullJsonConsumesAtMostTwoRepairsAndResumeDoesNotResetThem()
+    public async Task NullJsonConsumesAtMostTenRepairsAndResumeDoesNotResetThem()
     {
         var model = new Model { InvalidJson = true };
         var options = new LlmOptions { Enabled = true };
@@ -108,10 +108,10 @@ public sealed class NaturalReliabilityTests
             Assert.Equal("NATURAL_REQUIREMENTS_INVALID", error.Code);
             checkpoints = execution.Checkpoints;
         }
-        Assert.Equal(3, model.Purposes.Count);
+        Assert.Equal(11, model.Purposes.Count);
         using (var execution = new SemanticExecution(options, checkpoints, Ct))
             await Assert.ThrowsAsync<LlmClientException>(() => Client(model).ExtractNaturalRequirementsAsync("요청한다.", false, Ct));
-        Assert.Equal(3, model.Purposes.Count);
+        Assert.Equal(11, model.Purposes.Count);
     }
 
     [Fact]

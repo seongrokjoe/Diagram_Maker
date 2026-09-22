@@ -117,6 +117,11 @@ function actionLabel(action?: string, kind?: string) { return ({ StartNewRun: "�
   CheckSettings: "설정 확인", RepairInvalidItem: "실패 항목 보정" } as Record<string, string>)[action ?? ""] ?? action ?? (kind ? "해당 없음" : "미기록"); }
 
 function purpose(value: FailureDiagnostic) { return value.purpose === "requirements-validation" ? "요구사항 근거 검증" :
+  value.purpose?.endsWith("format-repair") ? "응답 형식 보정" :
+  value.purpose === "meaning" ? "요구사항별 의미 설계" : value.purpose === "meaning-repair" ? "실패한 요구사항 설계 보정" :
+  value.purpose === "meaning-review" ? "요구사항별 의미 검토" : value.purpose === "meaning-validation" ? "요구사항별 구조 검증" :
+  value.purpose === "meaning-integration" ? "요구사항 간 연결 설계" : value.purpose === "integration-review" ? "통합 의미 검토" :
+  value.purpose === "integration-validation" || value.purpose === "assembly-validation" ? "통합 구조 검증" :
   value.purpose === "scenario-validation" ? "시나리오 연결 검증" : value.purpose === "design-validation" ? "다이어그램 구조 검증" :
   value.purpose === "design-review" ? "설계 의미 검토" : value.purpose === "requirements-result" ? "요구사항 단계 종료" :
   value.purpose === "design-result" ? "설계 단계 종료" : value.purpose === "final-review-result" ? "최종 검토 종료" :

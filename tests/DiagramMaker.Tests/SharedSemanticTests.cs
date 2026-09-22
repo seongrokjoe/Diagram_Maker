@@ -231,8 +231,9 @@ public sealed class SharedSemanticTests(ITestOutputHelper output)
             else
             {
                 Assert.All(result!.Pages.Values, p => Assert.NotEqual("Semantic", p.Status));
-                // Each of the two stages stops after three failed units, with one repair per unit.
-                Assert.InRange(transport.Requests, 1, mode == "invalid" ? 12 : 24);
+                // Every source unit is attempted even after other content failures.
+                // Format failures use all ten repairs; unchanged meanings stop early.
+                Assert.Equal(mode == "invalid" ? 30 * DiagramRecoveryPolicy.MaximumAttempts : 30 * 3, transport.Requests);
             }
         }
     }

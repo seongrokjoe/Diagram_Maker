@@ -62,6 +62,7 @@ internal static partial class NaturalDesignValidation
         "NullItem" or "DuplicateId" or "MissingItems" or "NaturalRequirementIdMissing" or "NaturalRequirementTextMissing" or
         "NaturalFieldTooLong" or "NaturalFieldMissing" or "NaturalFieldTypeInvalid" or "NaturalFieldEnumInvalid" or
         "NaturalTooManyItems" or "NaturalFieldUnexpected" or "NaturalRepairNoProgress" or
+        "NaturalMeaningMissing" or "NaturalMeaningKeysInvalid" or "NaturalMeaningReferencesInvalid" or "NaturalIntegrationScopeInvalid" or
         "NaturalRequirementOmitted" or "NaturalConditionChanged" or "NaturalUnsupportedClaim" or
         "NaturalEvidenceMismatch" or "NaturalEntityMismatch" or "NaturalScenarioMismatch" or
         "NaturalOriginInvalid" or "NaturalEvidenceMissing" or "NaturalEvidenceDuplicate" or
@@ -78,7 +79,7 @@ internal static partial class NaturalDesignValidation
 
     internal static string DiagnosticField(string? field) => field switch {
         "requirements" or "sourceRangeIds" or "origin" or "scenarios" or "questions" or "structure" or "json" or
-        "text" or "kind" or "label" or "guard" or "action" or "event" or "entities" => field,
+        "text" or "kind" or "label" or "guard" or "action" or "event" or "entities" or "concepts" or "connections" or "meaning" or "requirementIds" => field,
         _ => "review"
     };
 }

@@ -9,7 +9,8 @@ internal static class LlmDiagnosticReport
 {
     // An explicit projection: serializing LlmOptions would disclose the endpoint.
     public static object Settings(LlmOptions options) => new {
-        protocol = SemanticExecution.SharedPolicyVersion, options.Enabled,
+        protocol = SemanticExecution.SharedPolicyVersion, recoveryProtocol = DiagramRecoveryPolicy.Version,
+        maximumRepairs = DiagramRecoveryPolicy.MaximumRepairs, options.Enabled,
         options.DiagramOutputTokens, options.ReviewOutputTokens, options.ThinkingOutputTokens,
         options.OutputHardLimit, options.MaxInputTokens, options.MaxContextTokens,
         options.MaxInputCharacters, options.SemanticJobBudgetSeconds, options.RequestTimeoutSeconds,

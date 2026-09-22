@@ -5,7 +5,7 @@ namespace DiagramMaker.Services;
 public sealed partial class InternalLlmClient
 {
     private static LlmClientException NaturalFailure(string code, string? validation, LlmValidationDetails? details = null) =>
-        new(code, $"{NaturalFailureLabel(code)} 보정 한도를 소진했습니다. 마지막 정상 결과는 보존됩니다. " +
+        new(code, $"{NaturalFailureLabel(code)} " + (validation == "NaturalRepairNoProgress" ? "수정 내용이 반영되지 않아 보정을 중단했습니다. " : "자동 보정을 완료하지 못했습니다. ") + "마지막 정상 결과는 보존됩니다. " +
             $"진단: {NaturalFailureReason(validation)} ({NaturalDesignValidation.DiagnosticCode(validation)}). 검사 요약으로 실패 원인을 확인할 수 있습니다.",
             failureKind: NaturalDesignValidation.DiagnosticCode(validation), validationDetails: details);
 
@@ -19,6 +19,11 @@ public sealed partial class InternalLlmClient
         "NaturalRepairNoProgress" => "보정 응답에 수정 내용이 반영되지 않음",
         "NaturalExplicitRequirementsMissing" => "원문에 연결된 요구사항 없음",
         "NaturalFieldUnexpected" => "응답에 계약 밖의 필드 포함",
+        "NaturalRequirementCoverageMissing" => "실제 구조에 반영되지 않은 요구사항",
+        "NaturalMeaningMissing" => "요구사항의 의미 구조 누락",
+        "NaturalMeaningKeysInvalid" => "의미 요소의 식별자 중복 또는 누락",
+        "NaturalMeaningReferencesInvalid" => "존재하지 않는 의미 요소 참조",
+        "NaturalIntegrationScopeInvalid" => "통합 연결이 개별 요구사항의 구조를 변경함",
         _ => "요구사항 또는 검토 응답 검증 실패"
     };
 

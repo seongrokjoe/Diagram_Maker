@@ -46,7 +46,7 @@ public sealed class SemanticGenerationContractTests
         Assert.Equal("Deterministic", result!.Status);
         Assert.Same(candidate, result.Diagram);
         Assert.Contains(result.Warnings, warning => warning.Contains("유지된 검증을 신규 변경으로 설명"));
-        Assert.Equal(4, result.Attempts);
+        Assert.Equal(3, result.Attempts);
         Assert.Null(result.Explanation);
     }
 
@@ -58,7 +58,7 @@ public sealed class SemanticGenerationContractTests
         var result = await Client(new() { Enabled = true, MaxInputCharacters = 16_000 }, transport)
             .PlanDiagramAsync(candidate, bundle, null, new("view", "flowchart", "balanced"), null, false, CancellationToken.None);
         Assert.Equal("Deterministic", result!.Status);
-        Assert.Equal(2, transport.Requests.Count);
+        Assert.Equal(11, transport.Requests.Count);
         Assert.All(transport.Requests, request => Assert.True(request.StructuredSchema!.Value.GetProperty("properties").TryGetProperty("elements", out _)));
         Assert.Null(result.Explanation);
     }
