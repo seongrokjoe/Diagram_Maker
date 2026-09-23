@@ -326,3 +326,6 @@ checkpoint와 사용자 변경을 보존하며, 의미 있는 구현·검증·�
 
 - 6단계 배포 정리 완료: internal.16 ZIP/SHA를 원본 artifacts/release에 복사하고 재해시했으며, internal.15 ZIP/SHA 2개를 현재 배포 폴더에서 제거했다. 9개 패키지 검사와 전체 verify 로그는 artifacts/internal16-validation에 보존했다. NATURAL_DIAGRAM_INTERNAL16_REPORT.md에 변경·검증·사내 현장 확인 항목을 기록하고 과거 internal.12 보고서는 유지했다.
 - 다음: Git 변경 및 배포 파일의 최종 검토, 커밋, origin/main push와 원격 일치 확인. 사내 실제 모델 검사는 사내 PC에서 별도로 필요하다.
+
+- 7단계 전달: 구현·보고서·internal.16 ZIP/SHA·이전 ZIP 정리를 cb57c00으로 커밋하고 origin/main push가 성공했다. 원격에서 ZIP 92.10MB가 GitHub 권장 50MB를 넘는다는 경고가 나왔으나 푸시는 수락됐다. 남은 로컬 구현 실패는 없다.
+- 다음: 사내 개발 PC에서 실제 GLM 5.2(Thinking OFF)와 PostgreSQL로 짧은 승인 흐름·표 공통 조건·Buffer Handshake 고정 검사 및 기존 Wafer 입력을 새 실행하고, 실패 시 소유자 비교 화면의 인용·생성 값·단계·코드를 수집한다. 이 PC에서는 사내 모델의 최종 동작을 판정할 수 없다.
