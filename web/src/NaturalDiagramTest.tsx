@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { readNaturalTestStream } from "./naturalTestStream";
 
 type TestCase = { id: string; state: string; pages: number; reviewedPages: number; errorCode?: string; types?: string[] };
@@ -7,9 +7,9 @@ type TestEvent = { type: string; caseId?: string; stage: string; completedPages:
   execution: { elapsedSeconds: number; budgetSeconds: number; transportRequests: number; lastRequest?: { purpose?: string } };
   case?: TestCase; result?: TestResult };
 const stages: Record<string, string> = { preparing: "검사 준비", requirements: "요구사항 추출", "requirements-review": "원문 의미 검토",
-  "scenario-design": "시나리오 설계", "scenario-review": "시나리오 의미 검토", "scenario-repair": "시나리오 보정",
+  "scenario-design": "시나리오 설계", "scenario-review": "시나리오 의미 검토", "scenario-review-confirm": "조건 변경 재확인", "scenario-repair": "시나리오 보정",
   "natural-final-review": "형식 간 일관성 검토", "scenario-mapping": "시나리오 연결 보정", "schema-repair": "응답 형식 보정" };
-const names: Record<string, string> = { "short-approval": "짧은 승인 흐름", "table-interlock": "표·공통 조건",
+const names: Record<string, string> = { "short-approval": "짧은 승인 흐름", "table-interlock": "표·공통 조건", "buffer-handshake": "Buffer Handshake",
   flowchart: "흐름도", sequence: "시퀀스", state: "상태도", class: "클래스" };
 
 export function NaturalDiagramTest() {
@@ -59,10 +59,10 @@ export function NaturalDiagramTest() {
   return <article className="llm-result-card natural-diagram-test"><h3>자연어 다이어그램 검사</h3>
     <p className="help">고정 합성 문장을 실제 생성 경로로 검사합니다. Thinking은 꺼져 있습니다. 전체 선택 사례가 하나의 시간 한도(최대 15분)를 공유합니다.</p>
     <label>검사 문장 <select disabled={busy} value={caseId} onChange={event => {
-      setCaseId(event.target.value); if (event.target.value === "short-approval") setDiagramType("");
-    }}><option value="">전체</option><option value="short-approval">짧은 승인 흐름</option><option value="table-interlock">표·공통 조건</option></select></label>{" "}
+      setCaseId(event.target.value); if (event.target.value === "short-approval" || event.target.value === "buffer-handshake") setDiagramType("");
+    }}><option value="">전체</option><option value="short-approval">짧은 승인 흐름</option><option value="table-interlock">표·공통 조건</option><option value="buffer-handshake">Buffer Handshake</option></select></label>{" "}
     <label>검사 형식 <select disabled={busy} value={diagramType} onChange={event => setDiagramType(event.target.value)}>
-      <option value="">기본 형식 전체</option>{["flowchart", ...(caseId === "short-approval" ? [] : ["sequence", "state", "class"])].map(type => <option key={type} value={type}>{names[type]}</option>)}
+      <option value="">기본 형식 전체</option>{(caseId === "short-approval" ? ["flowchart"] : caseId === "buffer-handshake" ? ["sequence"] : ["flowchart", "sequence", "state", "class"]).map(type => <option key={type} value={type}>{names[type]}</option>)}
     </select></label>{" "}
     <button type="button" className="secondary" disabled={busy} onClick={() => void run()}>{busy ? "자연어 생성 검사 중…" : "자연어 생성 검사"}</button>
     {busy && <button type="button" className="secondary" onClick={() => controller.current?.abort()}>검사 취소</button>}

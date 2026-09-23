@@ -5,7 +5,7 @@ namespace DiagramMaker.Services;
 
 internal static partial class NaturalDesignValidation
 {
-    public const string Protocol = "natural-design-v7";
+    public const string Protocol = "natural-design-v8";
     public static string? Requirements(NaturalRequirements value, string prompt)
     {
         if (string.IsNullOrWhiteSpace(value.Title) || value.Requirements is not { Count: > 0 and <= 150 } ||
@@ -47,24 +47,7 @@ internal static partial class NaturalDesignValidation
         return issues;
     }
 
-    public static string? Plan(NaturalRequirements value)
-    {
-        var ids = value.Requirements.Select(r => r.Id).ToHashSet();
-        var ranges = (value.SourceRanges ?? []).Select(r => r.Id).ToHashSet();
-        if (value.Scenarios is { Count: > 0 } scenarios &&
-            (scenarios.Count > 30 || scenarios.Any(s => s is null || string.IsNullOrWhiteSpace(s.Id) || string.IsNullOrWhiteSpace(s.Title) ||
-                s.RequirementIds is not { Count: > 0 } || s.RequirementIds.Any(id => !ids.Contains(id)) ||
-                s.SourceRangeIds is null || s.SourceRangeIds.Any(id => !ranges.Contains(id))) ||
-             scenarios.Select(s => s.Id).Distinct().Count() != scenarios.Count ||
-             !scenarios.SelectMany(s => s.RequirementIds).ToHashSet().SetEquals(ids))) return "NaturalScenarioInvalid";
-        if (value.Questions is { Count: > 0 } questions && (questions.Count > 5 ||
-            questions.Any(q => q is null || string.IsNullOrWhiteSpace(q.Id) || string.IsNullOrWhiteSpace(q.Text) ||
-                string.IsNullOrWhiteSpace(q.Reason) || q.Text.Length > 500 || q.Reason.Length > 500 ||
-                q.SourceRangeIds is not { Count: > 0 } || q.SourceRangeIds.Any(id => !ranges.Contains(id)) ||
-                q.Choices is null || q.Choices.Count > 6 || q.Choices.Any(c => string.IsNullOrWhiteSpace(c) || c.Length > 500)) ||
-            questions.Select(q => q.Id).Distinct().Count() != questions.Count)) return "NaturalQuestionInvalid";
-        return null;
-    }
+    public static string? Plan(NaturalRequirements value) => PlanFindings(value).FirstOrDefault()?.Code;
 
     public static string? Design(NaturalDesign value, string type, NaturalRequirements requirements)
     {
@@ -170,6 +153,16 @@ internal static partial class NaturalDesignValidation
             ("sourceRangeIds", Strings())), 150)),
         ("scenarios", List(Obj(("id", Text(80)), ("title", Text()), ("requirementIds", Strings()), ("sourceRangeIds", Strings())), 30)),
         ("questions", List(Obj(("id", Text(80)), ("text", Text()), ("reason", Text()), ("sourceRangeIds", Strings()), ("choices", Strings(6))), 5))));
+    public static readonly JsonElement ExtractionSchema = CreateExtractionSchema();
+    private static JsonElement CreateExtractionSchema()
+    {
+        var schema = System.Text.Json.Nodes.JsonNode.Parse(RequirementsSchema.GetRawText())!;
+        var scenario = schema["properties"]!["scenarios"]!["items"]!;
+        scenario["properties"]!.AsObject().Remove("sourceRangeIds");
+        scenario["required"] = new System.Text.Json.Nodes.JsonArray("id", "title", "requirementIds");
+        schema["properties"]!["scenarios"]!["minItems"] = 1;
+        return JsonSerializer.SerializeToElement(schema);
+    }
     public static readonly JsonElement RequirementsReviewSchema = JsonSerializer.SerializeToElement(Obj(
         ("reviewedSourceRangeIds", Strings(1000)),
         ("issues", List(Obj(("code", Choice(SourceIssueCodes)),

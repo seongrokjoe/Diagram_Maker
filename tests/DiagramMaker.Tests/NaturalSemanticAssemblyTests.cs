@@ -87,7 +87,7 @@ public sealed class NaturalSemanticAssemblyTests
             {
                 Reviews++;
                 value = new NaturalScenarioReview(ids, Reviews <= rejectedReviews ?
-                    [new("r2", "label", Reviews % 2 == 0 ? "NaturalConditionChanged" : "NaturalUnsupportedClaim", "조건을 보존하세요", ["r2"])] : []);
+                    [new("r2", "label", Reviews % 2 == 0 ? "NaturalEvidenceMismatch" : "NaturalUnsupportedClaim", "조건을 보존하세요", ["r2"], SourceQuote: "결과를 확인한다.", RelatedElementIds: [])] : []);
             }
             var wire = JsonSerializer.SerializeToNode(value, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
             ScenarioPipelineTests.ScenarioModel.Project(wire, request.StructuredSchema!.Value);

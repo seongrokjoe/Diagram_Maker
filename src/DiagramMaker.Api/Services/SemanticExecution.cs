@@ -106,11 +106,18 @@ public sealed class SemanticExecution : IDisposable
     }
     internal static string PolicyFingerprint(LlmOptions options) =>
         Hash(JsonSerializer.Serialize(options) + InternalLlmClient.SemanticPromptVersion + InternalLlmClient.CodeBlockPromptVersion + SharedPolicyVersion + DiagramRecoveryPolicy.Version);
+    internal async Task SaveNaturalComparisonAsync(NaturalIssueComparison comparison)
+    {
+        var key = "natural-comparison:" + comparison.DiagnosticId;
+        checkpoints.RemoveAll(item => item.Key == key);
+        checkpoints.Add(new(key, "natural-comparison", JsonSerializer.Serialize(comparison)));
+        await NotifyAsync();
+    }
     public IReadOnlyList<SemanticCheckpoint> Checkpoints => checkpoints.ToArray();
     public IReadOnlyList<LlmDiagnostic> Diagnostics => diagnostics.ToArray();
     // Page wrappers and their constituent completion checkpoints describe the same
     // work; do not count both as independent completed units.
-    private static bool Counted(SemanticCheckpoint value) => value.Stage is not ("code-page" or "git-page" or "execution-meaning" or "structured-response" or "natural-meaning" or "recovery-budget" or "natural-scenario") &&
+    private static bool Counted(SemanticCheckpoint value) => value.Stage is not ("code-page" or "git-page" or "execution-meaning" or "structured-response" or "natural-meaning" or "recovery-budget" or "natural-scenario" or "natural-comparison") &&
         !value.Stage.StartsWith("shared-", StringComparison.Ordinal);
     public SemanticProgress Progress => new(Stage, UnitId,
         checkpoints.Count(c => Counted(c) && c.State == "Completed"), reused.Count, diagnostics.Count,

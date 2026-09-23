@@ -9,7 +9,7 @@ public sealed partial class InternalLlmClient
     {
         if (!IsEnabled) return null;
         var ranges = NaturalRequirementEvidence.Prepare(prompt);
-        var recovery = new DiagramRecoveryBudget("natural-extraction:" + prompt + thinking);
+        var recovery = new DiagramRecoveryBudget("natural-extraction:" + NaturalDesignValidation.Protocol + prompt + thinking);
         return await NaturalOperation("requirements", prompt, () => Extract(ranges, 0));
 
         async Task<NaturalRequirements> Extract(IReadOnlyList<NaturalPromptRange> source, int depth)
@@ -49,7 +49,7 @@ public sealed partial class InternalLlmClient
                             accepted = accepted.Values.Select(r => new NaturalSourceRequirement(r.Id, r.Text, r.Kind, NaturalRequirementEvidence.RangeIds(r))),
                             rejected = rejected is null ? null : NaturalExtraction.FromRequirements(rejected), rejectedResponse, issues, sourceIssues, attempt,
                             inputHash = SemanticExecution.Hash(prompt), protocol = NaturalDesignValidation.Protocol }),
-                        NaturalDesignValidation.RequirementsSchema, GetOutputTokens(_options.DiagramOutputTokens, thinking),
+                        NaturalDesignValidation.ExtractionSchema, GetOutputTokens(_options.DiagramOutputTokens, thinking),
                         thinking, v => v.Requirements is null || v.Entities is null || string.IsNullOrWhiteSpace(v.Title)
                             ? "NaturalRequirementsInvalid" : null, ct, _options.NaturalDiagramTemperature, _options.NaturalDiagramSeed,
                         allowRepair: true, inputTokenLimit: _options.MaxInputTokens, inputCharacterLimit: _options.MaxInputCharacters,
@@ -76,7 +76,7 @@ public sealed partial class InternalLlmClient
                     }
                     metrics = metrics with { Received = rejected.Requirements.Count, Grounded = grounded, Preserved = preserved,
                         Replaced = replaced, Rejected = rejected.Requirements.Count - grounded };
-                    var merged = rejected with { Requirements = accepted.Values.ToArray(), SourceRanges = source };
+                    var merged = NaturalRequirementEvidence.DeriveScenarioRanges(rejected with { Requirements = accepted.Values.ToArray(), SourceRanges = source });
                     if (merged.Requirements.Count > 150) issues = issues.Append(new NaturalIssue("requirements", "requirements",
                         "NaturalTooManyItems", "Keep the complete unit within 150 requirements; preserve accepted IDs.")).ToArray();
                     if (issues.Count > 0 || accepted.Count == 0)
@@ -99,9 +99,9 @@ public sealed partial class InternalLlmClient
                             throw NaturalFailure("NATURAL_REQUIREMENTS_INVALID", "NaturalRepairNoProgress");
                         continue;
                     }
-                    if (NaturalDesignValidation.Plan(merged) is { } planFailure)
+                    if (NaturalDesignValidation.PlanFindings(merged) is { Count: > 0 } planFindings)
                     {
-                        await RecordNaturalIssues([new("plan", "scenarios", planFailure, "Repair only scenario assignments and questions.")], attempt, "scenario-validation");
+                        await RecordNaturalIssues(planFindings, attempt, "scenario-validation", merged);
                         merged = await RepairNaturalScenariosAsync(merged, thinking, ct, recovery: recovery);
                     }
                     var candidateKey = NaturalCandidateKey(merged);
@@ -222,7 +222,8 @@ public sealed partial class InternalLlmClient
     private static bool IsNaturalLimit(LlmClientException error) => error.Code is
         "LLM_RESPONSE_TRUNCATED" or "LLM_INPUT_LIMIT" or "LLM_CONTEXT_LIMIT" or "LLM_INPUT_CHARACTERS" or "LLM_OUTPUT_BUDGET";
 
-    private static async Task RecordNaturalIssues(IReadOnlyList<NaturalIssue> issues, int attempt, string purpose = "requirements-validation")
+    private static async Task RecordNaturalIssues(IReadOnlyList<NaturalIssue> issues, int attempt, string purpose = "requirements-validation",
+        NaturalRequirements? requirements = null, NaturalDesign? design = null)
     {
         if (SemanticExecution.Current is not { } execution) return;
         var request = execution.Diagnostics.LastOrDefault(d => d.Kind == "Request");
@@ -232,9 +233,13 @@ public sealed partial class InternalLlmClient
             var code = NaturalDesignValidation.DiagnosticCode(issue.Code);
             var id = SemanticExecution.Hash($"{execution.RequestGroupId}:{purpose}:{attempt}:{index++}:{issue.ItemId}:{code}");
             var before = execution.Diagnostics.FirstOrDefault(d => d.Id == id);
+            if (requirements is not null)
+                await execution.SaveNaturalComparisonAsync(NaturalIssueComparisonBuilder.Build(id, issue, requirements, design));
             await execution.RecordAsync(new(id, "natural-validation", request?.UnitId ?? execution.UnitId, "Failed",
                 before?.StartedAt ?? DateTimeOffset.UtcNow, ErrorCode: "NATURAL_ITEM_INVALID", ValidationCode: code, Purpose: purpose,
-                ValidationDetails: new(1, 1, Field: NaturalDesignValidation.DiagnosticField(issue.Field), ItemIndex: index - 1, IssueCodes: [code]),
+                ValidationDetails: new(0, 0, Field: NaturalDesignValidation.DiagnosticField(issue.Field), ItemIndex: issue.ItemIndex ?? index - 1, IssueCodes: [code],
+                    RuleCode: code, TargetKind: issue.TargetKind, TargetId: SemanticExecution.Hash($"{execution.RequestGroupId}:{issue.TargetKind}:{issue.ItemId}")[..16],
+                    EvidenceIds: issue.EvidenceIds?.Select(SemanticExecution.Hash).Select(hash => hash[..16]).ToArray()),
                 Attempt: attempt + 1, NextAction: "RepairInvalidItem", Kind: "Validation", RequestId: request?.Id));
         }
     }

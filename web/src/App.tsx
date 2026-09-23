@@ -346,7 +346,8 @@ function NormalApp() {
           </div></div>}
           {naturalPollError && <p role="status" className="warning">{naturalPollError}</p>}
           {naturalRun?.execution && <SemanticProgressView value={naturalRun.execution} running={naturalRunActive} waitingForAnswer={naturalRun.state === "NeedsClarification"}
-            diagnosticsUrl={`/api/v1/natural-diagram-runs/${naturalRun.id}/diagnostics?format=json`} />}
+            diagnosticsUrl={`/api/v1/natural-diagram-runs/${naturalRun.id}/diagnostics?format=json`}
+            comparisonUrl={`/api/v1/natural-diagram-runs/${naturalRun.id}/diagnostics`} />}
           {naturalRun?.state === "NeedsClarification" && <section className="natural-questions" aria-label="자연어 요청 확인">
             <h3>설계에 필요한 내용 확인</h3>
             {(naturalRun.questions ?? []).map(question => <fieldset key={question.id}><legend>{question.text}</legend>

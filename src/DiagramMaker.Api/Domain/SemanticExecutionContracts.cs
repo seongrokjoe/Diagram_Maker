@@ -20,7 +20,9 @@ public sealed record NaturalExtractionMetrics(int SourceRanges, int? Received, i
 public sealed record LlmValidationDetails(int ExpectedItems, int ReceivedItems,
     int MissingItems = 0, int DuplicateItems = 0, int UnknownItems = 0,
     string? Field = null, int? ItemIndex = null, int? ActualLength = null, int? AllowedLength = null,
-    int? NonTargetItems = null, int? UnknownAliases = null, IReadOnlyList<string>? IssueCodes = null);
+    int? NonTargetItems = null, int? UnknownAliases = null, IReadOnlyList<string>? IssueCodes = null,
+    string? RuleCode = null, string? TargetKind = null, string? TargetId = null,
+    IReadOnlyList<string>? EvidenceIds = null);
 public sealed record SemanticCheckpoint(string Key, string Stage, string ValueJson,
     string State = "Completed", string? ErrorCode = null, string? FailureKind = null, string? RejectedContent = null,
     IReadOnlyList<string>? Dependencies = null, bool WasSplit = false, LlmValidationDetails? ValidationDetails = null);

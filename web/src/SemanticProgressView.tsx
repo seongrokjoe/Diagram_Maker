@@ -13,9 +13,14 @@ export type FailureDiagnostic = {
     rejected?: number; extractionAttempts: number; reviewAttempts: number };
   validationDetails?: { expectedItems: number; receivedItems: number; missingItems: number; duplicateItems: number;
     unknownItems: number; field?: string; itemIndex?: number; actualLength?: number; allowedLength?: number;
-    nonTargetItems?: number; unknownAliases?: number; issueCodes?: string[] };
+    nonTargetItems?: number; unknownAliases?: number; issueCodes?: string[]; ruleCode?: string; targetKind?: string; targetId?: string; evidenceIds?: string[] };
 };
 
+export type NaturalIssueComparison = {
+  diagnosticId: string; code: string; field: string; targetKind: string; targetLabel: string;
+  observed: string; observedTruncated: boolean; sourceQuote: string; instruction: string;
+  sourceExcerpts: Array<{ id: string; text: string; truncated: boolean }>; relatedElements: string[];
+};
 export type SemanticProgress = {
   stage: string; completedUnits: number; reusedUnits: number; requests: number;
   elapsedSeconds: number; budgetSeconds: number; totalUnits?: number;
@@ -29,7 +34,7 @@ export type SemanticProgress = {
   stageMilliseconds?: Record<string, number>;
 };
 
-export function SemanticProgressView({ value, running, diagnosticsUrl, waitingForAnswer = false }: { value: SemanticProgress; running: boolean; diagnosticsUrl?: string; waitingForAnswer?: boolean }) {
+export function SemanticProgressView({ value, running, diagnosticsUrl, comparisonUrl, waitingForAnswer = false }: { value: SemanticProgress; running: boolean; diagnosticsUrl?: string; comparisonUrl?: string; waitingForAnswer?: boolean }) {
   const [now, setNow] = useState(Date.now);
   const [records, setRecords] = useState<FailureDiagnostic[]>([]);
   const [loadError, setLoadError] = useState(false);
@@ -74,7 +79,7 @@ export function SemanticProgressView({ value, running, diagnosticsUrl, waitingFo
         <li key={stage}>{stage} · {(milliseconds / 1000).toFixed(2)}초</li>)}</ul>}
     </details>
     {loadError && <p>전체 오류 기록을 불러오지 못했습니다. 진단 다운로드로 확인할 수 있습니다.</p>}
-    {!!failures.length && <DiagnosticGrid records={failures} running={running} />}
+    {!!failures.length && <DiagnosticGrid records={failures} running={running} comparisonUrl={comparisonUrl} />}
   </div>;
 }
 
@@ -83,10 +88,22 @@ function recoveryLabel(failure: FailureDiagnostic, running: boolean) {
     RequiresAction: "설정 확인 필요", Retrying: running ? "복구 중" : "재개 대기", Interrupted: "재개 대기" } as Record<string, string>)[failure.recoveryState ?? ""] ?? "복구 상태 미확인";
 }
 
-function DiagnosticGrid({ records, running }: { records: FailureDiagnostic[]; running: boolean }) {
+function DiagnosticGrid({ records, running, comparisonUrl }: { records: FailureDiagnostic[]; running: boolean; comparisonUrl?: string }) {
   const [selectedId, setSelectedId] = useState("");
   const [open, setOpen] = useState(true);
   const selected = records.find(d => d.id === selectedId) ?? records[0];
+  const [comparison, setComparison] = useState<NaturalIssueComparison | null>(null);
+  const [comparisonUnavailable, setComparisonUnavailable] = useState(false);
+  useEffect(() => {
+    setComparison(null); setComparisonUnavailable(false);
+    if (!comparisonUrl || !selected.id) return;
+    const controller = new AbortController();
+    void fetch(`${comparisonUrl}/${encodeURIComponent(selected.id)}/comparison`, { signal: controller.signal })
+      .then(response => response.ok ? response.json() as Promise<NaturalIssueComparison> : null)
+      .then(value => { if (!controller.signal.aborted) { setComparison(value); setComparisonUnavailable(value === null); } })
+      .catch(() => { if (!controller.signal.aborted) setComparisonUnavailable(true); });
+    return () => controller.abort();
+  }, [comparisonUrl, selected.id]);
   return <details aria-label="요청 오류 진단" className="diagnostic-panel request-diagnostics" open={open} onToggle={e => setOpen(e.currentTarget.open)}>
     <summary>요청 오류 진단 · {records.length}건 · 미해결 {records.filter(r => r.recoveryState !== "Recovered").length}건</summary>
     <div className="diagnostic-layout"><div className="diagnostic-table-scroll" tabIndex={0} aria-label="오류 목록 스크롤">
@@ -102,10 +119,20 @@ function DiagnosticGrid({ records, running }: { records: FailureDiagnostic[]; ru
         <p>복구 결과: {recoveryLabel(selected, running)} · 시도 {selected.attempt ?? 1}</p>
         {!!selected.validationDetails?.issueCodes?.length && <p>{selected.validationDetails.issueCodes.map(issueDescription).join(" · ")}</p>}
         {selected.recoveryState === "Recovered" ? <p>후속 보정이 완료되었습니다. 최초 오류 기록은 보존됩니다.</p> : selected.recoveryState === "RequiresAction" ? <p>{serverFailure(selected.serverErrorCategory)}</p> : selected.recoveryState === "Exhausted" && selected.protocolVersion?.startsWith("natural-") ? <p>자동 보정을 완료하지 못했습니다. 표시된 실패 원인과 검사 요약을 확인하세요. 이전 정상 결과는 계속 확인할 수 있습니다.</p> : <p>완료된 AI/Code 다이어그램은 계속 확인할 수 있습니다. 재개 대기는 이어서 생성으로, 복구 실패는 해당 결과 재생성으로 다시 시도합니다.</p>}
+        {comparison && <details><summary>원문과 생성 내용 비교</summary>
+          <p>대상: {comparison.targetKind} · {comparison.targetLabel} · 필드 {comparison.field}</p>
+          {comparison.sourceExcerpts.map(source => <p key={source.id}>원문 근거: {source.text}{source.truncated && " (긴 내용 일부만 표시)"}</p>)}
+          {comparison.sourceQuote && <p>검토가 인용한 조건: {comparison.sourceQuote}</p>}
+          <p>생성된 내용: {comparison.observed || "해당 요소가 없음"}{comparison.observedTruncated && " (긴 내용 일부만 표시)"}</p>
+          {comparison.relatedElements.length > 0 && <p>관련 요소: {comparison.relatedElements.join(", ")}</p>}
+          <p>수정 지시: {comparison.instruction}</p>
+        </details>}
+        {comparisonUnavailable && comparisonUrl && <p>이 오류의 비교 자료가 없습니다. 이전 버전의 실행에서는 제공되지 않을 수 있습니다.</p>}
         <details><summary>기술 상세</summary><p>{selected.errorCode} / {selected.validationCode}</p><OutputDiagnostic value={selected} />
           <p>HTTP {selected.httpStatus ?? (selected.kind ? "해당 없음" : "미기록")} · 다음 행동: {actionLabel(selected.nextAction, selected.kind)}</p>
           <p>내부 묶음 {selected.recoveryGroupId ?? "미기록"} · 요청 {selected.id}</p>
           {selected.inputCharacters != null && <p>입력 {selected.inputCharacters.toLocaleString()}자 / {selected.inputCharacterLimit?.toLocaleString() ?? "미기록"}</p>}
+          {selected.validationDetails?.ruleCode && <p>규칙 {selected.validationDetails.ruleCode} · 대상 {selected.validationDetails.targetKind ?? "미확인"} / {selected.validationDetails.targetId ?? "미확인"}</p>}
           {selected.validationDetails && <p>필요 {selected.validationDetails.expectedItems} · 응답 {selected.validationDetails.receivedItems} · 누락 {selected.validationDetails.missingItems} · 중복 {selected.validationDetails.duplicateItems}{selected.validationDetails.field && " · 필드 " + selected.validationDetails.field}</p>}
           {selected.extraction && <p>원문 범위 {selected.extraction.sourceRanges} · 응답 {selected.extraction.received ?? "미기록"} · 근거 통과 {selected.extraction.grounded ?? "미기록"} · 보존 {selected.extraction.preserved ?? "미기록"} · 교체 {selected.extraction.replaced ?? "미기록"} · 거부 {selected.extraction.rejected ?? "미기록"} · 추출 시도 {selected.extraction.extractionAttempts} · 검토 시도 {selected.extraction.reviewAttempts}</p>}
         </details>
@@ -118,7 +145,7 @@ function actionLabel(action?: string, kind?: string) { return ({ StartNewRun: "�
 
 function purpose(value: FailureDiagnostic) { return value.purpose === "requirements-validation" ? "요구사항 근거 검증" :
   value.purpose === "scenario-design" ? "시나리오 설계" : value.purpose === "scenario-repair" ? "시나리오 보정" :
-  value.purpose === "scenario-review" ? "시나리오 의미 검토" : value.purpose === "scenario-design-validation" ? "시나리오 구조 검증" :
+  value.purpose === "scenario-review" ? "시나리오 의미 검토" : value.purpose === "scenario-review-confirm" ? "조건 변경 재확인" : value.purpose === "scenario-design-validation" ? "시나리오 구조 검증" :
   value.purpose === "scenario-mapping" ? "시나리오 연결 보정" :
   value.purpose?.endsWith("format-repair") ? "응답 형식 보정" :
   value.purpose === "meaning" ? "요구사항별 의미 설계" : value.purpose === "meaning-repair" ? "실패한 요구사항 설계 보정" :
@@ -160,6 +187,13 @@ function failureDescription(validation?: string, error?: string) {
   const descriptions: Record<string, string> = { SharedSummaryInvalid: "전체 요약이 비었거나 너무 깁니다.", SharedRecommendedTypeInvalid: "추천한 다이어그램 형식이 허용 목록과 다릅니다.",
     FormatRepairBudgetExhausted: "이 작업의 응답 형식 보정 예산을 소진했습니다.", ContentRepairBudgetExhausted: "이 작업의 내용 보정 예산을 소진했습니다.",
     NaturalReviewIssueUnclassified: "검토 오류를 분류하지 못했습니다. 기술 상세를 확인하세요.",
+    NaturalReviewEvidenceInvalid: "조건 변경 지적의 원문 인용이 확인되지 않습니다.", NaturalReviewFieldInvalid: "검토가 다이어그램에 없는 필드를 지적했습니다.",
+    NaturalScenarioCountInvalid: "시나리오 수가 허용 범위를 벗어났습니다.", NaturalScenarioFieldsInvalid: "시나리오 ID나 제목이 비었습니다.",
+    NaturalScenarioDuplicateId: "시나리오 ID가 중복되었습니다.", NaturalScenarioAssignmentsMissing: "시나리오에 연결된 요구사항이 없습니다.",
+    NaturalScenarioUnknownRequirement: "시나리오가 존재하지 않는 요구사항을 참조합니다.",
+    NaturalScenarioRequirementMissing: "시나리오에서 빠진 요구사항이 있습니다.",
+    NaturalScenarioSourceInvalid: "시나리오의 원문 근거가 잘못되었습니다.",
+    NaturalQuestionDuplicateId: "확인 질문 ID가 중복되었습니다.", NaturalQuestionSourceInvalid: "확인 질문의 원문 근거가 잘못되었습니다.",
     NaturalInitialIncomingInvalid: "초기 의사 상태로 들어오는 전이는 허용되지 않습니다.",
     NaturalInitialOutgoingInvalid: "초기 의사 상태는 하나의 시작 전이가 필요합니다.", NaturalFinalOutgoingInvalid: "종료 의사 상태에서 나가는 전이는 허용되지 않습니다.",
     NaturalInitialMissing: "원문에 명시된 초기 상태가 누락됐습니다.", NaturalTooFewItems: "응답에 필요한 항목이 빠졌습니다.",

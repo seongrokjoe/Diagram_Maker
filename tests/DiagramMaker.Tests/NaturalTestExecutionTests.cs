@@ -119,7 +119,7 @@ public sealed class NaturalTestExecutionTests
                 CrossReviews++;
                 var page = root.GetProperty("views")[0].GetProperty("pages")[0];
                 result = new NaturalScenarioReview(["r1"], RejectCrossViewOnce && CrossReviews == 1 ?
-                    [new(page.GetProperty("id").GetString()!, "label", "NaturalConditionChanged", "조건을 수정하세요", ["r1"])] : []);
+                    [new(page.GetProperty("id").GetString()!, "label", "NaturalConditionChanged", "조건을 수정하세요", ["r1"], SourceQuote: "요청한다.", RelatedElementIds: [])] : []);
             }
             else if (request.Purpose == "scenario-review") result = new NaturalScenarioReview(["r1"], []);
             else

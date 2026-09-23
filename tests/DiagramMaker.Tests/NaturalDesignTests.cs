@@ -66,15 +66,29 @@ public sealed class NaturalDesignTests
     [InlineData(true)]
     public async Task UnchangedRejectedMeaningStopsWithoutRepeatingItsReview(bool alwaysReject)
     {
-        var model = new Model { Reject = alwaysReject ? 100 : 1, VaryRepair = !alwaysReject };
+        var model = new Model { Reject = alwaysReject ? 100 : 2, VaryRepair = !alwaysReject };
         var task = Client(model).GenerateDesignedNaturalAsync(Prompt, "flowchart", false,
             new DiagramPresetCatalog().Resolve("flowchart", "balanced"), null, null, CancellationToken.None);
         if (alwaysReject) Assert.Equal("NATURAL_DESIGN_REJECTED", (await Assert.ThrowsAsync<LlmClientException>(() => task)).Code);
         else Assert.True((await task)!.Quality!.RepairUsed);
-        Assert.Equal(alwaysReject ? new[] { "requirements", "requirements-review", "scenario-design", "scenario-review", "scenario-repair" } :
-            new[] { "requirements", "requirements-review", "scenario-design", "scenario-review", "scenario-repair", "scenario-review" }, model.Purposes);
+        Assert.Equal(alwaysReject ? new[] { "requirements", "requirements-review", "scenario-design", "scenario-review", "scenario-review-confirm", "scenario-repair" } :
+            new[] { "requirements", "requirements-review", "scenario-design", "scenario-review", "scenario-review-confirm", "scenario-repair", "scenario-review" }, model.Purposes);
     }
 
+    [Fact]
+    public async Task RetractedConditionFindingAcceptsTheSameCandidateAfterOneConfirmation()
+    {
+        var model = new Model { Reject = 1 };
+        using var execution = new SemanticExecution(new LlmOptions { Enabled = true }, null, CancellationToken.None);
+        var result = await Client(model).GenerateDesignedNaturalAsync(Prompt, "flowchart", false,
+            new DiagramPresetCatalog().Resolve("flowchart", "balanced"), null, Requirements(), CancellationToken.None);
+        Assert.Equal("Reviewed", result!.Quality!.Status);
+        Assert.Equal(new[] { "scenario-design", "scenario-review", "scenario-review-confirm" }, model.Purposes);
+        Assert.Contains(execution.Diagnostics, item => item.ValidationCode == "NaturalConditionChanged" &&
+            item.RecoveryState == "Recovered");
+        Assert.Single(execution.Checkpoints, item => item.Stage == "natural-comparison");
+        Assert.Equal(1, execution.Progress.RepairBudgets!.Sum(item => item.ContentUsed));
+    }
     [Fact]
     public void CoverageAndInterlockMustBeStructureAndAssumptionsMustBeExplicit()
     {
@@ -95,7 +109,7 @@ public sealed class NaturalDesignTests
     [Fact]
     public async Task TargetedRepairPreservesReviewedNodesOutsideTheFailedRequirement()
     {
-        var model = new Model { Reject = 1, VaryRepair = true };
+        var model = new Model { Reject = 2, VaryRepair = true };
         var result = await Client(model).GenerateDesignedNaturalAsync(Prompt, "flowchart", false,
             new DiagramPresetCatalog().Resolve("flowchart", "balanced"), null, Requirements(), CancellationToken.None);
         Assert.NotNull(result);
@@ -156,8 +170,8 @@ public sealed class NaturalDesignTests
                 "requirements" => NaturalExtraction.FromRequirements(Requirements()),
                 "requirements-review" => new NaturalSourceReview(
                     json.RootElement.GetProperty("sourceRanges").EnumerateArray().Select(r => r.GetProperty("id").GetString()!).ToArray(), []),
-                "scenario-review" => Reject-- > 0 ? new NaturalScenarioReview(["r1"],
-                    [new("r1", "label", "NaturalConditionChanged", "차단 분기를 수정하세요", ["r1"])]) : new NaturalScenarioReview(["r1"], []),
+                "scenario-review" or "scenario-review-confirm" => Reject-- > 0 ? new NaturalScenarioReview(["r1"],
+                    [new("r1", "label", "NaturalConditionChanged", "차단 분기를 수정하세요", ["r1"], SourceQuote: Prompt, RelatedElementIds: [])]) : new NaturalScenarioReview(["r1"], []),
                 _ => Design(json.RootElement.GetProperty("type").GetString()!)
             };
             if (VaryRepair && request.Purpose == "scenario-repair" && result is NaturalDesign design)

@@ -160,7 +160,7 @@ public sealed class NaturalRecoveryTests
         using var execution = new SemanticExecution(model.Options, null, Ct);
         var result = await model.Client.ExtractNaturalRequirementsAsync(Prompt, false, Ct);
         Assert.Null(NaturalDesignValidation.Plan(result!));
-        Assert.Single(execution.Diagnostics, d => d.Purpose == "scenario-validation");
+        Assert.Contains(execution.Diagnostics, d => d.Purpose == "scenario-validation" && d.ValidationCode == "NaturalScenarioUnknownRequirement");
         Assert.Equal(new[] { "requirements", "scenario-mapping", "requirements-review" }, model.Kinds);
     }
 
@@ -353,7 +353,7 @@ public sealed class NaturalRecoveryTests
             object result = review ? new { reviewedSourceRangeIds = ids, issues = Array.Empty<NaturalSourceIssue>() } :
                 new { title = "요청 흐름", entities = Array.Empty<string>(), requirements = ids.Select((id, i) => new {
                     id = "r" + (i + 1), text = "처리 " + (i + 1), kind = "behavior", sourceRangeIds = new[] { id } }),
-                    scenarios = new[] { new { id = "s1", title = "흐름", requirementIds = ids.Select((_, i) => "r" + (i + 1)), sourceRangeIds = ids } }, questions = Array.Empty<NaturalQuestion>() };
+                    scenarios = new[] { new { id = "s1", title = "흐름", requirementIds = ids.Select((_, i) => "r" + (i + 1)) } }, questions = Array.Empty<NaturalQuestion>() };
             var value = JsonSerializer.SerializeToNode(result)!;
             if (mapping) { value.AsObject().Remove("title"); value.AsObject().Remove("entities"); value.AsObject().Remove("requirements"); }
             mutate(kind, Kinds.Count(k => k == kind), context, value);

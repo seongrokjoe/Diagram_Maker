@@ -25,6 +25,15 @@ internal static class NaturalRequirementEvidence
         return result;
     }
 
+    public static NaturalRequirements DeriveScenarioRanges(NaturalRequirements value)
+    {
+        if (value.Scenarios is null) return value;
+        var requirements = value.Requirements.ToDictionary(item => item.Id, StringComparer.Ordinal);
+        return value with { Scenarios = value.Scenarios.Select(scenario => scenario with {
+            SourceRangeIds = (scenario.RequirementIds ?? []).Where(requirements.ContainsKey)
+                .SelectMany(id => RangeIds(requirements[id])).Distinct(StringComparer.Ordinal).ToArray()
+        }).ToArray() };
+    }
     public static IReadOnlyList<string> RangeIds(NaturalRequirement requirement) =>
         requirement.SourceRangeIds is { Count: > 0 } ids ? ids : requirement.SourceRangeId is { Length: > 0 } id ? [id] : [];
 
@@ -71,9 +80,9 @@ internal static class NaturalRequirementEvidence
             return resolved;
         }).ToArray();
         var scenarios = requirements.Scenarios is { Count: > 0 } planned ? planned : LegacyScenarios(prompt, enriched, ranges);
-        return requirements with { Requirements = enriched.Select(requirement => requirement with {
+        return DeriveScenarioRanges(requirements with { Requirements = enriched.Select(requirement => requirement with {
                 ScenarioId = scenarios.FirstOrDefault(scenario => scenario.RequirementIds.Contains(requirement.Id))?.Id }).ToArray(),
-            SourceRanges = ranges, Scenarios = scenarios };
+            SourceRanges = ranges, Scenarios = scenarios });
     }
 
     public static IReadOnlyList<NaturalScenario> EffectiveScenarios(NaturalRequirements requirements) =>

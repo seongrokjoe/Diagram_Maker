@@ -29,9 +29,11 @@ internal static class LlmDiagnosticReport
             (diagnostics ?? []).LastOrDefault(d => d.ErrorCode is not null && d.RecoveryState != "Recovered");
         if (terminal is not null)
             text.AppendLine($"Final failure: {Code(terminal.Purpose)} / {Code(terminal.ErrorCode)} / {Code(terminal.ValidationCode)}; field: {Code(terminal.ValidationDetails?.Field?.Replace('.', '-'))}; attempt: {terminal.Attempt}; action: {Code(terminal.NextAction)}; recovery: {Code(terminal.RecoveryState)}");
-        foreach (var d in (diagnostics ?? []).TakeLast(500))
+        var causes = (diagnostics ?? []).Where(item => item.Kind == "Validation" && item.ValidationCode is not null).ToArray();
+        if (causes.Length > 0)
+            text.AppendLine($"Root validation: {Code(causes[0].ValidationCode)}; last validation: {Code(causes[^1].ValidationCode)}; stop: {Code(terminal?.ValidationCode)}");        foreach (var d in (diagnostics ?? []).TakeLast(500))
         {
-            text.AppendLine($"{d.StartedAt:O} {Code(d.Purpose)} / {Code(d.Stage)}: {Code(d.State)}; {Code(d.ErrorCode)}; {Code(d.ValidationCode)}");
+            text.AppendLine($"{d.StartedAt:O} Purpose: {Code(d.Purpose)}; stage: {Code(d.Stage)}; state: {Code(d.State)}; error: {Code(d.ErrorCode)}; validation: {Code(d.ValidationCode)}");
             var missing = d.Kind is null ? "not-recorded" : "not-applicable";
             text.AppendLine($"Kind: {Code(d.Kind, "not-recorded")}; request: {Code(d.RequestId ?? (d.Kind == "Request" ? d.Id : null), missing)}");
             text.AppendLine($"HTTP: {d.HttpStatus?.ToString() ?? missing}; category: {Code(d.ServerErrorCategory, missing)}; action: {Code(d.NextAction, missing)}; recovery: {Code(d.RecoveryState, missing)}");
@@ -40,7 +42,8 @@ internal static class LlmDiagnosticReport
             text.AppendLine($"Batch: {Code(d.RecoveryGroupId)}; parent: {Code(d.ParentGroupId)}; attempt: {d.Attempt}; protocol: {Code(d.ProtocolVersion)}; elapsed: {d.ElapsedMilliseconds}ms");
             if (d.ValidationDetails is { } v)
                 text.AppendLine($"Items expected/received: {v.ExpectedItems}/{v.ReceivedItems}; missing: {v.MissingItems}; duplicate: {v.DuplicateItems}; unknown: {v.UnknownItems}; field: {Code(v.Field?.Replace('.', '-'))}; index: {v.ItemIndex}; length: {v.ActualLength}/{v.AllowedLength}; issues: {string.Join(',', (v.IssueCodes ?? []).Select(code => Code(code)))}");
-            if (d.Extraction is { } m)
+            if (d.ValidationDetails is { } detail && detail.RuleCode is not null)
+                text.AppendLine($"Rule: {Code(detail.RuleCode)}; targetKind: {Code(detail.TargetKind)}; target: {Code(detail.TargetId)}; evidence: {string.Join(',', (detail.EvidenceIds ?? []).Select(id => Code(id)))}");            if (d.Extraction is { } m)
                 text.AppendLine($"Extraction: source={m.SourceRanges}; received={Count(m.Received)}; grounded={Count(m.Grounded)}; preserved={Count(m.Preserved)}; replaced={Count(m.Replaced)}; rejected={Count(m.Rejected)}; extraction attempts={m.ExtractionAttempts}; review attempts={m.ReviewAttempts}");
         }
         text.AppendLine("Source, prompts, model responses, endpoint and authentication values are excluded.");

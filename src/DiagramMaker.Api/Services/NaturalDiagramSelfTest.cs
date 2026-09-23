@@ -20,10 +20,19 @@ public sealed class NaturalDiagramSelfTest(IInternalLlmClient llm, MermaidCompil
         "운전 중 오류가 발생하면 장비를 정지하고 오류 상태로 전환한다. 작업자가 오류를 확인하고 초기화하면 대기로 복귀한다.\n" +
         "문이 열려 있으면 모든 시작 경로에서 운전을 차단한다. 제어기는 현재 상태와 문 열림 여부를 보관한다.";
 
+    internal const string BufferPrompt = "Load Buffer, Dipping Buffer, WTR이 있다.\n" +
+        "Load Buffer에 Wafer가 모두 적재되면,\n" +
+        "스케쥴러는 Load Buffer에게 Transfer 명령을 전달한다.\n" +
+        "Load Buffer는 Trasnfer 명령을 받으면 WTR Unit과 투입 Handshake를 시작하고,\n" +
+        "완료되면 WTR은 LoadBuffer의 Wafer를 가져간다.\n" +
+        "이후 DippingBuffer에 작업중인 Wafer가 없으면,\n" +
+        "WTR은 Dipping Buffer에게 배출 Handshake를 요청하고,\n" +
+        "배출 Handshake가 완료되면 Dipping Buffer에 Wafer를 가져다 놓는다.";
     public static bool ValidSelection(string? caseId, string? diagramType) =>
-        (caseId is null or "short-approval" or "table-interlock") &&
+        (caseId is null or "short-approval" or "table-interlock" or "buffer-handshake") &&
         (diagramType is null or "flowchart" or "sequence" or "state" or "class") &&
-        (caseId != "short-approval" || diagramType is null or "flowchart");
+        (caseId != "short-approval" || diagramType is null or "flowchart") &&
+        (caseId != "buffer-handshake" || diagramType is null or "sequence");
 
     public async Task<NaturalDiagramTestResult> RunAsync(CancellationToken ct, string? caseId = null,
         string? diagramType = null, Action<NaturalDiagramTestEvent>? reportProgress = null)
@@ -50,7 +59,8 @@ public sealed class NaturalDiagramSelfTest(IInternalLlmClient llm, MermaidCompil
         var service = new NaturalDiagramService(llm, compiler, store, cache, presets, Options.Create(testOptions), environment);
         var cases = completedCases;
         var inputs = new[] { (Id: "short-approval", Prompt: ShortPrompt, Types: new[] { "flowchart" }),
-            (Id: "table-interlock", Prompt: TablePrompt, Types: new[] { "flowchart", "sequence", "state", "class" }) };
+            (Id: "table-interlock", Prompt: TablePrompt, Types: new[] { "flowchart", "sequence", "state", "class" }),
+            (Id: "buffer-handshake", Prompt: BufferPrompt, Types: new[] { "sequence" }) };
         foreach (var input in inputs)
         {
             if (caseId is not null && caseId != input.Id || diagramType is not null && !input.Types.Contains(diagramType)) continue;
@@ -109,6 +119,7 @@ public sealed class NaturalDiagramSelfTest(IInternalLlmClient llm, MermaidCompil
             typeof(NaturalDiagramSelfTest).Assembly)?.InformationalVersion;
         var summary = $"Build: {version}; generator: {NaturalDiagramService.GeneratorVersion}; protocol: {NaturalDesignValidation.Protocol}\n" +
             string.Join("\n", cases.Select(item => $"{item.Id}: {item.State}; stage={item.FailureStage ?? "none"}; reason={item.ValidationCode ?? item.ErrorCode ?? "none"}; " +
+                $"types={string.Join(',', item.Types ?? [])}; confirm={((item.PhaseRequests ?? new Dictionary<string, int>()).GetValueOrDefault("scenario-review-confirm"))}; " +
                 $"extract={item.Extraction?.ExtractionAttempts ?? 0}; review={item.Extraction?.ReviewAttempts ?? 0}; " +
                 $"grounded={item.Extraction?.Grounded?.ToString() ?? "not-recorded"}; replaced={item.Extraction?.Replaced?.ToString() ?? "not-recorded"}; " +
                 $"root={item.RootFailureCode ?? "none"}; last={item.LastFailureCode ?? "none"}; stop={item.ErrorCode ?? "none"}; " +

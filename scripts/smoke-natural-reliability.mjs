@@ -52,7 +52,7 @@ const llm = createServer(async (request, response) => {
       const items = ranges.map((range, index) => ({ id: `r${index + 1}`, text: `처리 ${index + 1}`, kind: 'behavior',
         sourceRangeIds: [range.id] }));
       value = { title: '합성 요청 설계', entities: ['장비'], requirements: items,
-        scenarios: [{ id: 'scenario-1', title: '요청 처리', requirementIds: items.map(item => item.id), sourceRangeIds: ranges.map(range => range.id) }],
+        scenarios: [{ id: 'scenario-1', title: '요청 처리', requirementIds: items.map(item => item.id) }],
         questions: mode === 'question' && !JSON.stringify(ranges).includes('사용자 확인 답변') ?
           [{ id: 'q1', text: '승인을 어떻게 처리합니까?', reason: '승인 주체에 따라 호출 흐름이 달라집니다.', sourceRangeIds: [ranges[0].id], choices: ['자동 승인', '담당자 승인'] }] : [] };
       if (mode === 'unknown-id') value.requirements[0].sourceRangeIds = ['unknown'];
@@ -65,10 +65,11 @@ const llm = createServer(async (request, response) => {
       const rejected = mode === 'contradiction' || mode === 'cross-view' && kind === 'final-review';
       value = { reviewedRequirementIds: context.requirements.requirements.map(r => r.id),
         issues: rejected ? [{ itemId: context.views?.[0]?.pages?.[0]?.id ?? context.requirements.requirements[0].id,
-          field: 'guard', code: 'NaturalConditionChanged', instruction: '조건 반전을 수정하세요.', evidenceIds: [context.requirements.requirements[0].id] }] : [] };
+          field: 'guard', code: 'NaturalConditionChanged', instruction: '조건 반전을 수정하세요.', evidenceIds: [context.requirements.requirements[0].id],
+          sourceQuote: context.requirements.sourceRanges[0].text, relatedElementIds: [] }] : [] };
     }
     else if (kind === 'scenario-mapping') value = { scenarios: [{ id: 'scenario-1', title: '요청 처리',
-      requirementIds: context.requirements.requirements.map(r => r.id), sourceRangeIds: context.requirements.sourceRanges.map(r => r.id) }], questions: [] };
+      requirementIds: context.requirements.requirements.map(r => r.id) }], questions: [] };
     else {
       value = naturalDesignFixture(context, properties, 'valid');
     }
@@ -141,7 +142,7 @@ try {
   assert.equal(run.checkpoints, null);
   assert.equal(run.requirements.sourceRanges.length, 2);
   const original = await request(`/natural-diagrams/${run.resultDiagramId}`);
-  assert.equal(original.generatorVersion, 'natural-v11');
+  assert.equal(original.generatorVersion, 'natural-v12');
   await request(`/natural-diagram-runs/${run.id}`, 'GET', undefined, 403, 'other-owner');
   await request(`/natural-diagram-runs/${run.id}/diagnostics`, 'GET', undefined, 403, 'other-owner');
   await request(`/natural-diagram-runs/${run.id}/answers`, 'POST', {}, 403, 'other-owner');
@@ -213,11 +214,11 @@ try {
   await request('/llm/tests/natural-diagram-contract', 'POST', undefined, 403, 'other-owner');
   const selfTest = await request('/llm/tests/natural-diagram-contract', 'POST');
   assert.equal(selfTest.success, true, selfTest.report);
-  assert.equal(selfTest.cases.length, 2);
+  assert.equal(selfTest.cases.length, 3);
   assert.ok(selfTest.cases.every(item => item.reviewedPages > 0));
   assert.ok(!selfTest.report.includes(llmOrigin));
-  assert.equal(selfTest.summary.split('\n').length, 3);
-  assert.match(selfTest.summary, /natural-v11; protocol: natural-design-v7/);
+  assert.equal(selfTest.summary.split('\n').length, 4);
+  assert.match(selfTest.summary, /natural-v12; protocol: natural-design-v8/);
   assert.ok(!selfTest.summary.includes(llmOrigin));
   assert.ok(selfTest.cases.every(item => item.extraction.extractionAttempts >= 1));
   if (packageRoot) {
@@ -268,7 +269,16 @@ try {
   }, 202)).id);
   assert.equal(failed.state, 'Partial');
   assert.equal(failed.views[0].pages[0].diagram.id, original.views[0].pages[0].diagram.id);
-  checks.push({ name: 'rejected-design-preserves-last-success' });
+  const rejectionDiagnostics = (await request(`/natural-diagram-runs/${failed.id}/diagnostics?format=json`)).diagnostics;
+  const condition = rejectionDiagnostics.find(item => item.validationCode === 'NaturalConditionChanged');
+  assert.ok(condition, 'condition rejection has diagnostic metadata');
+  const comparison = await request(`/natural-diagram-runs/${failed.id}/diagnostics/${condition.id}/comparison`);
+  assert.equal(comparison.code, 'NaturalConditionChanged');
+  assert.ok(comparison.sourceExcerpts.length > 0);
+  assert.ok(comparison.observed.length > 0);
+  await request(`/natural-diagram-runs/${failed.id}/diagnostics/${condition.id}/comparison`, 'GET', undefined, 403, 'other-owner');
+  const metadataOnly = await request(`/natural-diagram-runs/${failed.id}/diagnostics`);
+  assert.ok(!metadataOnly.includes(comparison.sourceExcerpts[0].text));  checks.push({ name: 'rejected-design-preserves-last-success' });
 
   mode = 'valid';
   const allFormats = await poll((await request('/natural-diagram-runs', 'POST', { request: {

@@ -13,7 +13,8 @@ public sealed record NaturalQuestion(string Id, string Text, string Reason, IRea
 public sealed record NaturalAnswer(string QuestionId, string Text);
 public sealed record NaturalAnswersRequest(int ExpectedRevision, int QuestionVersion, IReadOnlyList<NaturalAnswer> Answers);
 public sealed record NaturalIssue(string ItemId, string Field, string Code, string Instruction,
-    IReadOnlyList<string>? EvidenceIds = null);
+    IReadOnlyList<string>? EvidenceIds = null, string? TargetKind = null, int? ItemIndex = null,
+    string? SourceQuote = null, IReadOnlyList<string>? RelatedElementIds = null);
 public sealed record NaturalRequirementsReview(bool Accepted, IReadOnlyList<string> ReviewedSourceRangeIds,
     IReadOnlyList<NaturalIssue> Issues);
 public sealed record NaturalParameter(string Name, string Type);
@@ -32,3 +33,9 @@ public sealed record NaturalDesignQuality(string Protocol, string Status, IReadO
     IReadOnlyList<string> AssumptionElementIds, bool RepairUsed,
     IReadOnlyDictionary<string, IReadOnlyList<string>>? ElementRequirements = null);
 public sealed record NaturalDesignedDiagram(DiagramIr Diagram, NaturalDesignQuality? Quality = null);
+
+public sealed record NaturalComparisonExcerpt(string Id, string Text, bool Truncated);
+public sealed record NaturalIssueComparison(string DiagnosticId, string Code, string Field, string TargetKind,
+    string TargetLabel, string Observed, bool ObservedTruncated, string SourceQuote,
+    string Instruction, IReadOnlyList<NaturalComparisonExcerpt> SourceExcerpts,
+    IReadOnlyList<string> RelatedElements);

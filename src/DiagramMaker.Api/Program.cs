@@ -820,6 +820,20 @@ api.MapPost("/natural-diagram-runs/{id:guid}/answers", async (
     return Results.Accepted($"/api/v1/natural-diagram-runs/{id}", queued with { Checkpoints = null });
 });
 
+api.MapGet("/natural-diagram-runs/{id:guid}/diagnostics/{diagnosticId}/comparison", async (
+    Guid id, string diagnosticId, HttpContext context, IAppStore store, CancellationToken ct) =>
+{
+    var run = await store.GetNaturalDiagramRunAsync(id, ct);
+    if (run is null) return Results.NotFound();
+    if (!CanAccessNaturalRun(run, context.GetInternalIdentity().UserId)) return Results.StatusCode(StatusCodes.Status403Forbidden);
+    if (!(run.Diagnostics ?? []).Any(item => item.Id == diagnosticId)) return Results.NotFound();
+    var checkpoint = run.Checkpoints?.FirstOrDefault(item => item.Stage == "natural-comparison" &&
+        item.Key == "natural-comparison:" + diagnosticId);
+    if (checkpoint is null) return Results.NotFound();
+    context.Response.Headers.CacheControl = "no-store";
+    var comparison = System.Text.Json.JsonSerializer.Deserialize<NaturalIssueComparison>(checkpoint.ValueJson);
+    return comparison is null ? Results.NotFound() : Results.Ok(comparison);
+});
 api.MapGet("/natural-diagram-runs/{id:guid}/diagnostics", async (
     Guid id, HttpContext context, IAppStore store, CancellationToken ct) =>
 {

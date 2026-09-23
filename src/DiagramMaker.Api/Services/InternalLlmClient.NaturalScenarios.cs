@@ -4,7 +4,7 @@ using DiagramMaker.Domain;
 
 namespace DiagramMaker.Services;
 
-internal sealed record NaturalScenarioAssignment(IReadOnlyList<NaturalScenario> Scenarios, IReadOnlyList<NaturalQuestion> Questions);
+internal sealed record NaturalScenarioAssignment(IReadOnlyList<NaturalSourceScenario> Scenarios, IReadOnlyList<NaturalQuestion> Questions);
 
 public sealed partial class InternalLlmClient
 {
@@ -16,14 +16,15 @@ public sealed partial class InternalLlmClient
         recovery ??= new DiagramRecoveryBudget("scenario-mapping:" + key);
         return (await SemanticExecution.RunAsync("natural-scenario-mapping", key, async () =>
         {
-            var schema = JsonNode.Parse(NaturalDesignValidation.RequirementsSchema.GetRawText())!;
+            var schema = JsonNode.Parse(NaturalDesignValidation.ExtractionSchema.GetRawText())!;
             var properties = schema["properties"]!.AsObject();
             foreach (var name in properties.Select(p => p.Key).Where(n => n is not ("scenarios" or "questions")).ToArray()) properties.Remove(name);
             schema["required"] = new JsonArray("scenarios", "questions");
             properties["scenarios"]!["minItems"] = 1;
             properties["scenarios"]!["items"]!["properties"]!["requirementIds"]!["items"]!["enum"] =
                 JsonSerializer.SerializeToNode(requirements.Requirements.Select(r => r.Id));
-            var rejected = new NaturalScenarioAssignment(requirements.Scenarios ?? [], requirements.Questions ?? []);
+            var rejected = new NaturalScenarioAssignment((requirements.Scenarios ?? []).Select(item => new NaturalSourceScenario(item.Id, item.Title, item.RequirementIds)).ToArray(), requirements.Questions ?? []);
+            var lastFindingCode = "NaturalScenarioInvalid";
             for (var attempt = 0; attempt < DiagramRecoveryPolicy.MaximumAttempts; attempt++)
             {
                 ct.ThrowIfCancellationRequested();
@@ -41,14 +42,18 @@ public sealed partial class InternalLlmClient
                     _ => null, ct, inputTokenLimit: _options.MaxInputTokens, inputCharacterLimit: _options.MaxInputCharacters,
                     requestPurpose: "scenario-mapping", validateSchema: true, allowSchemaRelaxation: true, recovery: recovery);
                 rejected = result.Value;
-                var candidate = requirements with { Scenarios = rejected.Scenarios, Questions = rejected.Questions };
-                var error = NaturalDesignValidation.Plan(candidate);
-                if (error is null) return candidate;
-                await RecordNaturalIssues([new("plan", "scenarios", error, "Correct missing, duplicated or unknown assignments.")], attempt, "scenario-validation");
-                if (!await recovery.ObserveAsync("mapping:" + attempt, NaturalJson(rejected), [error], attempt > 0))
+                var candidate = NaturalRequirementEvidence.DeriveScenarioRanges(requirements with { Scenarios = rejected.Scenarios.Select(item => new NaturalScenario(item.Id, item.Title, item.RequirementIds, [])).ToArray(), Questions = rejected.Questions });
+                var findings = NaturalDesignValidation.PlanFindings(candidate);
+                if (findings.Count == 0) return candidate;
+                lastFindingCode = findings[0].Code;
+                await RecordNaturalIssues(findings, attempt, "scenario-validation", candidate);
+                if (!await recovery.ObserveAsync(SemanticExecution.Hash(key) + ":mapping:" + attempt, NaturalJson(rejected),
+                    findings.Select(issue => issue.TargetKind + ":" + issue.ItemId + ":" + issue.Field + ":" + issue.Code + ":" +
+                        SemanticExecution.Hash(NaturalJson(rejected.Scenarios.FirstOrDefault(item => item.Id == issue.ItemId) ??
+                            (object?)rejected.Questions.FirstOrDefault(item => item.Id == issue.ItemId) ?? issue.ItemId))), attempt > 0))
                     throw NaturalFailure("NATURAL_PLAN_INVALID", "NaturalRepairNoProgress");
             }
-            throw NaturalFailure("NATURAL_PLAN_INVALID", "NaturalScenarioInvalid");
+            throw NaturalFailure("NATURAL_PLAN_INVALID", lastFindingCode);
         }, _ => true))!;
     }
 }

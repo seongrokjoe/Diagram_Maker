@@ -69,7 +69,7 @@ public sealed class ScenarioPipelineTests
     public void GroundedReviewHasOneDecisionSourceAndRejectsUnknownEvidence()
     {
         var requirements = NaturalDesignTests.Requirements();
-        var review = new NaturalScenarioReview(["r1"], [new("r1", "guard", "NaturalConditionChanged", "Preserve the condition.", ["r1"])]);
+        var review = new NaturalScenarioReview(["r1"], [new("r1", "guard", "NaturalConditionChanged", "Preserve the condition.", ["r1"], SourceQuote: NaturalDesignTests.Prompt, RelatedElementIds: [])]);
         Assert.Null(NaturalScenarioReviewValidation.Check(review, requirements, new HashSet<string>()));
         Assert.False(review.Accepted);
         Assert.DoesNotContain("accepted", JsonSerializer.Serialize(review, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
