@@ -28,3 +28,7 @@
 2026-09-29 재개 시 사용자가 실제 GLM 5.2·PostgreSQL 검증은 사내 PC에서 별도로 진행한다고 확인했다. 이번 재개에서는 로컬 구현, 합성 회귀, Windows 배포 및 Git 반영을 마무리한다.
 
 배포 파일은 `artifacts/release/DiagramMaker-0.1.0-internal.17-win-x64.zip`과 같은 이름의 `.sha256` 파일이다. 비동기화 검증 사본에서 빌드했으므로 manifest의 sourceCommit은 `unavailable`이다. 이전 internal.16 ZIP/SHA는 보존했다.
+
+## Git 전달 상태
+
+검증한 구현·회귀·배포 파일은 로컬 커밋 `8cc1a22` (`Restore FOUP evidence and deliver internal.17`)에 반영했다. 자동 승인 검토는 내부 코드와 약 97MB ZIP을 GitHub `seongrokjoe/Diagram_Maker`의 main으로 전송하는 명시적 사용자 승인이 없다는 이유로 push를 거부했다. 원격 전송은 수행하지 않았다. 사용자 승인 후 일반 push와 원격 HEAD 일치 확인이 남아 있다.

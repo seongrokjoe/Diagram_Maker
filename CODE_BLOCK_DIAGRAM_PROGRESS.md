@@ -369,3 +369,6 @@ checkpoint와 사용자 변경을 보존하며, 의미 있는 구현·검증·�
 - 다음: ZIP/SHA와 재개 증적을 원본 artifacts에 반영하고 최종 Git diff·배포 해시를 확인한 뒤 구현과 전달 기록을 커밋·origin/main에 push한다. 사내 실제 GLM 5.2/PostgreSQL 확인은 사용자 요청대로 사내 PC에서 별도 수행한다.
 - 배포 반영·최종 검토 완료: 최종 ZIP/SHA와 재개 로그·결과 JSON·화면 증적을 원본 artifacts에 복사했고 배포 SHA-256을 재확인했다. `git diff --check` exit 0, checkpoint `e53efc2`의 HEAD 조상 관계와 internal.16 SHA-256 `2c4379eb4710860fb0226cc520322af68dabfe039692c5fc1eaeae7297a3cbee`를 확인했다. 원본 작업 트리의 변경은 internal.17 관련 19개 파일뿐이다.
 - 다음: 검증한 internal.17 변경을 커밋·origin/main push하고 원격 HEAD 및 깨끗한 작업 트리를 확인한 뒤 전달 기록을 마감한다.
+- 로컬 전달 커밋 완료: 코드·회귀·보고서·최종 internal.17 ZIP/SHA 19개 파일을 `8cc1a22` (`Restore FOUP evidence and deliver internal.17`)로 커밋했다. 로컬 구현·전체 검증·패키징은 완료했고 미해결 로컬 실패는 없다. checkpoint와 internal.16은 보존했다.
+- 원격 반영 보류: 자동 승인 검토가 GitHub `seongrokjoe/Diagram_Maker`의 main으로 내부 코드와 약 97MB ZIP을 전송하는 push를 거부했다. 사용자의 구현 계속 요청만으로 해당 payload·목적지의 전송을 명시적으로 승인한 것으로 판단하지 않았다. push는 실행되지 않았으며 우회하지 않는다.
+- 다음: 사용자에게 해당 원격 main으로 일반 push하는 명시적 승인을 요청한다. 승인되면 로컬 구현·전달 기록 커밋을 `git push origin HEAD:main`으로 전송하고 `git ls-remote --heads origin main`과 로컬 HEAD 일치 및 작업 트리 상태를 확인한다. 사내 GLM 5.2/PostgreSQL FOUP 검증은 사용자가 사내 PC에서 별도로 진행한다.
