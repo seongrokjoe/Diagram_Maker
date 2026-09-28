@@ -372,3 +372,7 @@ checkpoint와 사용자 변경을 보존하며, 의미 있는 구현·검증·�
 - 로컬 전달 커밋 완료: 코드·회귀·보고서·최종 internal.17 ZIP/SHA 19개 파일을 `8cc1a22` (`Restore FOUP evidence and deliver internal.17`)로 커밋했다. 로컬 구현·전체 검증·패키징은 완료했고 미해결 로컬 실패는 없다. checkpoint와 internal.16은 보존했다.
 - 원격 반영 보류: 자동 승인 검토가 GitHub `seongrokjoe/Diagram_Maker`의 main으로 내부 코드와 약 97MB ZIP을 전송하는 push를 거부했다. 사용자의 구현 계속 요청만으로 해당 payload·목적지의 전송을 명시적으로 승인한 것으로 판단하지 않았다. push는 실행되지 않았으며 우회하지 않는다.
 - 다음: 사용자에게 해당 원격 main으로 일반 push하는 명시적 승인을 요청한다. 승인되면 로컬 구현·전달 기록 커밋을 `git push origin HEAD:main`으로 전송하고 `git ls-remote --heads origin main`과 로컬 HEAD 일치 및 작업 트리 상태를 확인한다. 사내 GLM 5.2/PostgreSQL FOUP 검증은 사용자가 사내 PC에서 별도로 진행한다.
+- 사용자 명시 승인 후 원격 전달 완료: `승인 — 해당 GitHub main으로 푸시` 답변을 받아 구현 커밋 `8cc1a22`와 검증 기록 커밋 `361b84a`를 GitHub `seongrokjoe/Diagram_Maker`의 main으로 일반 push했다. push exit 0, `git ls-remote --heads origin main`의 `361b84a5414b0acc34bd704f1257994cc7bab284`와 로컬 HEAD가 일치했고 작업 트리는 깨끗했다. ZIP의 50MB 권장 크기 초과 경고는 나왔지만 원격 전송은 수락됐다. 자동 승인 검토의 전송 보류는 사용자 명시 승인으로 해소됐다.
+- 다음: 이 전달 완료 기록을 문서 커밋으로 원격에 반영하고 HEAD 일치 및 깨끗한 작업 트리를 최종 확인한다. 이후 남은 확인은 사용자가 사내 PC에서 수행할 실제 GLM 5.2 Thinking OFF·PostgreSQL의 동일 FOUP 입력 품질 검증이다. 로컬 구현·전체 검증·패키징·승인된 원격 전달은 완료됐다.
+- 전달 완료 기록의 추가 전송은 자동 승인 검토에서 거부됐다. 기존 사용자 승인을 지정된 두 커밋(`8cc1a22`, `361b84a`)의 전송으로만 해석해 새로운 문서 커밋을 승인 범위 밖의 추가 payload로 판단했다. 승인받은 두 커밋의 원격 반영은 이미 성공했으며 유지한다. 완료 기록 두 문서만 로컬 커밋으로 보존하고 추가 전송 여부를 사용자에게 확인한다.
+- 다음: 전달 완료 기록 문서 커밋의 같은 origin/main 전송이 명시적으로 승인되면 일반 push 후 원격 HEAD를 확인한다. 로컬 보관을 선택하면 승인받은 두 커밋의 원격 반영으로 전달을 마무리한다. 추가 코드·ZIP 변경은 없다. 실제 사내 모델/DB 품질 확인은 사내 PC에서 별도 진행한다.

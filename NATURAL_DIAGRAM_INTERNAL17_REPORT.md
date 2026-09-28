@@ -31,4 +31,6 @@
 
 ## Git 전달 상태
 
-검증한 구현·회귀·배포 파일은 로컬 커밋 `8cc1a22` (`Restore FOUP evidence and deliver internal.17`)에 반영했다. 자동 승인 검토는 내부 코드와 약 97MB ZIP을 GitHub `seongrokjoe/Diagram_Maker`의 main으로 전송하는 명시적 사용자 승인이 없다는 이유로 push를 거부했다. 원격 전송은 수행하지 않았다. 사용자 승인 후 일반 push와 원격 HEAD 일치 확인이 남아 있다.
+검증한 구현·회귀·배포 파일은 커밋 `8cc1a22` (`Restore FOUP evidence and deliver internal.17`), 검증·보류 기록은 `361b84a`에 반영했다. 최초 push 시도는 자동 승인 검토에서 명시적 전송 승인이 없다는 이유로 거부됐다. 이후 사용자가 내부 코드와 약 97MB ZIP을 해당 GitHub main으로 전송하도록 명시적으로 승인해 GitHub `seongrokjoe/Diagram_Maker`의 main으로 일반 push를 완료했다. push exit 0, 원격 HEAD `361b84a5414b0acc34bd704f1257994cc7bab284`와 로컬 HEAD 일치 및 깨끗한 작업 트리를 확인했다. 실제 GLM 5.2·PostgreSQL 검증은 사용자 요청대로 사내 PC에서 별도로 진행한다.
+
+전달 완료 사실을 갱신한 두 문서의 추가 전송은 자동 승인 검토가 기존 승인을 위 두 지정 커밋으로 제한해 해석하면서 거부했다. 승인된 구현·배포 파일은 원격 반영이 끝났으며, 이 완료 기록은 로컬 문서 커밋으로 보존한다. 새 문서 커밋의 원격 전송은 추가 승인 시 진행한다.
