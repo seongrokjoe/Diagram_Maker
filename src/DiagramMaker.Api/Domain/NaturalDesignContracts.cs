@@ -38,4 +38,5 @@ public sealed record NaturalComparisonExcerpt(string Id, string Text, bool Trunc
 public sealed record NaturalIssueComparison(string DiagnosticId, string Code, string Field, string TargetKind,
     string TargetLabel, string Observed, bool ObservedTruncated, string SourceQuote,
     string Instruction, IReadOnlyList<NaturalComparisonExcerpt> SourceExcerpts,
-    IReadOnlyList<string> RelatedElements);
+    IReadOnlyList<string> RelatedElements, bool? TargetExists = null, string? TargetId = null,
+    string? ObservedState = null);

@@ -18,13 +18,20 @@ internal static class NaturalIssueComparisonBuilder
         foreach (var requirement in requirements.Requirements.Where(item => cited.Contains(item.Id) ||
             item.Id == issue.ItemId))
             foreach (var id in NaturalRequirementEvidence.RangeIds(requirement)) cited.Add(id);
+        var node = design?.Nodes.FirstOrDefault(item => item.Id == issue.ItemId);
+        var edge = design?.Edges.FirstOrDefault(item => item.Id == issue.ItemId);
+        var requirementItem = requirements.Requirements.FirstOrDefault(item => item.Id == issue.ItemId);
+        var targetExists = node is not null || edge is not null || requirementItem is not null;
+        if (NaturalReferenceRecovery.IsReferenceIssue(issue))
+        {
+            var attached = node?.RequirementIds ?? edge?.RequirementIds ?? [];
+            foreach (var requirement in requirements.Requirements.Where(item => attached.Contains(item.Id)))
+                foreach (var id in NaturalRequirementEvidence.RangeIds(requirement)) cited.Add(id);
+        }
         var excerpts = ranges.Where(range => cited.Contains(range.Id)).Take(6).Select(range => {
             var safe = Safe(range.Text);
             return new NaturalComparisonExcerpt(range.Id, safe.Value, safe.Truncated);
         }).ToArray();
-        var node = design?.Nodes.FirstOrDefault(item => item.Id == issue.ItemId);
-        var edge = design?.Edges.FirstOrDefault(item => item.Id == issue.ItemId);
-        var requirementItem = requirements.Requirements.FirstOrDefault(item => item.Id == issue.ItemId);
         var target = node?.Label ?? edge?.Label ?? requirementItem?.Text ?? issue.TargetKind ?? "구조";
         var observed = node is not null ? issue.Field switch {
             "kind" => node.Kind, "shape" => node.Shape, "requirementIds" => string.Join(", ", node.RequirementIds),
@@ -47,6 +54,8 @@ internal static class NaturalIssueComparisonBuilder
             Safe(target).Value, observedSafe.Value, observedSafe.Truncated,
             Safe(issue.SourceQuote).Value, Safe(issue.Instruction).Value, excerpts,
             (issue.RelatedElementIds ?? []).Take(6).Select(id => Safe(design?.Nodes.FirstOrDefault(item => item.Id == id)?.Label ??
-                design?.Edges.FirstOrDefault(item => item.Id == id)?.Label ?? "").Value).ToArray());
+                design?.Edges.FirstOrDefault(item => item.Id == id)?.Label ?? "").Value).ToArray(),
+            targetExists, Safe(issue.ItemId).Value,
+            NaturalReferenceRecovery.IsReferenceIssue(issue) && observed.Length == 0 ? "empty-reference-list" : null);
     }
 }

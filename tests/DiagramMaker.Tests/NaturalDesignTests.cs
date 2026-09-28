@@ -54,6 +54,7 @@ public sealed class NaturalDesignTests
         Assert.Equal(new[] { "requirements", "requirements-review", "scenario-design", "scenario-review" }, transport.Purposes);
         Assert.Equal("Reviewed", result!.Quality!.Status);
         Assert.Equal(new[] { "r1" }, result.Quality.ReviewedRequirementIds);
+        Assert.False(result.Quality.RepairUsed);
         Assert.NotEmpty(result.Quality.ElementRequirements!);
         var dsl = new MermaidCompiler(new()).Compile(result.Diagram);
         if (type == "class") { Assert.Contains("Run", dsl); Assert.Contains("doorOpen", dsl); }
@@ -117,6 +118,20 @@ public sealed class NaturalDesignTests
         Assert.DoesNotContain(result.Diagram.Nodes, node => node.Label == "임의 변경");
     }
 
+    [Fact]
+    public async Task MissingElementReferencesUseTheReferenceOnlyRepair()
+    {
+        var model = new Model { MissingReferences = true };
+        using var execution = new SemanticExecution(new LlmOptions { Enabled = true }, null, CancellationToken.None);
+        var result = await Client(model).GenerateDesignedNaturalAsync(Prompt, "flowchart", false,
+            new DiagramPresetCatalog().Resolve("flowchart", "balanced"), null, Requirements(), CancellationToken.None);
+        Assert.Equal("Reviewed", result!.Quality!.Status);
+        Assert.True(result.Quality.RepairUsed);
+        Assert.Equal(new[] { "scenario-design", "scenario-reference-repair", "scenario-review" }, model.Purposes);
+        Assert.Contains(result.Diagram.Nodes, node => node.Label == "문이 닫혔는가");
+        Assert.Equal(1, execution.Progress.RepairBudgets!.Sum(item => item.ContentUsed));
+    }
+
     [Theory]
     [InlineData("List<T> 값과 x < 0 && y > 0 비교", false)]
     [InlineData("<script>alert(1)</script>", true)]
@@ -160,6 +175,7 @@ public sealed class NaturalDesignTests
         public bool IsEnabled => true;
         public int Reject { get; set; }
         public bool VaryRepair { get; set; }
+        public bool MissingReferences { get; set; }
         public List<string> Purposes { get; } = [];
         public Task<VllmCompletionResult> CompleteAsync(VllmCompletionRequest request, CancellationToken ct)
         {
@@ -172,8 +188,14 @@ public sealed class NaturalDesignTests
                     json.RootElement.GetProperty("sourceRanges").EnumerateArray().Select(r => r.GetProperty("id").GetString()!).ToArray(), []),
                 "scenario-review" or "scenario-review-confirm" => Reject-- > 0 ? new NaturalScenarioReview(["r1"],
                     [new("r1", "label", "NaturalConditionChanged", "차단 분기를 수정하세요", ["r1"], SourceQuote: Prompt, RelatedElementIds: [])]) : new NaturalScenarioReview(["r1"], []),
+                "scenario-reference-repair" => new NaturalReferenceRepair(json.RootElement.GetProperty("targets").EnumerateArray()
+                    .Select(target => new NaturalReferenceBinding(target.GetProperty("targetKind").GetString()!,
+                        target.GetProperty("targetId").GetString()!, ["r1"])).ToArray()),
                 _ => Design(json.RootElement.GetProperty("type").GetString()!)
             };
+            if (MissingReferences && request.Purpose == "scenario-design" && result is NaturalDesign initial)
+                result = initial with { Nodes = [initial.Nodes[0] with { RequirementIds = [] }, .. initial.Nodes.Skip(1)],
+                    Edges = [initial.Edges[0] with { RequirementIds = [] }, .. initial.Edges.Skip(1)] };
             if (VaryRepair && request.Purpose == "scenario-repair" && result is NaturalDesign design)
                 result = design with { Nodes = design.Nodes.Select((node, index) => index == 1 ? node with { Label = "장비를 운전한다" } : node).ToArray() };
             var value = JsonSerializer.SerializeToNode(result, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;

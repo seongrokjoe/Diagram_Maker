@@ -37,7 +37,8 @@ const llm = createServer(async (request, response) => {
     if (context.originalRequest) context = JSON.parse(context.originalRequest);
     const properties = (payload.structured_outputs?.json ?? payload.response_format?.json_schema?.schema).properties;
     const kind = properties.requirements ? 'requirements' : properties.reviewedSourceRangeIds ? 'requirements-review' :
-      properties.reviewedRequirementIds ? context.views ? 'final-review' : 'review' : properties.nodes ? 'design' : 'scenario-mapping';
+      properties.reviewedRequirementIds ? context.views ? 'final-review' : 'review' : properties.nodes ? 'design' :
+      properties.bindings ? 'reference-repair' : 'scenario-mapping';
     calls.push({ kind, mode, at: Date.now(), target: context.target?.id, requirementCount: context.requirements?.requirements?.length });
     const attempt = calls.filter(call => call.mode === mode && call.kind === kind).length;
     if (mode === 'grammar-once' && calls.filter(call => call.mode === mode).length === 1) {
@@ -68,10 +69,16 @@ const llm = createServer(async (request, response) => {
           field: 'guard', code: 'NaturalConditionChanged', instruction: '조건 반전을 수정하세요.', evidenceIds: [context.requirements.requirements[0].id],
           sourceQuote: context.requirements.sourceRanges[0].text, relatedElementIds: [] }] : [] };
     }
+    else if (kind === 'reference-repair') value = { bindings: context.targets.map(target => ({
+      targetKind: target.targetKind, targetId: target.targetId,
+      requirementIds: mode === 'references-unresolved' ? [] : context.requirements.requirements.map(item => item.id),
+    })) };
     else if (kind === 'scenario-mapping') value = { scenarios: [{ id: 'scenario-1', title: '요청 처리',
       requirementIds: context.requirements.requirements.map(r => r.id) }], questions: [] };
     else {
       value = naturalDesignFixture(context, properties, 'valid');
+      if (mode === 'references-missing' || mode === 'references-unresolved')
+        for (const element of [...value.nodes, ...value.edges]) element.requirementIds = [];
     }
     if (kind === 'requirements-review' && mode === 'review-missing-field' && attempt === 1) delete value.reviewedSourceRangeIds;
     if (kind === 'requirements-review' && mode === 'review-all-missing') value.reviewedSourceRangeIds = [];
@@ -142,13 +149,24 @@ try {
   assert.equal(run.checkpoints, null);
   assert.equal(run.requirements.sourceRanges.length, 2);
   const original = await request(`/natural-diagrams/${run.resultDiagramId}`);
-  assert.equal(original.generatorVersion, 'natural-v12');
+  assert.equal(original.generatorVersion, 'natural-v13');
   await request(`/natural-diagram-runs/${run.id}`, 'GET', undefined, 403, 'other-owner');
   await request(`/natural-diagram-runs/${run.id}/diagnostics`, 'GET', undefined, 403, 'other-owner');
   await request(`/natural-diagram-runs/${run.id}/answers`, 'POST', {}, 403, 'other-owner');
   const diagnostic = await request(`/natural-diagram-runs/${run.id}/diagnostics`);
   assert.ok(!diagnostic.includes('secret_for_mask_test') && !diagnostic.includes(llmOrigin));
   checks.push({ name: 'generation-evidence-masking-acl-diagnostics', requests: calls.length });
+
+  mode = 'references-missing';
+  const referenceStart = calls.length;
+  const referenceRun = await poll((await create('요청의 근거를 연결한다. 완료를 확인한다.')).id);
+  assert.equal(referenceRun.state, 'Completed', referenceRun.errorMessage);
+  const referenceDiagram = await request(`/natural-diagrams/${referenceRun.resultDiagramId}`);
+  assert.ok(referenceDiagram.views.every(view => view.pages.every(item => item.designQuality.repairUsed)));
+  assert.equal(calls.slice(referenceStart).filter(call => call.kind === 'reference-repair').length, 1);
+  assert.equal(calls.slice(referenceStart).filter(call => call.kind === 'design').length, 1);
+  assert.ok(referenceRun.execution.repairBudgets.some(item => item.contentUsed > 0));
+  checks.push({ name: 'missing-references-use-one-reference-only-repair', requests: calls.length - referenceStart });
 
   for (const [testMode, stage, expected] of [['review-missing-field', 'requirements-review', 'Completed'],
     ['review-all-missing', 'requirements-review', 'Failed'], ['scenario-invalid', 'requirements', 'Completed'],
@@ -218,7 +236,7 @@ try {
   assert.ok(selfTest.cases.every(item => item.reviewedPages > 0));
   assert.ok(!selfTest.report.includes(llmOrigin));
   assert.equal(selfTest.summary.split('\n').length, 4);
-  assert.match(selfTest.summary, /natural-v12; protocol: natural-design-v8/);
+  assert.match(selfTest.summary, /natural-v13; protocol: natural-design-v9/);
   assert.ok(!selfTest.summary.includes(llmOrigin));
   assert.ok(selfTest.cases.every(item => item.extraction.extractionAttempts >= 1));
   if (packageRoot) {
@@ -395,6 +413,35 @@ try {
   await page.screenshot({ path: path.join(fixture, 'natural-self-test-390.png'), fullPage: true });
   assert.deepEqual(errors, []);
   checks.push({ name: 'exhausted-full-diagnostics-and-synthetic-test-ui-download' });
+
+  mode = 'references-unresolved';
+  const unresolvedStart = calls.length;
+  const unresolved = await poll((await create('근거 없는 연결을 재검토한다. 실패 원인을 확인한다.')).id);
+  assert.equal(unresolved.state, 'Failed');
+  assert.equal(calls.slice(unresolvedStart).filter(call => call.kind === 'reference-repair').length, 1);
+  assert.equal(calls.slice(unresolvedStart).filter(call => call.kind === 'review').length, 0);
+  const unresolvedDiagnostics = (await request(`/natural-diagram-runs/${unresolved.id}/diagnostics?format=json`)).diagnostics;
+  const missingReference = unresolvedDiagnostics.find(item => item.validationCode === 'NaturalNodeRequirementIdsMissing');
+  assert.ok(missingReference);
+  const emptyComparison = await request(`/natural-diagram-runs/${unresolved.id}/diagnostics/${missingReference.id}/comparison`);
+  assert.equal(emptyComparison.targetExists, true);
+  assert.equal(emptyComparison.observedState, 'empty-reference-list');
+  assert.deepEqual(emptyComparison.sourceExcerpts, []);
+  await request(`/natural-diagram-runs/${unresolved.id}/diagnostics/${missingReference.id}/comparison`, 'GET', undefined, 403, 'other-owner');
+  await page.reload();
+  await page.locator('.natural-run-history summary').click();
+  await page.locator('.natural-run-history button').first().click();
+  await page.locator('.natural-run-status').filter({ hasText: 'Failed' }).waitFor();
+  const referencePanel = page.getByLabel('요청 오류 진단', { exact: true });
+  await referencePanel.locator('tbody tr').filter({ hasText: '근거' }).first().getByRole('button').click();
+  await referencePanel.getByText('원문과 생성 내용 비교', { exact: true }).click();
+  await referencePanel.getByText('근거 ID가 없어 연결된 원문 범위를 특정할 수 없습니다.', { exact: true }).waitFor();
+  await referencePanel.getByText('생성된 내용: 근거 ID 목록이 비어 있음', { exact: true }).waitFor();
+  await page.screenshot({ path: path.join(fixture, 'missing-reference-comparison-390.png'), fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.screenshot({ path: path.join(fixture, 'missing-reference-comparison-1440.png'), fullPage: true });
+  assert.deepEqual(errors, []);
+  checks.push({ name: 'unresolved-references-stay-failed-with-empty-source-comparison', requests: calls.length - unresolvedStart });
   await writeFile(path.join(fixture, 'result.json'), JSON.stringify({ status: 'passed', checks, calls,
     elapsedMilliseconds: Date.now() - startedAt, realModel: false, postgres: false }, null, 2));
   console.log(`Natural reliability smoke passed: ${fixture}`);

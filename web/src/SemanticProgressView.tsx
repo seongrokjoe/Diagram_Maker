@@ -20,6 +20,7 @@ export type NaturalIssueComparison = {
   diagnosticId: string; code: string; field: string; targetKind: string; targetLabel: string;
   observed: string; observedTruncated: boolean; sourceQuote: string; instruction: string;
   sourceExcerpts: Array<{ id: string; text: string; truncated: boolean }>; relatedElements: string[];
+  targetExists?: boolean | null; targetId?: string | null; observedState?: string | null;
 };
 export type SemanticProgress = {
   stage: string; completedUnits: number; reusedUnits: number; requests: number;
@@ -122,8 +123,9 @@ function DiagnosticGrid({ records, running, comparisonUrl }: { records: FailureD
         {comparison && <details><summary>원문과 생성 내용 비교</summary>
           <p>대상: {comparison.targetKind} · {comparison.targetLabel} · 필드 {comparison.field}</p>
           {comparison.sourceExcerpts.map(source => <p key={source.id}>원문 근거: {source.text}{source.truncated && " (긴 내용 일부만 표시)"}</p>)}
+          {comparison.sourceExcerpts.length === 0 && comparison.observedState === "empty-reference-list" && <p>근거 ID가 없어 연결된 원문 범위를 특정할 수 없습니다.</p>}
           {comparison.sourceQuote && <p>검토가 인용한 조건: {comparison.sourceQuote}</p>}
-          <p>생성된 내용: {comparison.observed || "해당 요소가 없음"}{comparison.observedTruncated && " (긴 내용 일부만 표시)"}</p>
+          <p>생성된 내용: {comparison.observedState === "empty-reference-list" ? "근거 ID 목록이 비어 있음" : comparison.observed || (comparison.targetExists ? "값이 비어 있음" : "해당 요소가 없음")}{comparison.observedTruncated && " (긴 내용 일부만 표시)"}</p>
           {comparison.relatedElements.length > 0 && <p>관련 요소: {comparison.relatedElements.join(", ")}</p>}
           <p>수정 지시: {comparison.instruction}</p>
         </details>}
@@ -145,6 +147,7 @@ function actionLabel(action?: string, kind?: string) { return ({ StartNewRun: "�
 
 function purpose(value: FailureDiagnostic) { return value.purpose === "requirements-validation" ? "요구사항 근거 검증" :
   value.purpose === "scenario-design" ? "시나리오 설계" : value.purpose === "scenario-repair" ? "시나리오 보정" :
+  value.purpose === "scenario-reference-repair" ? "시나리오 근거 연결 보정" :
   value.purpose === "scenario-review" ? "시나리오 의미 검토" : value.purpose === "scenario-review-confirm" ? "조건 변경 재확인" : value.purpose === "scenario-design-validation" ? "시나리오 구조 검증" :
   value.purpose === "scenario-mapping" ? "시나리오 연결 보정" :
   value.purpose?.endsWith("format-repair") ? "응답 형식 보정" :
@@ -188,6 +191,9 @@ function failureDescription(validation?: string, error?: string) {
     FormatRepairBudgetExhausted: "이 작업의 응답 형식 보정 예산을 소진했습니다.", ContentRepairBudgetExhausted: "이 작업의 내용 보정 예산을 소진했습니다.",
     NaturalReviewIssueUnclassified: "검토 오류를 분류하지 못했습니다. 기술 상세를 확인하세요.",
     NaturalReviewEvidenceInvalid: "조건 변경 지적의 원문 인용이 확인되지 않습니다.", NaturalReviewFieldInvalid: "검토가 다이어그램에 없는 필드를 지적했습니다.",
+    NaturalNodeRequirementIdsMissing: "개념에 연결된 요구사항 근거 ID가 없습니다.", NaturalNodeRequirementIdsUnknown: "개념이 이 시나리오에 없는 요구사항 ID를 참조합니다.",
+    NaturalEdgeRequirementIdsMissing: "연결에 연결된 요구사항 근거 ID가 없습니다.", NaturalEdgeRequirementIdsUnknown: "연결이 이 시나리오에 없는 요구사항 ID를 참조합니다.",
+    NaturalReferenceRepairInvalid: "근거 ID 보정 응답의 대상이나 출처가 잘못되었습니다.",
     NaturalScenarioCountInvalid: "시나리오 수가 허용 범위를 벗어났습니다.", NaturalScenarioFieldsInvalid: "시나리오 ID나 제목이 비었습니다.",
     NaturalScenarioDuplicateId: "시나리오 ID가 중복되었습니다.", NaturalScenarioAssignmentsMissing: "시나리오에 연결된 요구사항이 없습니다.",
     NaturalScenarioUnknownRequirement: "시나리오가 존재하지 않는 요구사항을 참조합니다.",

@@ -35,9 +35,9 @@ internal static partial class NaturalDesignValidation
                 type != "flowchart" && node.Shape != "")
                 Add("shape", "NaturalNodeInvalid", "Use only the shape allowed by this diagram type.");
             if (node.RequirementIds.Any(requirementId => !known.Contains(requirementId)))
-                Add("requirementIds", "NaturalNodeInvalid", "Remove unknown requirement IDs from this concept.");
+                Add("requirementIds", "NaturalNodeRequirementIdsUnknown", "Remove requirement IDs outside this scenario from this concept.");
             if (!node.Assumption && node.RequirementIds.Count == 0)
-                Add("requirementIds", "NaturalNodeInvalid", "Cite the requirement that this explicit concept implements.");
+                Add("requirementIds", "NaturalNodeRequirementIdsMissing", "Cite the requirement that this explicit concept implements.");
             if (!node.Assumption && node.RequirementIds.Any(assumptions.Contains))
                 Add("assumption", "NaturalNodeInvalid", "Mark this proposed concept as an assumption.");
             if (type == "class" && node.Members.Count == 0)
@@ -62,9 +62,9 @@ internal static partial class NaturalDesignValidation
                 Add("type", type == "class" ? "NaturalClassRelationInvalid" : "NaturalEdgeInvalid",
                     "Use a connection type supported by this diagram type.");
             if (edge.RequirementIds.Any(requirementId => !known.Contains(requirementId)))
-                Add("requirementIds", "NaturalEdgeInvalid", "Remove unknown requirement IDs from this connection.");
+                Add("requirementIds", "NaturalEdgeRequirementIdsUnknown", "Remove requirement IDs outside this scenario from this connection.");
             if (!edge.Assumption && edge.RequirementIds.Count == 0)
-                Add("requirementIds", "NaturalEdgeInvalid", "Cite the requirement that this explicit connection implements.");
+                Add("requirementIds", "NaturalEdgeRequirementIdsMissing", "Cite the requirement that this explicit connection implements.");
             if (!edge.Assumption && edge.RequirementIds.Any(assumptions.Contains))
                 Add("assumption", "NaturalEdgeInvalid", "Mark this proposed connection as an assumption.");
             if (edge.ControlPath.Count > 32 || edge.ControlPath.Any(control => control is null ||

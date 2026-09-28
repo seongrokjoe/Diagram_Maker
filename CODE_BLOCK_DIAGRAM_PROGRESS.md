@@ -329,3 +329,43 @@ checkpoint와 사용자 변경을 보존하며, 의미 있는 구현·검증·�
 
 - 7단계 전달: 구현·보고서·internal.16 ZIP/SHA·이전 ZIP 정리를 cb57c00으로 커밋하고 origin/main push가 성공했다. 원격에서 ZIP 92.10MB가 GitHub 권장 50MB를 넘는다는 경고가 나왔으나 푸시는 수락됐다. 남은 로컬 구현 실패는 없다.
 - 다음: 사내 개발 PC에서 실제 GLM 5.2(Thinking OFF)와 PostgreSQL로 짧은 승인 흐름·표 공통 조건·Buffer Handshake 고정 검사 및 기존 Wafer 입력을 새 실행하고, 실패 시 소유자 비교 화면의 인용·생성 값·단계·코드를 수집한다. 이 PC에서는 사내 모델의 최종 동작을 판정할 수 없다.
+
+### 2026-09-23 FOUP 실패 경로 근거 연결 복구
+- 시작: e4db4e2의 깨끗한 작업 트리에서 진행한다. 실제 GLM5.2 사례는 정상 이동 페이지가 완료됐지만 BPort 미검출·STR Pick 실패·Shelf 미검출 페이지의 node/edge requirementIds 빈 목록이 NaturalNodeInvalid/NaturalEdgeInvalid로 거부되어 NaturalRepairNoProgress에 도달했다. 비교 화면은 빈 목록을 요소 없음으로 잘못 표시한다.
+- 다음: 세부 근거 오류 분류, 참여자 근거 계산, 근거 전용 보정, 정확한 진단을 구현하고 FOUP 분기 회귀 검사를 추가한다.
+- 재개: 누락·알 수 없는 근거 ID를 요소별 진단 코드로 분리했다. 시퀀스 참여자는 실제 연결의 명시적 근거를 계산하고, 남은 근거 오류에는 요소별 근거 전용 보정을 한 번 적용한다. 중복 오류가 같은 요소를 두 번 보정하도록 요구하던 스키마 수량을 수정했다. 비교 자료는 빈 근거 목록과 실제 요소 부재를 구분하며 웹 화면에도 반영했다. FOUP 세 실패 분기 및 보정 경로 테스트를 추가했고 관련 .NET 24개 통과.
+- 다음: 전체 verify와 화면·패키지 검사를 실행하고, 실제 사내 GLM 5.2에서 동일 FOUP 입력을 재실행해 의미 품질과 실패 경로를 확인한다.
+- 전체 검증: 비동기화 검증 사본에서 `verify.ps1 -UseInstalledDependencies` 최종 exit 0. .NET 437개, 작업자·웹·정책 테스트, 웹 빌드, API 두 모드, 공유 의미 기본/60,000자, SVG/Sequence/코드·디자인 UI, 자연어 합성 API/UI, Windows UI 실행기 14개가 통과했다. 샌드박스 내 esbuild는 상위 경로 접근 거부로 한 번 중단됐으나 동일 사본의 Windows 경로 접근 권한으로 재실행하니 정상 완료됐다. 로그는 검증 사본 `artifacts/foup-reference-verify-escalated.log`.
+- 다음: internal.17 Windows 패키지 빌드와 패키지 9개 검사, ZIP 무결성 확인 후 결과 문서·배포 정리를 진행한다. 실제 GLM 5.2와 PostgreSQL은 이 PC에서 아직 검증할 수 없다.
+- 패키지 빌드: internal.17 Windows ZIP 생성 exit 0. ZIP은 96,577,270바이트, 1,832개 파일이며 SHA-256은 `72e739af1565ddaa334f338f91e82b9ab95c93dfd85d558112673affdf4a3fda`이다. ZIP 내용 전체와 stage 파일을 개별 SHA-256으로 대조했고 모두 일치했다. 패키지 검사는 진행 중이다.
+- 다음: 9개 패키지 검사 종료 코드를 모두 확인한 뒤 ZIP·SHA와 로그를 원본 artifacts로 보존하고 보고서를 작성한다.
+- 패키지 검사 9개 명령 모두 exit 0. ZIP/SHA와 전체 verify·패키지 빌드·검사 로그 11개를 원본 artifacts에 복사하고 SHA-256을 재확인했다. 최종 비교 자료 검토에서 근거 ID가 빈 요소에 연결되지 않은 첫 원문 6개를 근거로 표시할 수 있음을 발견했다. 비교 자료는 실제 연결된 원문만 표시하고, 없으면 범위를 특정할 수 없다고 알리도록 수정했다. 기존 internal.17 ZIP은 이 마지막 수정 전 빌드이므로 갱신해야 한다.
+- 다음: 비교 자료 .NET 회귀와 웹 빌드·자연어 UI를 재검증하고 internal.17 ZIP/해시를 최종 소스로 다시 빌드해 재대조한다.
+- 최종 비교 자료 수정 검증: 관련 .NET 24개, 웹 빌드, 자연어 합성 API/UI 검사 통과. 최종 internal.17 ZIP을 재빌드했고 96,577,113바이트·1,832개 파일이다. ZIP과 stage의 파일별 SHA-256 대조 및 `.sha256` 확인 통과. 최종 SHA-256은 `ab88db4fcaad49bc03c0b03c2fe4c7b6d94aefe4da1248e5486b7b0b115198b7`. 최종 ZIP의 미리보기와 자연어 API/UI 검사를 재실행해 통과했다. 원본 artifacts/release의 ZIP/SHA와 검증 로그를 최종본으로 갱신했고 기존 internal.16은 보존했다. 보고서는 `NATURAL_DIAGRAM_INTERNAL17_REPORT.md`.
+- 다음: 최종 Git diff와 해시를 검토하고 변경을 전달한다. 사내 GLM 5.2·PostgreSQL을 통한 동일 FOUP 입력 재실행은 사내 PC에서 필요하다.
+- 최종 문구 점검: 새 근거 오류 코드와 근거 전용 보정 목적이 UI·서버 종료 메시지에서 일반 문구로 남지 않도록 설명을 추가했다. 직전 ZIP은 이 문구 변경 전이므로 다시 빌드한다.
+- 다음: 관련 .NET/웹 빌드/자연어 UI 확인 후 ZIP·해시·패키지 화면 검사를 마지막 소스로 갱신한다.
+- 전달용 확인: 관련 .NET 24개와 웹 빌드가 통과했다. 문구 변경을 포함해 internal.17 ZIP을 재생성했고 96,577,411바이트·1,832개 파일, SHA-256 `1cbb022d0d6fde0cc9d01906daf18ac4834ac862cf901fe9511214b23d84b520`이다. ZIP 전체 파일을 stage와 개별 SHA-256으로 대조했고 미리보기·자연어 API/UI 패키지 검사도 통과했다. 원본 artifacts/release에 ZIP/SHA를 다시 복사해 해시를 확인하고 전달용 로그를 artifacts/internal17-validation에 보존했다.
+- 다음: 최종 Git diff와 배포 해시를 확인한 뒤 전달한다. 실제 GLM 5.2·PostgreSQL FOUP 재실행은 사내 PC에서 별도 수행한다.
+- 최종 검토: `git diff --check` exit 0, 작업 트리는 코드·테스트·보고서·internal.17 ZIP/SHA 변경을 포함한다. 배포 ZIP의 복사본 SHA-256을 다시 확인했다. 구현과 합성 검증·패키징은 완료했으며 실제 사내 GLM 5.2/PostgreSQL 품질 검증은 미수행이다. 이 단계의 커밋과 원격 push도 아직 수행하지 않았다. 기존 pre-feature checkpoint와 internal.16 ZIP/SHA는 보존했다.
+- 다음: 사내 PC에서 동일 FOUP 입력을 GLM 5.2 Thinking OFF와 PostgreSQL로 새 실행하고 세 실패 경로의 조건·순서·근거·완료 상태를 확인한다. 필요하면 이 변경을 검토 후 커밋·원격 반영한다.
+
+### 2026-09-29 internal.17 마무리 재개
+
+- 기존 미커밋 구현과 internal.16/internal.17 ZIP, pre-feature checkpoint `e53efc2`를 보존하고 재개했다. 현재 사내 LLM 정책·PostgreSQL 연결 설정은 없으므로 실제 모델/DB 검증은 별도로 남긴다.
+- 최종 검토에서 최초 생성 중 근거 전용 보정이 성공해도 `DesignQuality.RepairUsed`가 false로 남는 누락을 확인해 수정했다. 근거 보정 요청과 근거 없는 응답의 API/UI 회귀를 보강한다.
+- 다음: OneDrive 밖 비동기화 검증 사본에서 회귀와 전체 verify를 실행하고, 최종 소스의 internal.17 패키지·해시·보고서를 갱신한 뒤 Git 반영을 마무리한다.
+- 재개 검증 중간 결과: 원본과 비동기화 사본의 입력 파일 320개가 SHA-256으로 일치한다. .NET 438개, Node 작업자 43개, 웹 64개, 정책 13개, 웹 빌드 및 API 두 모드가 통과했다. 첫 생성의 근거 전용 보정은 `RepairUsed=true`로 기록하며 정상 생성은 false를 유지한다. 명시적 연결만 참여자 근거로 사용하고 가정 연결에서 근거를 가져오지 않는 회귀도 통과했다.
+- 다음: 전체 verify의 공유 의미·추가 근거 API/UI·Windows 실행기 종료 결과를 확인하고 최종 패키지를 재생성한다.
+- 공유 의미 기본/60,000자, SVG 6개, Sequence 4개, 코드·디자인 UI 및 자연어 합성 API/UI 23개 검사가 통과했다. 근거 보정 성공은 최초 그래프를 한 번만 생성하고, 미해결 근거는 검토 성공으로 승격하지 않으며 비교 API의 소유자 ACL을 유지한다. 390/1440px 화면에서 빈 근거 목록과 원문 범위 없음 표시를 확인했고 증적은 `artifacts/internal17-resume-validation/natural-reference-ui/`에 보존했다.
+- 다음: Windows UI 실행기 포함 전체 verify 최종 종료 코드 확인 후 internal.17 ZIP을 최종 소스로 재생성한다.
+- 전체 `verify.ps1 -UseInstalledDependencies` 최종 exit 0. .NET 438개, Node 작업자 43개, 웹 64개, 정책 13개, 시작 정책 11개, API 두 모드, 공유 의미 기본/60,000자, SVG/Sequence/코드·디자인 UI, 자연어 API/UI 23개 및 Windows UI 실행기 14개가 통과했다. 사내 LLM/DB·외부 취약점 피드·호스트 egress는 미수행으로 유지한다.
+- 다음: 최종 소스의 internal.17 패키지를 빌드하고 9개 패키지 검사와 ZIP 파일별 무결성 검증을 수행한다.
+- 패키지 빌드 첫 실행은 NuGet 라이선스 `.nuspec` 복사 대상이 271자가 되어 Windows PowerShell 경로 제한으로 exit 1이었다. .NET publish와 웹 빌드는 통과했으며 ZIP은 아직 생성되지 않았다. 검증 사본을 짧은 임시 경로로 옮겨 패키지 빌드를 재시도한다. 사용자는 실제 GLM 5.2/PostgreSQL 검증을 사내 PC에서 별도 수행한다고 확인했다.
+- 다음: 짧은 비동기화 경로에서 동일 소스를 빌드하고 9개 패키지 검사·ZIP 무결성 검증 후 배포 및 Git 반영을 완료한다.
+- 짧은 검증 사본 `%TEMP%/DiagramMaker-i17-0f94e9c9`에서 internal.17 패키지 재빌드 exit 0. ZIP은 96,577,426바이트·1,832개 파일이며 SHA-256은 `1dc49d6a5a76985fcb4e3f477208574674afe1f6b35a137e21abad828b9ca5e6`이다. ZIP 전체 파일과 stage의 개별 SHA-256, sidecar 및 원본/사본 입력 320개 해시가 모두 일치했다. 미리보기, LLM 기본/간편, 코드·디자인·자연어 UI 및 Windows CMD 실행기 패키지 검사 7개가 통과했다.
+- 다음: 진행 중인 공유 의미 기본/60,000자 패키지 검사 2개의 최종 결과를 확인하고 ZIP·해시·증적·보고서를 원본에 반영한 뒤 커밋·push한다.
+- 최종 패키지 검사 9개 명령 모두 exit 0. 공유 의미 기본/60,000자도 통과했다. 최종 ZIP은 SHA-256 `1dc49d6a5a76985fcb4e3f477208574674afe1f6b35a137e21abad828b9ca5e6`이며 96,577,426바이트·1,832개 파일이다. NATURAL_DIAGRAM_INTERNAL17_REPORT.md를 재개 보완과 전체 검증·패키지 결과에 맞게 갱신했다.
+- 다음: ZIP/SHA와 재개 증적을 원본 artifacts에 반영하고 최종 Git diff·배포 해시를 확인한 뒤 구현과 전달 기록을 커밋·origin/main에 push한다. 사내 실제 GLM 5.2/PostgreSQL 확인은 사용자 요청대로 사내 PC에서 별도 수행한다.
+- 배포 반영·최종 검토 완료: 최종 ZIP/SHA와 재개 로그·결과 JSON·화면 증적을 원본 artifacts에 복사했고 배포 SHA-256을 재확인했다. `git diff --check` exit 0, checkpoint `e53efc2`의 HEAD 조상 관계와 internal.16 SHA-256 `2c4379eb4710860fb0226cc520322af68dabfe039692c5fc1eaeae7297a3cbee`를 확인했다. 원본 작업 트리의 변경은 internal.17 관련 19개 파일뿐이다.
+- 다음: 검증한 internal.17 변경을 커밋·origin/main push하고 원격 HEAD 및 깨끗한 작업 트리를 확인한 뒤 전달 기록을 마감한다.

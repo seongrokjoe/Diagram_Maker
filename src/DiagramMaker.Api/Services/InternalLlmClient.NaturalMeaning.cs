@@ -20,8 +20,10 @@ public sealed partial class InternalLlmClient
             NaturalDesign? rejected = null;
             IReadOnlyList<NaturalIssue> issues = context?.Issues ?? [];
             var reviewStage = false;
+            var reviewRejected = false;
             var reviewPurpose = "scenario-review";
             var candidates = new HashSet<string>(StringComparer.Ordinal);
+            var referenceRepaired = new HashSet<string>(StringComparer.Ordinal);
             var schema = JsonNode.Parse(NaturalDesignValidation.DesignSchemaFor(type).GetRawText())!;
             foreach (var kind in new[] { "nodes", "edges" })
                 schema["properties"]![kind]!["items"]!["properties"]!["requirementIds"]!["items"]!["enum"] =
@@ -54,9 +56,25 @@ public sealed partial class InternalLlmClient
                         inputTokenLimit: _options.MaxInputTokens, inputCharacterLimit: _options.MaxInputCharacters,
                         allowSchemaRelaxation: true, validateSchema: true, recovery: recovery);
                     rejected = NaturalDesignValidation.CompleteInapplicableFields(generated.Value, type);
-                    if (!candidates.Add(NaturalJson(rejected)))
-                        throw NaturalFailure("NATURAL_DESIGN_REJECTED", "NaturalRepairNoProgress");
+                    rejected = NaturalReferenceRecovery.CompleteParticipants(rejected, type, requirements);
                     issues = NaturalDesignValidation.DesignIssues(rejected, type, requirements);
+                    var referenceIssues = issues.Where(NaturalReferenceRecovery.IsReferenceIssue).ToArray();
+                    if (referenceIssues.Length > 0 && referenceIssues.All(issue => !string.IsNullOrWhiteSpace(issue.ItemId)))
+                    {
+                        var candidateKey = SemanticExecution.Hash(NaturalJson(rejected));
+                        if (referenceRepaired.Add(candidateKey))
+                        {
+                            await recovery.ChargeAsync("content", SemanticExecution.Hash(identityKey) + ":references:" + candidateKey);
+                            var bindings = await RepairNaturalReferencesAsync(prompt, type, requirements, rejected,
+                                referenceIssues, thinking, ct, recovery);
+                            rejected = NaturalReferenceRecovery.Apply(rejected, bindings);
+                            rejected = NaturalReferenceRecovery.CompleteParticipants(rejected, type, requirements);
+                            issues = NaturalDesignValidation.DesignIssues(rejected, type, requirements);
+                        }
+                    }
+                    if (!candidates.Add(NaturalJson(rejected)))
+                        throw NaturalFailure(reviewRejected ? "NATURAL_DESIGN_REJECTED" : "NATURAL_DESIGN_INVALID",
+                            "NaturalRepairNoProgress");
                     if (issues.Count == 0)
                     {
                         reviewStage = true;
@@ -71,6 +89,7 @@ public sealed partial class InternalLlmClient
                             reviewPurpose = "scenario-review-confirm";
                         }
                         issues = review.Issues;
+                        reviewRejected |= !review.Accepted;
                         if (review.Accepted)
                         {
                             var design = AssignScenarioIds(rejected, identityKey);
@@ -80,7 +99,7 @@ public sealed partial class InternalLlmClient
                                 design.Nodes.Where(n => n.Assumption).Select(n => n.Id)
                                     .Concat(design.Edges.Where(e => e.Assumption).Select(e => e.Id))
                                     .Concat(design.Nodes.SelectMany(n => n.Members.Where(m => m.Assumption).Select(m => "member:" + n.Id + ":" + m.Name))).ToArray(),
-                                attempt > 0 || recovery.FormatUsed > 0,
+                                attempt > 0 || recovery.FormatUsed > 0 || referenceRepaired.Count > 0,
                                 design.Nodes.ToDictionary(n => "node:" + n.Id, n => n.RequirementIds)
                                     .Concat(design.Edges.ToDictionary(e => "edge:" + e.Id, e => e.RequirementIds)).ToDictionary(p => p.Key, p => p.Value)));
                         }
@@ -89,7 +108,7 @@ public sealed partial class InternalLlmClient
                     if (!await recovery.ObserveAsync(SemanticExecution.Hash(key) + ":scenario:" + attempt, NaturalJson(rejected),
                         issues.Select(i => i.TargetKind + ":" + i.ItemId + ":" + i.Field + ":" + i.Code + ":" +
                             SemanticExecution.Hash(NaturalIssueComparisonBuilder.Build("signature", i, requirements, rejected).Observed)), attempt > 0))
-                        throw NaturalFailure("NATURAL_DESIGN_REJECTED", "NaturalRepairNoProgress");
+                        throw NaturalFailure(reviewRejected ? "NATURAL_DESIGN_REJECTED" : "NATURAL_DESIGN_INVALID", "NaturalRepairNoProgress");
                 }
                 catch (LlmClientException error) when (error.Code is "LLM_SCHEMA_INVALID" or "LLM_REPAIR_EXHAUSTED" or "LLM_REPAIR_NO_PROGRESS")
                 {
@@ -97,7 +116,7 @@ public sealed partial class InternalLlmClient
                         error.Code == "LLM_REPAIR_NO_PROGRESS" ? "NaturalRepairNoProgress" : error.FailureKind, error.ValidationDetails);
                 }
             }
-            throw NaturalFailure("NATURAL_DESIGN_REJECTED", issues.FirstOrDefault()?.Code);
+            throw NaturalFailure(reviewRejected ? "NATURAL_DESIGN_REJECTED" : "NATURAL_DESIGN_INVALID", issues.FirstOrDefault()?.Code);
         }
     }
 

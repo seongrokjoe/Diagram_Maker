@@ -30,11 +30,81 @@ public sealed class NaturalDiagnosticTests
         var design = NaturalDesignTests.Design("sequence");
         design = design with { Nodes = [design.Nodes[0] with { RequirementIds = [] }, .. design.Nodes.Skip(1)] };
         var issue = Assert.Single(NaturalDesignValidation.DesignIssues(design, "sequence", NaturalDesignTests.Requirements()));
-        Assert.Equal("NaturalNodeInvalid", issue.Code);
+        Assert.Equal("NaturalNodeRequirementIdsMissing", issue.Code);
         Assert.Equal("node", issue.TargetKind);
         Assert.Equal(0, issue.ItemIndex);
         Assert.Equal("requirementIds", issue.Field);
         Assert.Equal(design.Nodes[0].Id, issue.ItemId);
+    }
+
+    [Fact]
+    public void FoupFailureBranchesRepairOnlyMissingReferencesAndPreserveTheirContent()
+    {
+        var requirements = new NaturalRequirements("FOUP 이동", ["FOUP", "BPort", "STR", "Shelf"],
+            [new("r1", "BPort가 감지되지 않으면 이동을 중단한다", "error", "explicit", ""),
+             new("r2", "STR Pick이 실패하면 이동을 중단한다", "error", "explicit", ""),
+             new("r3", "Shelf가 감지되지 않으면 이동을 중단한다", "error", "explicit", "")]);
+        NaturalDesignNode Participant(string id) => new(id, id, "participant", "", [], [], [], false);
+        NaturalDesignEdge Failure(string id, string source, string target, string label) =>
+            new(id, source, target, "message", label, "", "", "", [], [], false);
+        var design = new NaturalDesign("FOUP 실패", [Participant("FOUP"), Participant("BPort"), Participant("STR"), Participant("Shelf")],
+            [Failure("bport", "FOUP", "BPort", "BPort 미검출"),
+             Failure("pick", "BPort", "STR", "STR Pick 실패"),
+             Failure("shelf", "STR", "Shelf", "Shelf 미검출")], []);
+        var issues = NaturalDesignValidation.DesignIssues(design, "sequence", requirements);
+        Assert.Contains(issues, issue => issue.Code == "NaturalEdgeRequirementIdsMissing" && issue.ItemId == "pick");
+        var bindings = new NaturalReferenceRepair([
+            new("node", "FOUP", ["r1"]), new("node", "BPort", ["r1", "r2"]),
+            new("node", "STR", ["r2", "r3"]), new("node", "Shelf", ["r3"]),
+            new("edge", "bport", ["r1"]), new("edge", "pick", ["r2"]), new("edge", "shelf", ["r3"])
+        ]);
+        Assert.Null(NaturalReferenceRecovery.Check(bindings, issues, requirements, design));
+        var repaired = NaturalReferenceRecovery.Apply(design, bindings);
+        Assert.Empty(NaturalDesignValidation.DesignIssues(repaired, "sequence", requirements));
+        Assert.Equal(design.Edges.Select(edge => edge.Label), repaired.Edges.Select(edge => edge.Label));
+        Assert.Equal(design.Edges.Select(edge => edge.Id), repaired.Edges.Select(edge => edge.Id));
+        Assert.Equal("NaturalReferenceRepairInvalid", NaturalReferenceRecovery.Check(bindings with {
+            Bindings = [.. bindings.Bindings.Take(6), new("edge", "shelf", ["outside"])]
+        }, issues, requirements, design));
+    }
+
+    [Fact]
+    public void MissingReferenceComparisonShowsAnExistingElementWithAnEmptyList()
+    {
+        var requirements = NaturalDesignTests.Requirements() with {
+            SourceRanges = NaturalRequirementEvidence.Prepare(NaturalDesignTests.Prompt)
+        };
+        var design = NaturalDesignTests.Design("sequence") with {
+            Edges = [NaturalDesignTests.Design("sequence").Edges[0] with { RequirementIds = [] },
+                .. NaturalDesignTests.Design("sequence").Edges.Skip(1)]
+        };
+        var issue = Assert.Single(NaturalDesignValidation.DesignIssues(design, "sequence", requirements));
+        var comparison = NaturalIssueComparisonBuilder.Build("diagnostic", issue, requirements, design);
+        Assert.True(comparison.TargetExists);
+        Assert.Equal("empty-reference-list", comparison.ObservedState);
+        Assert.Equal("", comparison.Observed);
+        Assert.Empty(comparison.SourceExcerpts);
+    }
+
+    [Fact]
+    public void ParticipantReferencesComeOnlyFromExplicitIncidentConnections()
+    {
+        var requirements = new NaturalRequirements("FOUP 이동", ["FOUP", "STR", "Shelf"],
+            [new("r1", "FOUP에서 STR로 이동한다", "behavior", "explicit", ""),
+             new("r2", "선반 사용을 제안한다", "entity", "assumption", "")]);
+        NaturalDesignNode Participant(string id) => new(id, id, "participant", "", [], [], [], false);
+        var design = new NaturalDesign("FOUP 호출", [Participant("FOUP"), Participant("STR"), Participant("Shelf")],
+            [new("move", "FOUP", "STR", "message", "이동", "", "", "", [], ["r1"], false),
+             new("proposal", "STR", "Shelf", "message", "선반 제안", "", "", "", [], ["r2"], true)], []);
+
+        var completed = NaturalReferenceRecovery.CompleteParticipants(design, "sequence", requirements);
+
+        Assert.Equal(new[] { "r1" }, completed.Nodes[0].RequirementIds);
+        Assert.Equal(new[] { "r1" }, completed.Nodes[1].RequirementIds);
+        Assert.Empty(completed.Nodes[2].RequirementIds);
+        Assert.Equal(design.Edges, completed.Edges);
+        Assert.Contains(NaturalDesignValidation.DesignIssues(completed, "sequence", requirements),
+            issue => issue.ItemId == "Shelf" && issue.Code == "NaturalNodeRequirementIdsMissing");
     }
 
     [Fact]

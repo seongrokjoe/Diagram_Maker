@@ -75,7 +75,7 @@ internal static partial class NaturalDesignValidation
         "NaturalQuestionSourceInvalid" or "NaturalQuestionInvalid" or "NaturalRequirementsInvalid" or "NaturalRequirementIdsInvalid" or
         "NaturalRequirementEvidenceInvalid" or "NaturalReviewFieldsMissing" or "NaturalReviewUnknownIds" or "NaturalReviewDuplicateIds" or
         "NaturalReviewMissingIds" or "NaturalReviewEvidenceInvalid" or "NaturalReviewFieldInvalid" or "NaturalReviewIssuesInvalid" or "NaturalReviewDecisionInvalid" or "NaturalReviewTargetUnknown" or
-        "NaturalDesignFieldsInvalid" or "NaturalNodeInvalid" or "NaturalClassMembersMissing" or "NaturalMemberInvalid" or
+        "NaturalReferenceRepairInvalid" or "NaturalNodeRequirementIdsMissing" or "NaturalNodeRequirementIdsUnknown" or "NaturalEdgeRequirementIdsMissing" or "NaturalEdgeRequirementIdsUnknown" or "NaturalDesignFieldsInvalid" or "NaturalNodeInvalid" or "NaturalClassMembersMissing" or "NaturalMemberInvalid" or
         "NaturalEdgeInvalid" or "NaturalClassRelationInvalid" or "NaturalRequirementCoverageMissing" or "NaturalInterlockMissing" or "NaturalStateBoundaryInvalid" or
         "NaturalReviewInvalid" or "NaturalAcceptedIdsChanged" or "NaturalRequirementsReviewInvalid" or
         "EmptyContent" or "MixedContent" or "WrongRoot" or "MalformedJson" or "Deserialization" or "InvalidFields" => code,

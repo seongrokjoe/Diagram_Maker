@@ -5,7 +5,7 @@ namespace DiagramMaker.Services;
 
 internal static partial class NaturalDesignValidation
 {
-    public const string Protocol = "natural-design-v8";
+    public const string Protocol = "natural-design-v9";
     public static string? Requirements(NaturalRequirements value, string prompt)
     {
         if (string.IsNullOrWhiteSpace(value.Title) || value.Requirements is not { Count: > 0 and <= 150 } ||
