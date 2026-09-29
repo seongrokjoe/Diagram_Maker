@@ -738,7 +738,8 @@ public sealed record NaturalDiagramPageResult(
     string? ErrorMessage = null,
     DiagramArtifact? LastSuccessfulDiagram = null,
     bool Reused = false,
-    NaturalDesignQuality? DesignQuality = null);
+    NaturalDesignQuality? DesignQuality = null,
+    IReadOnlyList<string>? RequirementIds = null);
 
 public sealed record NaturalDiagramRecord(
     Guid Id,
@@ -753,7 +754,7 @@ public sealed record NaturalDiagramRecord(
     bool Reused = false,
     IReadOnlyList<NaturalDiagramViewResult>? Views = null,
     int Revision = 1,
-    NaturalRequirements? Requirements = null);
+    NaturalRequirements? Requirements = null, Guid? SourceRunId = null);
 
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum NaturalDiagramRunState
@@ -794,7 +795,7 @@ public sealed record NaturalDiagramRun(
     IReadOnlyList<NaturalAnswer>? Answers = null,
     int QuestionVersion = 0,
     int AnswerVersion = 0,
-    string? InputFingerprint = null, bool? ResumeAllowed = null)
+    string? InputFingerprint = null, bool? ResumeAllowed = null, Guid? SourceRunId = null)
 {
     public bool IsTerminal => State is NaturalDiagramRunState.Completed or NaturalDiagramRunState.Partial or
         NaturalDiagramRunState.Failed or NaturalDiagramRunState.Cancelled;
@@ -804,7 +805,7 @@ public sealed record CreateNaturalDiagramRunRequest(
     NaturalDiagramRequest Request,
     Guid? SourceDiagramId = null,
     IReadOnlyList<string>? RegenerateViewIds = null,
-    IReadOnlyList<string>? RegeneratePageIds = null);
+    IReadOnlyList<string>? RegeneratePageIds = null, Guid? SourceRunId = null);
 
 public sealed record NaturalDiagramRunActionRequest(int ExpectedRevision);
 

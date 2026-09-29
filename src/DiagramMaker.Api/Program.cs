@@ -715,6 +715,7 @@ api.MapPost("/natural-diagram-runs", async (
     HttpContext context,
     NaturalDiagramService service,
     IAppStore store,
+    IOptions<LlmOptions> options,
     CancellationToken cancellationToken) =>
 {
     var identity = context.GetInternalIdentity();
@@ -722,24 +723,51 @@ api.MapPost("/natural-diagram-runs", async (
     try { request = service.ValidateRequest(input.Request); }
     catch (ArgumentException exception) { return Results.BadRequest(new { error = exception.Message }); }
     NaturalDiagramRecord? source = null;
+    NaturalDiagramRun? sourceRun = null;
+    if (input.SourceRunId is { } sourceRunId)
+    {
+        if (input.SourceDiagramId is not null) return Results.BadRequest(new { error = "Select one source run or diagram." });
+        sourceRun = await store.GetNaturalDiagramRunAsync(sourceRunId, cancellationToken);
+        if (sourceRun is null) return Results.NotFound();
+        if (!CanAccessNaturalRun(sourceRun, identity.UserId)) return Results.StatusCode(StatusCodes.Status403Forbidden);
+        if (!sourceRun.IsTerminal) return Results.Conflict(new { error = "The source run is still active." });
+        if (sourceRun.Request.Prompt != request.Prompt || sourceRun.Request.EnableThinking != request.EnableThinking ||
+            !sourceRun.Request.EffectiveViews().SequenceEqual(request.EffectiveViews()))
+            return Results.BadRequest(new { error = "SourceRunId requires the same input and view settings." });
+    }
     if (input.SourceDiagramId is { } sourceId)
     {
         source = await store.GetNaturalDiagramAsync(sourceId, cancellationToken);
         if (source is null) return Results.NotFound(new { error = "The source natural diagram does not exist." });
         if (!CanAccessNaturalDiagram(source, identity.UserId)) return Results.StatusCode(StatusCodes.Status403Forbidden);
     }
-    else if (input.RegenerateViewIds is { Count: > 0 } || input.RegeneratePageIds is { Count: > 0 })
+    else if (sourceRun is null && (input.RegenerateViewIds is { Count: > 0 } || input.RegeneratePageIds is { Count: > 0 }))
         return Results.BadRequest(new { error = "Selected-output regeneration requires a source natural diagram." });
     var viewIds = request.EffectiveViews().Select(view => view.Id).ToHashSet(StringComparer.Ordinal);
     if (input.RegenerateViewIds?.Any(viewId => !viewIds.Contains(viewId)) == true)
         return Results.BadRequest(new { error = "RegenerateViewIds contains an unknown view." });
-    var knownPageIds = source?.Views?.SelectMany(view => view.Pages ?? []).Select(page => page.Id).ToHashSet(StringComparer.Ordinal) ?? [];
+    var knownPageIds = (source?.Views ?? sourceRun?.Views)?.SelectMany(view => view.Pages ?? []).Select(page => page.Id).ToHashSet(StringComparer.Ordinal) ?? [];
     if (input.RegeneratePageIds?.Any(pageId => !knownPageIds.Contains(pageId)) == true)
         return Results.BadRequest(new { error = "RegeneratePageIds contains an unknown scenario page." });
     var now = DateTimeOffset.UtcNow;
     var run = new NaturalDiagramRun(Guid.NewGuid(), identity.UserId, request, NaturalDiagramRunState.Queued,
         now, now, StageMessage: "실행 대기", SourceDiagramId: source?.Id,
-        RegenerateViewIds: input.RegenerateViewIds, RegeneratePageIds: input.RegeneratePageIds);
+        RegenerateViewIds: input.RegenerateViewIds, RegeneratePageIds: input.RegeneratePageIds, SourceRunId: sourceRun?.Id);
+    if (sourceRun is not null)
+    {
+        var compatible = sourceRun.InputFingerprint == NaturalDiagramRunProcessor.Fingerprint(sourceRun, options.Value);
+        run = run with { Questions = sourceRun.Questions, Answers = sourceRun.Answers,
+            QuestionVersion = sourceRun.QuestionVersion, AnswerVersion = sourceRun.AnswerVersion,
+            Requirements = compatible ? sourceRun.Requirements : null,
+            Checkpoints = compatible ? sourceRun.Checkpoints?.Where(checkpoint => checkpoint.State == "Completed" &&
+                checkpoint.Stage is "natural-stage-plan" or "natural-stage-block" or "natural-stage-division" or "natural-stage-review").ToArray() : null,
+            Views = compatible ? sourceRun.Views?.Select(view => view with {
+                Pages = view.Pages?.Select(page => (input.RegeneratePageIds?.Contains(page.Id) == true ||
+                    input.RegenerateViewIds?.Contains(view.ViewId) == true) ? page with { State = "Failed" } : page).ToArray()
+            }).ToArray() : null };
+        if (!compatible && input.RegeneratePageIds is { Count: > 0 })
+            return Results.Conflict(new { error = "The source settings or generator changed. Regenerate the complete view." });
+    }
     if (!await store.CreateNaturalDiagramRunAsync(run, cancellationToken))
         return Results.Conflict(new { error = "The natural diagram run could not be queued." });
     await store.SaveAuditAsync(new AuditEvent(Guid.NewGuid(), identity.UserId, "natural-diagram-run.create", null,
@@ -841,7 +869,10 @@ api.MapGet("/natural-diagram-runs/{id:guid}/diagnostics", async (
     if (run is null) return Results.NotFound();
     if (!CanAccessNaturalRun(run, context.GetInternalIdentity().UserId)) return Results.StatusCode(StatusCodes.Status403Forbidden);
     if (context.Request.Query["format"] == "json")
-        return Results.Ok(new { run.Id, run.State, run.ErrorCode, run.Execution, diagnostics = run.Diagnostics ?? [] });
+        return Results.Ok(new { run.Id, run.State, run.ErrorCode, run.Execution, diagnostics = run.Diagnostics ?? [],
+            unresolvedProblems = NaturalRunDiagnostics.Unresolved(run) });
+    if (context.Request.Query["format"] == "summary")
+        return Results.Text(NaturalRunDiagnostics.Summary(run), "text/plain; charset=utf-8");
     var report = LlmDiagnosticReport.Text(run.State.ToString(), run.ErrorCode, run.Execution, run.Diagnostics);
     return Results.File(System.Text.Encoding.UTF8.GetBytes(report), "text/plain; charset=utf-8", $"natural-{id}-diagnostics.txt");
 });

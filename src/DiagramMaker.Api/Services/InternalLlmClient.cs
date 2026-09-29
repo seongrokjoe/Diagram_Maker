@@ -8,6 +8,8 @@ namespace DiagramMaker.Services;
 public interface IInternalLlmClient
 {
     bool IsEnabled { get; }
+    Task<IReadOnlyList<NaturalScenario>?> SplitNaturalScenarioAsync(string prompt, string type,
+        NaturalRequirements requirements, bool thinking, CancellationToken ct) => Task.FromResult<IReadOnlyList<NaturalScenario>?>(null);
     Task<NaturalRequirements?> ExtractNaturalRequirementsAsync(string prompt, bool thinking, CancellationToken ct) =>
         Task.FromResult<NaturalRequirements?>(null);
     Task<bool> ReviewNaturalSetAsync(string prompt, NaturalRequirements requirements,

@@ -164,6 +164,7 @@ export type Narrative = {
 };
 
 export type NaturalDiagramRecord = {
+  sourceRunId?: string;
   id: string;
   request: {
     prompt: string;
@@ -218,6 +219,7 @@ export type NaturalDiagramPageResult = {
 };
 
 export type NaturalDiagramRun = {
+  sourceRunId?: string;
   resumeAllowed?: boolean;
   id: string;
   ownerUserId: string;

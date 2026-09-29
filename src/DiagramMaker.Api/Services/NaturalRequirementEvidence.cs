@@ -93,7 +93,7 @@ internal static class NaturalRequirementEvidence
     public static NaturalRequirements ForScenario(NaturalRequirements requirements, NaturalScenario scenario)
     {
         var ids = scenario.RequirementIds.ToHashSet(StringComparer.Ordinal);
-        var selected = requirements.Requirements.Where(r => ids.Contains(r.Id) || r.Kind is "entity" or "interlock").ToArray();
+        var selected = requirements.Requirements.Where(r => ids.Contains(r.Id)).ToArray();
         var rangeIds = selected.SelectMany(RangeIds).ToHashSet(StringComparer.Ordinal);
         return requirements with { Title = scenario.Title, Requirements = selected,
             SourceRanges = (requirements.SourceRanges ?? []).Where(range => rangeIds.Contains(range.Id)).ToArray(), Scenarios = [scenario] };

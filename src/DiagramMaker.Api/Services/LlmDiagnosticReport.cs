@@ -36,6 +36,7 @@ internal static class LlmDiagnosticReport
             text.AppendLine($"{d.StartedAt:O} Purpose: {Code(d.Purpose)}; stage: {Code(d.Stage)}; state: {Code(d.State)}; error: {Code(d.ErrorCode)}; validation: {Code(d.ValidationCode)}");
             var missing = d.Kind is null ? "not-recorded" : "not-applicable";
             text.AppendLine($"Kind: {Code(d.Kind, "not-recorded")}; request: {Code(d.RequestId ?? (d.Kind == "Request" ? d.Id : null), missing)}");
+            text.AppendLine($"View: {Code(d.ViewId)}; scenario: {Code(d.ScenarioId)}; page: {Code(d.PageId)}; root: {Code(d.RootDiagnosticId)}; exception: {Code(d.ExceptionKind)}");
             text.AppendLine($"HTTP: {d.HttpStatus?.ToString() ?? missing}; category: {Code(d.ServerErrorCategory, missing)}; action: {Code(d.NextAction, missing)}; recovery: {Code(d.RecoveryState, missing)}");
             text.AppendLine($"Mode: {Code(d.OutputMode)}; compatible schema: {d.SchemaRelaxed}; finish: {Code(d.FinishReason)}; sent: {d.Sent}; attempts: {d.TransportAttempts}");
             text.AppendLine($"Characters: {d.InputCharacters}/{d.InputCharacterLimit}; input tokens: {d.InputTokens}/{d.InputTokenLimit}; estimated: {d.EstimatedInputTokens}; context: {d.ContextTokenLimit}; output requested: {d.OutputLimit}; output used: {d.CompletionTokens}");

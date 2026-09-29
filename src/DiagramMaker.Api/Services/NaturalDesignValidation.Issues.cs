@@ -6,8 +6,8 @@ internal static partial class NaturalDesignValidation
 {
     public static IReadOnlyList<NaturalIssue> DesignIssues(NaturalDesign design, string type, NaturalRequirements requirements)
     {
-        if (design.Nodes is null || design.Edges is null || design.Notes is null)
-            return [new("design", "structure", "NaturalDesignFieldsInvalid", "Return non-null concepts, connections and notes.")];
+        var structural = BasicIssues(design);
+        if (structural.Count > 0) return structural;
         var known = requirements.Requirements.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
         var assumptions = requirements.Requirements.Where(item => item.Origin == "assumption")
             .Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
@@ -40,8 +40,6 @@ internal static partial class NaturalDesignValidation
                 Add("requirementIds", "NaturalNodeRequirementIdsMissing", "Cite the requirement that this explicit concept implements.");
             if (!node.Assumption && node.RequirementIds.Any(assumptions.Contains))
                 Add("assumption", "NaturalNodeInvalid", "Mark this proposed concept as an assumption.");
-            if (type == "class" && node.Members.Count == 0)
-                Add("members", "NaturalClassMembersMissing", "Provide grounded or marked-assumption fields and methods for this class.");
         }
         var edgeKinds = type switch {
             "class" => new[] { "inherits", "implements", "association", "depends", "aggregation", "composition" },
@@ -114,5 +112,21 @@ internal static partial class NaturalDesignValidation
                 (node.Shape == "decision" || node.Kind == "decision") &&
                 design.Edges.Count(edge => edge.SourceId == node.Id) >= 2)
         };
+    }
+
+    internal static IReadOnlyList<NaturalIssue> BasicIssues(NaturalDesign design)
+    {
+        if (design?.Nodes is null || design.Edges is null || design.Notes is null)
+            return [new("design", "structure", "NaturalDesignFieldsInvalid", "Return non-null concepts, connections and notes.")];
+        if (design.Nodes.Any(n => n is null || string.IsNullOrWhiteSpace(n.Id) || n.RequirementIds is null || n.Members is null || n.Details is null) ||
+            design.Edges.Any(e => e is null || string.IsNullOrWhiteSpace(e.Id) || e.RequirementIds is null || e.ControlPath is null))
+            return [new("design", "structure", "NaturalDesignFieldsInvalid", "Supply complete elements with nonempty IDs.")];
+        var ids = design.Nodes.Select(n => n.Id).Concat(design.Edges.Select(e => e.Id)).ToArray();
+        if (ids.Distinct(StringComparer.Ordinal).Count() != ids.Length)
+            return [new("design", "id", "DuplicateId", "Use unique IDs across all nodes and edges; preserve unambiguous existing references.")];
+        var nodes = design.Nodes.Select(n => n.Id).ToHashSet(StringComparer.Ordinal);
+        return design.Edges.Where(e => !nodes.Contains(e.SourceId) || !nodes.Contains(e.TargetId))
+            .Select(e => new NaturalIssue(e.Id, !nodes.Contains(e.SourceId) ? "sourceId" : "targetId", "NaturalMeaningReferencesInvalid",
+                "Use an existing node ID.", TargetKind: "edge")).ToArray();
     }
 }

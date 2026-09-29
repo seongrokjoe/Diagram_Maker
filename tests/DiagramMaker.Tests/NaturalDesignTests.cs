@@ -51,7 +51,9 @@ public sealed class NaturalDesignTests
         var client = Client(transport);
         var result = await client.GenerateDesignedNaturalAsync(Prompt, type, false,
             new DiagramPresetCatalog().Resolve(type, "balanced"), null, null, CancellationToken.None);
-        Assert.Equal(new[] { "requirements", "requirements-review", "scenario-design", "scenario-review" }, transport.Purposes);
+        Assert.Equal(type is "sequence" or "class"
+            ? new[] { "requirements", "requirements-review", "scenario-plan", type == "class" ? "class-members" : "scenario-block", "scenario-review" }
+            : new[] { "requirements", "requirements-review", "scenario-design", "scenario-review" }, transport.Purposes);
         Assert.Equal("Reviewed", result!.Quality!.Status);
         Assert.Equal(new[] { "r1" }, result.Quality.ReviewedRequirementIds);
         Assert.False(result.Quality.RepairUsed);
@@ -72,7 +74,7 @@ public sealed class NaturalDesignTests
             new DiagramPresetCatalog().Resolve("flowchart", "balanced"), null, null, CancellationToken.None);
         if (alwaysReject) Assert.Equal("NATURAL_DESIGN_REJECTED", (await Assert.ThrowsAsync<LlmClientException>(() => task)).Code);
         else Assert.True((await task)!.Quality!.RepairUsed);
-        Assert.Equal(alwaysReject ? new[] { "requirements", "requirements-review", "scenario-design", "scenario-review", "scenario-review-confirm", "scenario-repair" } :
+        Assert.Equal(alwaysReject ? new[] { "requirements", "requirements-review", "scenario-design", "scenario-review", "scenario-review-confirm", "scenario-repair", "scenario-block-redesign" } :
             new[] { "requirements", "requirements-review", "scenario-design", "scenario-review", "scenario-review-confirm", "scenario-repair", "scenario-review" }, model.Purposes);
     }
 
@@ -199,6 +201,7 @@ public sealed class NaturalDesignTests
             if (VaryRepair && request.Purpose == "scenario-repair" && result is NaturalDesign design)
                 result = design with { Nodes = design.Nodes.Select((node, index) => index == 1 ? node with { Label = "장비를 운전한다" } : node).ToArray() };
             var value = JsonSerializer.SerializeToNode(result, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+            ScenarioPipelineTests.ScenarioModel.Adapt(value, request);
             ScenarioPipelineTests.ScenarioModel.Project(value, request.StructuredSchema!.Value);
             return Task.FromResult(new VllmCompletionResult(value.ToJsonString(), "stop", 1, true, false, 0, request.MaxOutputTokens, 100, 100, 200));
         }

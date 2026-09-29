@@ -99,8 +99,17 @@ public sealed class NaturalDiagramRunProcessor(IAppStore store, NaturalDiagramSe
         return failures.Any(d => d.RecoveryState is "Interrupted" or "RequiresAction") || !failures.Any(d => d.RecoveryState == "Exhausted");
     }
 
-    private static string StageLabel(SemanticExecution execution) => execution.Progress.LastRequest?.Purpose == "natural-final-review"
-        ? "전체 결과의 누락·모순 검토" : execution.Stage switch
+    private static string StageLabel(SemanticExecution execution) => execution.Progress.LastRequest?.Purpose switch
+    {
+        "natural-final-review" => "전체 결과의 누락·모순 검토",
+        "scenario-plan" => "참여자·공통 구조와 동작 범위 계획",
+        "scenario-block" => "조건과 순서를 보존해 동작 생성",
+        "class-members" => "클래스별 멤버와 책임 생성",
+        "scenario-block-split" or "scenario-partition" => "큰 동작 범위를 의미에 따라 분할",
+        "scenario-reference-repair" => "요구사항 근거 연결 보정",
+        "scenario-repair" or "scenario-block-redesign" => "지적된 동작 범위 보정",
+        "scenario-review" or "scenario-review-confirm" => "조건·인터락·흐름 검토",
+        _ => execution.Stage switch
         {
             "llm-NaturalRequirements" or "llm-NaturalExtraction" => "요구사항 추출·보정",
             "llm-NaturalRequirementsReview" or "llm-NaturalSourceReview" => "원문 근거와 요구사항 검토",
@@ -108,7 +117,8 @@ public sealed class NaturalDiagramRunProcessor(IAppStore store, NaturalDiagramSe
             "llm-NaturalDesignReview" => "조건·인터락·흐름 검토",
             "natural-page" => "시나리오 페이지 생성·저장",
             _ => "원문 근거와 시나리오 준비"
-        };
+        }
+    };
 }
 
 public sealed class NaturalDiagramWorker(IServiceScopeFactory scopes, IAppStore store,

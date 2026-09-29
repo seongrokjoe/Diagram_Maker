@@ -14,7 +14,9 @@ public sealed record LlmDiagnostic(string Id, string Stage, string UnitId, strin
     int? Attempt = null, string? RecoveryState = null, int? RequiredOutputTokens = null,
     IReadOnlyList<string>? AncestorGroupIds = null, int? HttpStatus = null,
     string? ServerErrorCategory = null, string? NextAction = null, bool SchemaRelaxed = false,
-    string? Kind = null, string? RequestId = null, NaturalExtractionMetrics? Extraction = null);
+    string? Kind = null, string? RequestId = null, NaturalExtractionMetrics? Extraction = null,
+    string? ViewId = null, string? ScenarioId = null, string? PageId = null,
+    string? RootDiagnosticId = null, string? ExceptionKind = null);
 public sealed record NaturalExtractionMetrics(int SourceRanges, int? Received, int? Grounded, int? Preserved,
     int? Replaced, int? Rejected, int ExtractionAttempts, int ReviewAttempts);
 public sealed record LlmValidationDetails(int ExpectedItems, int ReceivedItems,

@@ -100,7 +100,9 @@ public sealed class ScenarioPipelineTests
         var client = new InternalLlmClient(Options.Create(new LlmOptions { Enabled = true }), new(), new(), transport, new(transport));
         var result = await client.GenerateDesignedNaturalAsync("문 조건을 검사하고 결과를 알린다", type, false,
             new DiagramPresetCatalog().Resolve(type, "balanced"), null, requirements, CancellationToken.None);
-        Assert.Equal(new[] { "scenario-design", "scenario-review" }, transport.Purposes);
+        Assert.Equal(type is "sequence" or "class"
+            ? new[] { "scenario-plan", type == "class" ? "class-members" : "scenario-block", "scenario-review" }
+            : new[] { "scenario-design", "scenario-review" }, transport.Purposes);
         Assert.Equal(2, result!.Quality!.ReviewedRequirementIds.Count);
         Assert.NotEmpty(new MermaidCompiler(new()).Compile(result.Diagram));
     }
@@ -124,12 +126,47 @@ public sealed class ScenarioPipelineTests
                     Edges = design.Edges.Select(e => e with { RequirementIds = ids }).ToArray() };
             }
             var json = JsonSerializer.SerializeToNode(value, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+            Adapt(json, request);
             Project(json, request.StructuredSchema!.Value);
             return Task.FromResult(new VllmCompletionResult(json.ToJsonString(), "stop", 1, true, false, 0, request.MaxOutputTokens, 10, 10, 20));
         }
 
         // The fixture emits the declared contract, then production code validates
         // references and semantics. It never repairs a response on the server.
+        internal static void Adapt(JsonNode value, VllmCompletionRequest request)
+        {
+            if (value is not JsonObject obj || obj["nodes"] is not JsonArray nodes) return;
+            using var doc = JsonDocument.Parse(request.UserPrompt);
+            var context = doc.RootElement;
+            var properties = request.StructuredSchema!.Value.GetProperty("properties");
+            if (properties.TryGetProperty("blocks", out _))
+            {
+                var ids = nodes.Select(n => n!["id"]!.GetValue<string>()).ToArray();
+                var refs = context.GetProperty("requirements").GetProperty("requirements").EnumerateArray().Select(r => r.GetProperty("id").GetString()).ToArray();
+                var type = context.GetProperty("type").GetString();
+                obj["blocks"] = JsonSerializer.SerializeToNode((type == "class" ? ids.Select(id => new[] { id }) : [ids])
+                    .Select((blockIds, index) => new { id = "block" + index, title = "동작 " + index,
+                        requirementIds = refs, nodeIds = blockIds, controlPath = Array.Empty<ControlScope>() }));
+                if (type == "class") foreach (var node in nodes) node!["members"] = new JsonArray();
+                else obj["edges"] = new JsonArray();
+            }
+            else if (context.TryGetProperty("block", out var block))
+            {
+                if (context.GetProperty("type").GetString() == "sequence") obj["nodes"] = new JsonArray();
+                else
+                {
+                    var id = block.GetProperty("nodeIds")[0].GetString();
+                    obj["nodes"] = new JsonArray(nodes.Where(n => n!["id"]!.GetValue<string>() == id).Select(n => n!.DeepClone()).ToArray());
+                    obj["edges"] = new JsonArray();
+                }
+            }
+            else if (properties.TryGetProperty("baseHash", out var hash))
+            {
+                obj["baseHash"] = hash.GetProperty("enum")[0].GetString();
+                obj["removedNodeIds"] = new JsonArray(); obj["removedEdgeIds"] = new JsonArray(); obj["edgeOrder"] = new JsonArray();
+            }
+        }
+
         internal static void Project(JsonNode value, JsonElement schema)
         {
             if (value is JsonObject obj && schema.TryGetProperty("properties", out var properties))

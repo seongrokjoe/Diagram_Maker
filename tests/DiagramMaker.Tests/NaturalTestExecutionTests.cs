@@ -79,6 +79,8 @@ public sealed class NaturalTestExecutionTests
             "owner", CancellationToken.None, (value, _) => { snapshots.Add(value); return Task.CompletedTask; });
         Assert.All(result.Views!, view => Assert.Equal("Completed", view.State));
         Assert.Equal(new[] { "flowchart", "sequence", "flowchart" }, model.DesignedTypes);
+        Assert.Single(model.Purposes, purpose => purpose == "scenario-design");
+        Assert.Contains("scenario-repair", model.Purposes);
         var originalSequence = snapshots.SelectMany(s => s.Views).First(v => v.ViewId == "sequence").Diagram!.Id;
         Assert.Equal(originalSequence, result.Views![1].Diagram!.Id);
         Assert.Contains(result.Views[0].Diagram!.Ir.Nodes, n => n.Label.Contains("수정"));
@@ -125,16 +127,18 @@ public sealed class NaturalTestExecutionTests
             else
             {
                 var type = root.GetProperty("type").GetString()!;
-                DesignedTypes.Add(type);
+                if (request.Purpose is not ("scenario-plan" or "class-members")) DesignedTypes.Add(type);
                 var delay = DesignedTypes.Count == 1 ? DelayFirst : DelayAfterFirst;
                 // Deliberately ignore cancellation to verify the completion boundary rejects late data.
                 if (delay > 0) await Task.Delay(delay, CancellationToken.None);
-                var design = NaturalDesignTests.Design(type);
-                if (root.GetProperty("issues").GetArrayLength() > 0)
+                var design = root.TryGetProperty("baseHash", out _) ?
+                    root.GetProperty("rejected").Deserialize<NaturalDesign>(PromptJson.Options)! : NaturalDesignTests.Design(type);
+                if (root.TryGetProperty("issues", out var issues) && issues.GetArrayLength() > 0)
                     design = design with { Nodes = design.Nodes.Select(n => n with { Label = n.Label + " 수정" }).ToArray() };
                 result = design;
             }
             var value = JsonSerializer.SerializeToNode(result, PromptJson.Options)!;
+            ScenarioPipelineTests.ScenarioModel.Adapt(value, request);
             ScenarioPipelineTests.ScenarioModel.Project(value, request.StructuredSchema!.Value);
             return new(value.ToJsonString(), "stop", 1, true, false, 0, request.MaxOutputTokens, 10, 10, 20);
         }

@@ -86,6 +86,7 @@ export const api = {
   createNaturalDiagramRun: (input: {
     request: NaturalDiagramRecord["request"];
     sourceDiagramId?: string;
+    sourceRunId?: string;
     regenerateViewIds?: string[];
     regeneratePageIds?: string[];
   }) => request<NaturalDiagramRun>("/api/v1/natural-diagram-runs", { method: "POST", body: JSON.stringify(input) }),

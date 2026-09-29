@@ -234,6 +234,9 @@ public sealed class SemanticExecution : IDisposable
 
     public async Task RecordAsync(LlmDiagnostic record)
     {
+        if (NaturalDiagnosticScope.Current is { } naturalScope)
+            record = record with { ViewId = record.ViewId ?? naturalScope.ViewId,
+                ScenarioId = record.ScenarioId ?? naturalScope.ScenarioId, PageId = record.PageId ?? naturalScope.PageId };
         if (record.ProtocolVersion is null && requestScope is { } scope)
             record = record with { ProtocolVersion = scope.Protocol, RecoveryGroupId = scope.Group,
                 ParentGroupId = scope.Parent, Attempt = record.Attempt ?? scope.Attempt, AncestorGroupIds = scope.Ancestors };

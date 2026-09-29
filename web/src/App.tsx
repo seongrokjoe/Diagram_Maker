@@ -3,6 +3,7 @@ import { AnalysisWorkspace } from "./AnalysisWorkspace";
 import { CodeBlockWorkspace } from "./CodeBlockWorkspace";
 import { CodeDiagramTest } from "./CodeDiagramTest";
 import { NaturalDiagramTest } from "./NaturalDiagramTest";
+import { naturalResultState, naturalResultCounts } from "./naturalResultState";
 import { api } from "./api";
 import { createFeatureErrors, type FeatureMessages } from "./featureErrors";
 import { DiagramEditor } from "./DiagramEditor";
@@ -55,7 +56,9 @@ function NormalApp() {
   const [naturalRuns, setNaturalRuns] = useState<NaturalDiagramRun[]>([]);
   const [naturalAnswers, setNaturalAnswers] = useState<Record<string, string>>({});
   const [naturalPollError, setNaturalPollError] = useState("");
+  const [naturalSummary, setNaturalSummary] = useState("");
   const naturalSelection = useRef(0);
+  useEffect(() => { setNaturalSummary(""); }, [naturalRun?.id]);
   const [naturalPrompt, setNaturalPrompt] = useState("");
   const [naturalThinking, setNaturalThinking] = useState(false);
   const [naturalHistory, setNaturalHistory] = useState<NaturalDiagramRecord[]>([]);
@@ -122,6 +125,17 @@ function NormalApp() {
     }
   }
   function selectNaturalRecord(record: NaturalDiagramRecord) {
+    const run = naturalRuns.find(item => item.resultDiagramId === record.id);
+    if (run) { void openNaturalRun(run); return; }
+    if (record.sourceRunId && record.source !== "manualDsl") {
+      const selection = ++naturalSelection.current;
+      void api.getNaturalDiagramRun(record.sourceRunId).then(value => {
+        if (selection === naturalSelection.current) return openNaturalRun(value);
+      }).catch(reason => {
+        if (selection === naturalSelection.current) reportError(messageOf(reason, "실행 이력을 불러오지 못했습니다."));
+      });
+      return;
+    }
     naturalSelection.current++;
     setNaturalRun(null);
     loadNaturalRecord(record, setNaturalRecord, setNaturalPrompt, setNaturalThinking, setNaturalViews, setActiveNaturalView, setActiveNaturalPage);
@@ -203,13 +217,15 @@ function NormalApp() {
   }
 
   async function regenerateNatural(viewId: string, pageId?: string) {
-    if (!naturalRecord) return;
+    if (!naturalRecord && !naturalRun) return;
     setBusyAction(`natural-regenerate-${viewId}`); const reportAttemptError = errorChannels.begin("natural");
     try {
-      const views = naturalRecord.request.views ?? naturalViews;
+      const source = naturalRecord?.request ?? naturalRun!.request;
+      const views = source.views ?? naturalViews;
       const run = await api.createNaturalDiagramRun({
-        request: { ...naturalRecord.request, views, forceRegenerate: false },
-        sourceDiagramId: naturalRecord.id,
+        request: { ...source, views, forceRegenerate: false },
+        sourceDiagramId: naturalRecord?.id,
+        sourceRunId: naturalRecord ? undefined : naturalRun!.id,
         regenerateViewIds: pageId ? undefined : [viewId],
         regeneratePageIds: pageId ? [pageId] : undefined,
       });
@@ -300,7 +316,9 @@ function NormalApp() {
   const selectedNatural = naturalResults.find((view) => view.viewId === activeNaturalView) ?? naturalResults[0];
   const naturalPages = selectedNatural ? effectiveNaturalPages(selectedNatural) : [];
   const selectedNaturalPage = naturalPages.find(page => page.id === activeNaturalPage) ?? naturalPages[0];
-  const diagram = selectedNaturalPage?.diagram ?? selectedNaturalPage?.lastSuccessfulDiagram ?? selectedNatural?.diagram ?? selectedNatural?.lastSuccessfulDiagram;
+  const selectedNaturalState = naturalResultState(selectedNatural, selectedNaturalPage);
+  const diagram = selectedNaturalState.diagram;
+  const naturalCounts = naturalResultCounts(naturalResults);
   const canEditNatural = Boolean(naturalRecord && (!naturalRun || naturalRun.resultDiagramId === naturalRecord.id));
   return <div className="app-shell">
     <header className="topbar"><div><p className="eyebrow">INTERNAL · SOURCE SAFE</p><h1>AI Git Architecture Reviewer</h1></div><span className="network-badge">외부 전송 없음</span></header>
@@ -330,20 +348,32 @@ function NormalApp() {
           <p className="help">같은 요청·종류·샘플은 같은 결과를 재사용합니다. 다른 결과가 필요할 때만 재생성하세요.</p>
           {naturalRuns.length > 0 && <details className="natural-run-history"><summary>최근 실행 ({naturalRuns.length})</summary><div className="revision-list">
             {naturalRuns.map(run => <button type="button" key={run.id} className={naturalRun?.id === run.id ? "active" : ""} onClick={() => void openNaturalRun(run)}>
-              <span>{run.request.prompt.slice(0, 80)}</span><small>{run.state} · {run.progress}%</small>
+              <span>{run.request.prompt.slice(0, 80)}</span><small>{new Date(run.createdAt).toLocaleString()} · {(run.request.views ?? []).map(view => formatDiagramType(view.diagramType)).join(" / ")} · {run.state}</small>
             </button>)}
           </div></details>}
           {naturalHistory.length > 0 && <div className="revision-list"><strong>최근 다이어그램</strong>{naturalHistory.map((record) => <button type="button" className={naturalRecord?.id === record.id && !naturalRun ? "active" : ""} key={record.id} onClick={() => selectNaturalRecord(record)}><span>{record.diagram.ir.title}</span><small>{effectiveNaturalViews(record).length}개 형식 · r{record.revision}</small></button>)}</div>}
         </form>
         <section className="panel preview">
           <div className="panel-heading"><div><p className="section-label">PREVIEW</p><h2>{diagram?.ir.title ?? "생성 결과"}</h2></div>{diagram && <span className="status-chip">{formatDiagramType(diagram.type)} · v{diagram.version}</span>}</div>
-          {naturalRun && <div className="connection-card natural-run-status" role="status"><strong>{naturalRun.stageMessage}</strong><progress max={100} value={naturalRun.progress} /><span>{naturalRun.progress}% · {naturalRun.state}</span>{naturalRun.errorMessage && <small>{naturalRun.errorMessage}</small>}<div className="button-row">
+          {naturalRun && <div className="connection-card natural-run-status" role="status"><strong>{naturalRun.stageMessage}</strong><progress max={100} value={naturalRun.progress} /><span>{naturalRun.progress}% · {naturalRun.state}</span>{naturalRun.errorMessage && <small>{naturalResults.length > 0 ? "완료하지 못한 결과가 있습니다. 각 시나리오를 선택해 해당 오류를 확인하세요." : naturalRun.errorMessage}</small>}<div className="button-row">
             {naturalRunActive && <button type="button" className="secondary" onClick={() => void cancelNaturalRun()}>실행 취소</button>}
             {(naturalRun.state === "Partial" || naturalRun.state === "Failed" || naturalRun.state === "Cancelled") && (naturalRun.resumeAllowed !== false
               ? <button type="button" className="secondary" onClick={() => void resumeNaturalRun()}>저장 지점에서 이어하기</button>
               : <p>자동 보정을 완료하지 못했습니다. 아래 진단에서 실패 단계와 원인을 확인하세요. LLM 점검의 자연어 생성 검사에서도 전달용 요약을 확인할 수 있습니다.</p>)}
             <a href={`/api/v1/natural-diagram-runs/${naturalRun.id}/diagnostics`} download>진단 다운로드</a>
+            <button type="button" className="secondary" onClick={() => {
+              const runId = naturalRun.id, selection = naturalSelection.current;
+              void fetch(`/api/v1/natural-diagram-runs/${runId}/diagnostics?format=summary`).then(async response => {
+                if (!response.ok) throw new Error("진단 요약을 불러오지 못했습니다.");
+                const summary = await response.text();
+                if (naturalSelection.current !== selection) return;
+                setNaturalSummary(summary);
+                await navigator.clipboard.writeText(summary).catch(() => {});
+              }).catch(reason => reportError(messageOf(reason, "진단 요약을 불러오지 못했습니다.")));
+            }}>진단 요약 복사</button>
           </div></div>}
+          {naturalSummary && <label>전달용 진단 요약<textarea readOnly rows={6} value={naturalSummary} /></label>}
+          {naturalResults.length > 0 && <p className="natural-result-counts">완료 {naturalCounts.completed}개 · 부분 완료 {naturalCounts.partial}개 · 실패 {naturalCounts.failed}개</p>}
           {naturalPollError && <p role="status" className="warning">{naturalPollError}</p>}
           {naturalRun?.execution && <SemanticProgressView value={naturalRun.execution} running={naturalRunActive} waitingForAnswer={naturalRun.state === "NeedsClarification"}
             diagnosticsUrl={`/api/v1/natural-diagram-runs/${naturalRun.id}/diagnostics?format=json`}
@@ -363,22 +393,22 @@ function NormalApp() {
           </section>}
           {naturalResults.length > 0 && <div className="diagram-type-tabs">{naturalResults.map((view) => <button type="button" key={view.viewId} className={selectedNatural?.viewId === view.viewId ? "active" : ""} onClick={() => { setActiveNaturalView(view.viewId); setActiveNaturalPage(effectiveNaturalPages(view)[0]?.id ?? ""); }}>{formatDiagramType(view.selection.diagramType)}{view.state === "Failed" ? " · 실패" : view.state === "Partial" ? " · 부분" : ""}</button>)}</div>}
           {naturalPages.length > 1 && <div className="diagram-type-tabs natural-scenario-tabs" aria-label="자연어 시나리오 결과">{naturalPages.map(page =>
-            <button type="button" key={page.id} className={selectedNaturalPage?.id === page.id ? "active" : ""} onClick={() => setActiveNaturalPage(page.id)}>{page.title}{page.state === "Failed" ? " · 실패" : ""}</button>)}</div>}
+            <button type="button" key={page.id} className={selectedNaturalPage?.id === page.id ? "active" : ""} onClick={() => setActiveNaturalPage(page.id)}>{page.title}{page.state === "Failed" ? " · 실패" : page.state === "Partial" ? " · 부분 완료" : page.state === "Completed" ? " · 완료" : ""}</button>)}</div>}
           {naturalPages.length > 1 && <details className="diagnostic-panel"><summary>시나리오 개요와 상세 페이지</summary>
             <ul>{naturalPages.map(page => <li key={page.id}><button type="button" className="text-button" onClick={() => setActiveNaturalPage(page.id)}>{page.title}</button>
               <span> · {page.designQuality?.reviewedRequirementIds.length ?? 0}개 요구사항</span>
               <p>{naturalRequirements?.requirements.filter(item => page.designQuality?.reviewedRequirementIds.includes(item.id)).map(item => item.text).join(" · ")}</p>
             </li>)}</ul>
           </details>}
-          {naturalRecord && selectedNatural && <div className="diagram-meta"><span>{selectedNaturalPage?.reused || selectedNatural.reused ? "이전 결과 재사용" : selectedNaturalPage?.state === "Failed" ? "생성 실패 · 마지막 정상 결과 표시" : "LLM 생성"}</span><div className="button-row"><button type="button" className="secondary" disabled={busy || naturalRunActive} onClick={() => void regenerateNatural(selectedNatural.viewId)}>{elapsedLabel("이 형식 다시 생성", busyAction === `natural-regenerate-${selectedNatural.viewId}`, busySeconds)}</button>{selectedNaturalPage && <button type="button" className="secondary" disabled={busy || naturalRunActive} onClick={() => void regenerateNatural(selectedNatural.viewId, selectedNaturalPage.id)}>이 시나리오 다시 생성</button>}</div></div>}
-          {(selectedNaturalPage?.errorMessage ?? selectedNatural?.errorMessage) && <p className="warning">{selectedNaturalPage?.errorMessage ?? selectedNatural?.errorMessage}</p>}
-          {(selectedNaturalPage?.designQuality ?? selectedNatural?.designQuality) && (() => { const quality = selectedNaturalPage?.designQuality ?? selectedNatural!.designQuality!; return <details className="diagnostic-panel"><summary>{quality.status === "Reviewed" ? "생성 원본 설계 검토 완료" : "검토 후 편집됨"} · 요구사항 {quality.reviewedRequirementIds.length}개 · 설계 가정 {quality.assumptionElementIds.length}개</summary>
+          {(naturalRecord || naturalRun) && selectedNatural && <div className="diagram-meta"><span>{selectedNaturalState.label}</span><div className="button-row"><button type="button" className="secondary" disabled={busy || naturalRunActive} onClick={() => void regenerateNatural(selectedNatural.viewId)}>{elapsedLabel("이 형식 다시 생성", busyAction === `natural-regenerate-${selectedNatural.viewId}`, busySeconds)}</button>{selectedNaturalPage && <button type="button" className="secondary" disabled={busy || naturalRunActive} onClick={() => void regenerateNatural(selectedNatural.viewId, selectedNaturalPage.id)}>이 시나리오 다시 생성</button>}</div></div>}
+          {selectedNaturalState.error && <p className="warning natural-page-error">{selectedNaturalState.error}</p>}
+          {selectedNaturalState.quality && (() => { const quality = selectedNaturalState.quality; return <details className="diagnostic-panel"><summary>{quality.status === "Reviewed" ? "생성 원본 설계 검토 완료" : "검토 후 편집됨"} · 요구사항 {quality.reviewedRequirementIds.length}개 · 설계 가정 {quality.assumptionElementIds.length}개</summary>
             <p className="help">설계 가정은 그림에 표시됩니다. 수동 편집한 내용은 별도 검토가 필요합니다.</p>
-            <ul>{naturalRequirements?.requirements.filter(item => !selectedNaturalPage?.scenarioId || item.scenarioId === selectedNaturalPage.scenarioId).map(item => { const range = naturalRequirements.sourceRanges?.find(source => source.id === item.sourceRangeId); return <li key={item.id}>{item.origin === "assumption" ? "설계 가정: " : "요구사항: "}{item.text}{range && <small> · 원문 {range.startOffset + 1}–{range.endOffset}</small>}</li>; })}</ul>
+            <ul>{naturalRequirements?.requirements.filter(item => quality.reviewedRequirementIds.includes(item.id)).map(item => { const range = naturalRequirements.sourceRanges?.find(source => source.id === item.sourceRangeId); return <li key={item.id}>{item.origin === "assumption" ? "설계 가정: " : "요구사항: "}{item.text}{range && <small> · 원문 {range.startOffset + 1}–{range.endOffset}</small>}</li>; })}</ul>
           </details>; })()}
           {diagram && naturalRecord && selectedNatural && canEditNatural ? <DiagramEditor artifact={diagram} downloadName={`natural-${diagram.type}`} reportError={reportError} zoomable canvasToolbar
             onSave={(input) => api.saveNaturalDiagramEdit(naturalRecord.id, selectedNatural.viewId, input, selectedNaturalPage?.id)}
-            onPreview={(input, signal) => api.previewNaturalDiagramEdit(naturalRecord.id, selectedNatural.viewId, input, signal, selectedNaturalPage?.id)} /> : diagram ? <p className="help">실행이 완료되어 결과가 저장되면 이 페이지를 직접 편집할 수 있습니다.</p> : <EmptyState text="요청을 입력하면 결과가 여기에 표시됩니다." />}
+            onPreview={(input, signal) => api.previewNaturalDiagramEdit(naturalRecord.id, selectedNatural.viewId, input, signal, selectedNaturalPage?.id)} /> : diagram ? <p className="help">실행이 완료되어 결과가 저장되면 이 페이지를 직접 편집할 수 있습니다.</p> : <EmptyState text={selectedNaturalPage?.state === "Failed" ? "이 시나리오에는 생성된 결과가 없습니다." : "요청을 입력하면 결과가 여기에 표시됩니다."} />}
           {naturalRevisions.length > 1 && <div className="revision-list horizontal"><strong>요청 리비전</strong>{naturalRevisions.map((record) => <button type="button" className={naturalRecord?.id === record.id ? "active" : ""} key={record.id} onClick={() => selectNaturalRecord(record)}>r{record.revision} · {record.source === "manualDsl" ? "DSL 편집" : "생성/구성"}</button>)}</div>}
         </section>
       </section>}

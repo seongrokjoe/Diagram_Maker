@@ -5,7 +5,7 @@ namespace DiagramMaker.Services;
 
 internal static partial class NaturalDesignValidation
 {
-    public const string Protocol = "natural-design-v9";
+    public const string Protocol = "natural-design-v10";
     public static string? Requirements(NaturalRequirements value, string prompt)
     {
         if (string.IsNullOrWhiteSpace(value.Title) || value.Requirements is not { Count: > 0 and <= 150 } ||
@@ -62,7 +62,7 @@ internal static partial class NaturalDesignValidation
                 node.Kind is not ("class" or "interface" or "participant" or "state" or "initial" or "final" or "operation" or "decision" or "terminal" or "component") ||
                 node.Shape is not ("" or "decision" or "terminal" or "call" or "process") ||
                 !References(node.RequirementIds, node.Assumption)) return "NaturalNodeInvalid";
-            if (type == "class" && (node.Kind is not ("class" or "interface") || node.Members.Count == 0)) return "NaturalClassMembersMissing";
+            if (type == "class" && node.Kind is not ("class" or "interface")) return "NaturalNodeInvalid";
             foreach (var member in node.Members)
                 if (member is null || member.Kind is not ("field" or "method") || member.Visibility is not ("public" or "private" or "protected" or "internal") ||
                     string.IsNullOrWhiteSpace(member.Name) || string.IsNullOrWhiteSpace(member.Type) || member.Parameters is null || member.Preconditions is null ||

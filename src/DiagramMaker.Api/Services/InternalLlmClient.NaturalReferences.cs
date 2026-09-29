@@ -11,6 +11,16 @@ public sealed partial class InternalLlmClient
     {
         var targets = issues.Where(NaturalReferenceRecovery.IsReferenceIssue)
             .DistinctBy(issue => (issue.TargetKind, issue.ItemId)).ToArray();
+        if (targets.Length > 8)
+        {
+            var combined = new List<NaturalReferenceBinding>();
+            foreach (var batch in targets.Chunk(8))
+            {
+                var repaired = await RepairNaturalReferencesAsync(prompt, type, requirements, design, batch, thinking, ct, recovery);
+                combined.AddRange(repaired.Bindings);
+            }
+            return new(combined);
+        }
         var targetIds = targets.Select(issue => issue.ItemId).Distinct(StringComparer.Ordinal).ToArray();
         var allowedIds = requirements.Requirements.Select(item => item.Id).ToArray();
         var schema = JsonSerializer.SerializeToElement(new {

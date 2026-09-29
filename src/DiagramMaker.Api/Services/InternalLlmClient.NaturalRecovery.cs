@@ -64,16 +64,29 @@ public sealed partial class InternalLlmClient
             await execution.SetRecoveryAsync(group, state, descendants: true);
             var last = execution.Diagnostics.LastOrDefault(d => d.ErrorCode is not null && d.Kind != "Terminal" &&
                 (d.RecoveryGroupId == group || d.ParentGroupId == group || d.AncestorGroupIds?.Contains(group) == true));
+            var root = execution.Diagnostics.FirstOrDefault(d => d.ErrorCode is not null && d.Kind != "Terminal" &&
+                d.RecoveryState != "Recovered" &&
+                (d.RecoveryGroupId == group || d.ParentGroupId == group || d.AncestorGroupIds?.Contains(group) == true));
+            var request = execution.Diagnostics.LastOrDefault(d => d.Kind == "Request" &&
+                (d.RecoveryGroupId == group || d.ParentGroupId == group || d.AncestorGroupIds?.Contains(group) == true));
             var id = SemanticExecution.Hash(group + ":terminal:" + execution.Progress.AttemptNumber);
             await execution.RecordAsync(new(id, "natural-" + stage, last?.UnitId ?? execution.UnitId, "Failed", DateTimeOffset.UtcNow,
                 ErrorCode: error?.Code ?? (interrupted ? "NATURAL_INTERRUPTED" : "NATURAL_INTERNAL_ERROR"),
-                ValidationCode: error?.FailureKind ?? last?.ValidationCode, Purpose: stage + "-result",
+                ValidationCode: error?.FailureKind ?? last?.ValidationCode, Purpose: request?.Purpose ?? stage + "-result",
                 ValidationDetails: error?.ValidationDetails ?? last?.ValidationDetails,
                 Attempt: last?.Attempt,
                 RecoveryState: state, NextAction: state == "Interrupted" ? "Resume" : state == "RequiresAction" ? "CheckSettings" : "StartNewRun",
                 Kind: "Terminal", RequestId: last?.RequestId ?? last?.Id,
+                RootDiagnosticId: root?.RootDiagnosticId ?? root?.Id,
+                ExceptionKind: error is null && !interrupted ? exception switch {
+                    ArgumentException => "Argument", NullReferenceException => "NullReference",
+                    KeyNotFoundException => "MissingKey", InvalidOperationException => "InvalidOperation", _ => "Internal" } : null,
                 Extraction: execution.Diagnostics.LastOrDefault(d => d.Extraction is not null &&
                     (d.RecoveryGroupId == group || d.AncestorGroupIds?.Contains(group) == true))?.Extraction));
+            if (error is null && !interrupted)
+                throw new LlmClientException("NATURAL_INTERNAL_ERROR",
+                    $"다이어그램 처리 중 내부 오류가 발생했습니다. 추적 ID: {id[..16]}. 최초 오류와 발생 단계는 진단에 보존됩니다.",
+                    failureKind: root?.ValidationCode, validationDetails: root?.ValidationDetails);
             throw;
         }
     }

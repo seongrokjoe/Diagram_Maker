@@ -53,7 +53,9 @@ const llm = createServer(async (request, response) => {
       const items = ranges.map((range, index) => ({ id: `r${index + 1}`, text: `처리 ${index + 1}`, kind: 'behavior',
         sourceRangeIds: [range.id] }));
       value = { title: '합성 요청 설계', entities: ['장비'], requirements: items,
-        scenarios: [{ id: 'scenario-1', title: '요청 처리', requirementIds: items.map(item => item.id) }],
+        scenarios: mode === 'five-pages' || mode === 'all-page-fail' ? items.map((item, index) => ({
+          id: `scenario-${index + 1}`, title: `동작 ${index + 1}`, requirementIds: [item.id] })) :
+          [{ id: 'scenario-1', title: '요청 처리', requirementIds: items.map(item => item.id) }],
         questions: mode === 'question' && !JSON.stringify(ranges).includes('사용자 확인 답변') ?
           [{ id: 'q1', text: '승인을 어떻게 처리합니까?', reason: '승인 주체에 따라 호출 흐름이 달라집니다.', sourceRangeIds: [ranges[0].id], choices: ['자동 승인', '담당자 승인'] }] : [] };
       if (mode === 'unknown-id') value.requirements[0].sourceRangeIds = ['unknown'];
@@ -73,10 +75,16 @@ const llm = createServer(async (request, response) => {
       targetKind: target.targetKind, targetId: target.targetId,
       requirementIds: mode === 'references-unresolved' ? [] : context.requirements.requirements.map(item => item.id),
     })) };
-    else if (kind === 'scenario-mapping') value = { scenarios: [{ id: 'scenario-1', title: '요청 처리',
-      requirementIds: context.requirements.requirements.map(r => r.id) }], questions: [] };
+    else if (kind === 'scenario-mapping') {
+      const ids = context.requirements.requirements.map(r => r.id);
+      value = properties.questions ? { scenarios: [{ id: 'scenario-1', title: '요청 처리', requirementIds: ids }], questions: [] }
+        : { scenarios: [{ id: 'part1', title: '요청', requirementIds: ids.slice(0, 1) }, { id: 'part2', title: '결과', requirementIds: ids.slice(1) }] };
+    }
     else {
       value = naturalDesignFixture(context, properties, 'valid');
+      if (mode === 'all-page-fail' || mode === 'five-pages' && context.requirements.requirements.some(item => ['r4', 'r5'].includes(item.id)))
+        value.nodes = null;
+      if (mode === 'class-malformed' && context.block) value.nodes[0].members = null;
       if (mode === 'references-missing' || mode === 'references-unresolved')
         for (const element of [...value.nodes, ...value.edges]) element.requirementIds = [];
     }
@@ -149,7 +157,7 @@ try {
   assert.equal(run.checkpoints, null);
   assert.equal(run.requirements.sourceRanges.length, 2);
   const original = await request(`/natural-diagrams/${run.resultDiagramId}`);
-  assert.equal(original.generatorVersion, 'natural-v13');
+  assert.equal(original.generatorVersion, 'natural-v14');
   await request(`/natural-diagram-runs/${run.id}`, 'GET', undefined, 403, 'other-owner');
   await request(`/natural-diagram-runs/${run.id}/diagnostics`, 'GET', undefined, 403, 'other-owner');
   await request(`/natural-diagram-runs/${run.id}/answers`, 'POST', {}, 403, 'other-owner');
@@ -236,7 +244,7 @@ try {
   assert.ok(selfTest.cases.every(item => item.reviewedPages > 0));
   assert.ok(!selfTest.report.includes(llmOrigin));
   assert.equal(selfTest.summary.split('\n').length, 4);
-  assert.match(selfTest.summary, /natural-v13; protocol: natural-design-v9/);
+  assert.match(selfTest.summary, /natural-v14; protocol: natural-design-v10/);
   assert.ok(!selfTest.summary.includes(llmOrigin));
   assert.ok(selfTest.cases.every(item => item.extraction.extractionAttempts >= 1));
   if (packageRoot) {
@@ -312,12 +320,13 @@ try {
   const crossView = await poll((await request('/natural-diagram-runs', 'POST', { request: allFormats.request }, 202)).id);
   assert.equal(crossView.state, 'Partial');
   assert.equal(crossView.views[0].errorCode, 'NATURAL_CROSS_VIEW_REVIEW');
-  assert.ok(crossView.views[0].pages.every(page => page.diagram && page.state === 'Completed'));
+  assert.ok(crossView.views[0].pages.every(page => page.diagram && page.state === 'Partial'));
   checks.push({ name: 'cross-view-rejection-retains-reviewed-pages' });
 
   mode = 'split';
   const split = await poll((await create()).id);
   assert.equal(split.state, 'Completed', split.errorMessage);
+  assert.equal((await request(`/natural-diagram-runs/${split.id}/diagnostics?format=json`)).unresolvedProblems, 0);
   const parts = split.views[0].pages;
   assert.equal(parts.length, 2);
   assert.equal(new Set(parts.flatMap(part => part.designQuality.reviewedRequirementIds)).size, 2);
@@ -442,6 +451,67 @@ try {
   await page.screenshot({ path: path.join(fixture, 'missing-reference-comparison-1440.png'), fullPage: true });
   assert.deepEqual(errors, []);
   checks.push({ name: 'unresolved-references-stay-failed-with-empty-source-comparison', requests: calls.length - unresolvedStart });
+  mode = 'five-pages';
+  const five = await poll((await create('준비한다. 요청한다. 확인한다. 저장한다. 종료한다.')).id);
+  assert.equal(five.state, 'Partial');
+  assert.deepEqual(five.views[0].pages.map(item => item.state), ['Completed', 'Completed', 'Completed', 'Failed', 'Failed']);
+  await page.reload();
+  await page.locator('.natural-run-history summary').click();
+  await page.locator('.natural-run-history button').first().click();
+  await page.locator('.natural-result-counts').filter({ hasText: '완료 3개 · 부분 완료 0개 · 실패 2개' }).waitFor();
+  assert.ok(!(await page.locator('.natural-run-status').innerText()).includes(five.views[0].pages[3].errorMessage));
+  for (let index = 0; index < 5; index++) {
+    await page.getByRole('button', { name: `동작 ${index + 1} · ${index < 3 ? '완료' : '실패'}`, exact: true }).click();
+    if (index < 3) {
+      await page.locator('.preview .diagram-canvas svg').waitFor();
+      assert.equal(await page.locator('.natural-page-error').count(), 0);
+    } else {
+      await page.getByText('이 시나리오에는 생성된 결과가 없습니다.', { exact: true }).waitFor();
+      assert.equal(await page.locator('.preview .diagram-canvas svg').count(), 0);
+      assert.equal(await page.locator('.natural-page-error').count(), 1);
+    }
+  }
+  await page.screenshot({ path: path.join(fixture, 'isolated-page-1440.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: path.join(fixture, 'isolated-page-390.png'), fullPage: true });
+  await page.getByRole('button', { name: '진단 요약 복사', exact: true }).click();
+  await page.getByLabel('전달용 진단 요약').waitFor();
+  assert.match(await page.getByLabel('전달용 진단 요약').inputValue(), /완료 3 \/ 부분 0 \/ 실패 2/);
+  checks.push({ name: 'five-pages-isolate-three-successes-two-failures-and-summary-ui' });
+
+  mode = 'all-page-fail';
+  const noResult = await poll((await create('요청한다. 확인한다.')).id);
+  assert.equal(noResult.state, 'Failed');
+  assert.equal(noResult.resultDiagramId, null);
+  const selected = { request: noResult.request, sourceRunId: noResult.id, regeneratePageIds: [noResult.views[0].pages[0].id] };
+  await request('/natural-diagram-runs', 'POST', selected, 403, 'other-owner');
+  await request('/natural-diagram-runs', 'POST', { ...selected, request: { ...selected.request, prompt: '다른 요청' } }, 400);
+  await request('/natural-diagram-runs', 'POST', { ...selected, regeneratePageIds: ['unknown'] }, 400);
+  await request(`/natural-diagram-runs/${noResult.id}/diagnostics?format=summary`, 'GET', undefined, 403, 'other-owner');
+  mode = 'valid';
+  const retryStart = calls.length;
+  const retried = await poll((await request('/natural-diagram-runs', 'POST', selected, 202)).id);
+  assert.equal(retried.sourceRunId, noResult.id);
+  assert.equal(retried.state, 'Partial', retried.errorMessage);
+  assert.deepEqual(retried.views[0].pages.map(item => item.state), ['Completed', 'Failed']);
+  assert.equal(calls.slice(retryStart).filter(call => call.kind === 'requirements').length, 0);
+  assert.equal(calls.slice(retryStart).filter(call => call.kind === 'design').length, 1);
+  assert.equal((await request(`/natural-diagrams/${retried.resultDiagramId}`)).sourceRunId, retried.id);
+  assert.equal((await request(`/natural-diagram-runs/${noResult.id}`)).state, 'Failed');
+  checks.push({ name: 'failed-run-selected-page-regeneration-input-validation-acl-and-history' });
+
+  mode = 'class-malformed';
+  const malformed = await poll((await request('/natural-diagram-runs', 'POST', { request: {
+    prompt: '장비에 요청한다.', views: [{ id: 'class', diagramType: 'class', presetId: 'balanced' }],
+  } }, 202)).id);
+  assert.equal(malformed.state, 'Failed');
+  const malformedReport = await request(`/natural-diagram-runs/${malformed.id}/diagnostics?format=json`);
+  assert.ok(malformedReport.diagnostics.some(item => item.purpose === 'class-members' && item.validationCode === 'NaturalFieldTypeInvalid'));
+  assert.ok(!malformedReport.diagnostics.some(item => item.errorCode === 'NATURAL_INTERNAL_ERROR'));
+  assert.ok(malformedReport.diagnostics.some(item => item.kind === 'Terminal' && item.rootDiagnosticId && item.pageId === 'class-class-model'));
+  assert.ok(malformedReport.unresolvedProblems > 0);
+  checks.push({ name: 'malformed-class-member-is-structural-failure-with-scoped-root-diagnostic' });
+  assert.deepEqual(errors, []);
   await writeFile(path.join(fixture, 'result.json'), JSON.stringify({ status: 'passed', checks, calls,
     elapsedMilliseconds: Date.now() - startedAt, realModel: false, postgres: false }, null, 2));
   console.log(`Natural reliability smoke passed: ${fixture}`);

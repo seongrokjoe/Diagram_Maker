@@ -90,6 +90,7 @@ public sealed class NaturalSemanticAssemblyTests
                     [new("r2", "label", Reviews % 2 == 0 ? "NaturalEvidenceMismatch" : "NaturalUnsupportedClaim", "조건을 보존하세요", ["r2"], SourceQuote: "결과를 확인한다.", RelatedElementIds: [])] : []);
             }
             var wire = JsonSerializer.SerializeToNode(value, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+            ScenarioPipelineTests.ScenarioModel.Adapt(wire, request);
             ScenarioPipelineTests.ScenarioModel.Project(wire, request.StructuredSchema!.Value);
             return Task.FromResult(new VllmCompletionResult(wire.ToJsonString(), "stop", 1, true, false, 0, request.MaxOutputTokens, 10, 10, 20));
         }

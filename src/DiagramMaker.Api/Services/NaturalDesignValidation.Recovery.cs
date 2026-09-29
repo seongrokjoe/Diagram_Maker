@@ -75,7 +75,7 @@ internal static partial class NaturalDesignValidation
         "NaturalQuestionSourceInvalid" or "NaturalQuestionInvalid" or "NaturalRequirementsInvalid" or "NaturalRequirementIdsInvalid" or
         "NaturalRequirementEvidenceInvalid" or "NaturalReviewFieldsMissing" or "NaturalReviewUnknownIds" or "NaturalReviewDuplicateIds" or
         "NaturalReviewMissingIds" or "NaturalReviewEvidenceInvalid" or "NaturalReviewFieldInvalid" or "NaturalReviewIssuesInvalid" or "NaturalReviewDecisionInvalid" or "NaturalReviewTargetUnknown" or
-        "NaturalReferenceRepairInvalid" or "NaturalNodeRequirementIdsMissing" or "NaturalNodeRequirementIdsUnknown" or "NaturalEdgeRequirementIdsMissing" or "NaturalEdgeRequirementIdsUnknown" or "NaturalDesignFieldsInvalid" or "NaturalNodeInvalid" or "NaturalClassMembersMissing" or "NaturalMemberInvalid" or
+        "NaturalPatchScopeInvalid" or "NaturalReferenceRepairInvalid" or "NaturalNodeRequirementIdsMissing" or "NaturalNodeRequirementIdsUnknown" or "NaturalEdgeRequirementIdsMissing" or "NaturalEdgeRequirementIdsUnknown" or "NaturalDesignFieldsInvalid" or "NaturalNodeInvalid" or "NaturalClassMembersMissing" or "NaturalMemberInvalid" or
         "NaturalEdgeInvalid" or "NaturalClassRelationInvalid" or "NaturalRequirementCoverageMissing" or "NaturalInterlockMissing" or "NaturalStateBoundaryInvalid" or
         "NaturalReviewInvalid" or "NaturalAcceptedIdsChanged" or "NaturalRequirementsReviewInvalid" or
         "EmptyContent" or "MixedContent" or "WrongRoot" or "MalformedJson" or "Deserialization" or "InvalidFields" => code,
@@ -86,7 +86,7 @@ internal static partial class NaturalDesignValidation
     internal static string DiagnosticField(string? field) => field switch {
         "requirements" or "sourceRangeIds" or "origin" or "scenarios" or "questions" or "structure" or "json" or
         "text" or "kind" or "label" or "guard" or "action" or "event" or "id" or "shape" or "assumption" or
-        "members" or "details" or "controlPath" or "type" or "sourceId" or "targetId" or "entities" or "concepts" or "connections" or "meaning" or "requirementIds" => field,
+        "members" or "details" or "controlPath" or "type" or "sourceId" or "targetId" or "order" or "entities" or "concepts" or "connections" or "meaning" or "requirementIds" => field,
         _ => "review"
     };
 }

@@ -72,7 +72,9 @@ public sealed class NaturalReliabilityTests
         var attached = NaturalRequirementEvidence.Attach(prompt, requirements);
         Assert.Single(attached.Scenarios!);
         Assert.Null(NaturalDesignValidation.Plan(attached));
-        Assert.Contains(NaturalRequirementEvidence.ForScenario(attached, new("part", "승인", ["r1"], [ranges[1].Id])).Requirements,
+        Assert.Contains(NaturalRequirementEvidence.ForScenario(attached, new("part", "승인", ["r1", "r2"], [ranges[1].Id, ranges[2].Id])).Requirements,
+            r => r.Kind == "interlock");
+        Assert.DoesNotContain(NaturalRequirementEvidence.ForScenario(attached, new("independent", "독립 동작", ["r1"], [ranges[1].Id])).Requirements,
             r => r.Kind == "interlock");
     }
 

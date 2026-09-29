@@ -32,7 +32,7 @@ public sealed record NaturalDesignReview(bool Accepted, IReadOnlyList<string> Re
 public sealed record NaturalDesignQuality(string Protocol, string Status, IReadOnlyList<string> ReviewedRequirementIds,
     IReadOnlyList<string> AssumptionElementIds, bool RepairUsed,
     IReadOnlyDictionary<string, IReadOnlyList<string>>? ElementRequirements = null);
-public sealed record NaturalDesignedDiagram(DiagramIr Diagram, NaturalDesignQuality? Quality = null);
+public sealed record NaturalDesignedDiagram(DiagramIr Diagram, NaturalDesignQuality? Quality = null, NaturalDesign? Design = null);
 
 public sealed record NaturalComparisonExcerpt(string Id, string Text, bool Truncated);
 public sealed record NaturalIssueComparison(string DiagnosticId, string Code, string Field, string TargetKind,
