@@ -411,3 +411,10 @@ checkpoint와 사용자 변경을 보존하며, 의미 있는 구현·검증·�
 - 사용자가 이전 버전 패키지를 정리하고 최신 버전만 남겨 push까지 완료하도록 추가 요청했다. 이 요청에 따라 앞선 internal.17 보존·원격 push 제외 범위를 변경한다. 정리 전에 검증 입력 363개가 현재 소스와 SHA-256으로 일치함을 확인했다.
 - `artifacts/release/`의 internal.16/internal.17 ZIP·SHA 4개를 제거하고 internal.18 ZIP·SHA 2개만 남겼다. 최신 ZIP의 SHA-256은 `f76f8026d27c19dac0f6c3092a373871ae69c0509e3cfaf03de811c337bd156d`로 유지된다. checkpoint와 Git 이력은 보존했다. 원격 조회 결과 origin/main은 로컬 HEAD의 조상이며 충돌 없이 일반 push할 수 있다.
 - 다음: 검증한 internal.18 구현·문서·배포와 이전 패키지 삭제를 커밋하고 `origin/main`에 push한다. 원격 HEAD와 로컬 HEAD 일치 및 작업 트리 상태를 확인해 전달 기록을 마감한다.
+- 로컬 구현·배포 커밋 완료: `07a2267` (`Stabilize natural diagram generation and deliver internal.18`)에 검증한 구현·테스트·문서·internal.18 ZIP/SHA와 이전 배포 패키지 삭제를 반영했다. 첫 push는 자동 승인 검토의 사용량 한도로 실행되지 않았다.
+
+### 2026-09-30 internal.18 잔여 전달 재개
+
+- 사용자의 잔여 작업·이전 패키지 삭제 요청으로 재개했다. 작업 트리는 깨끗하고 저장소 artifacts 전체에 internal.18 ZIP/SHA 2개만 남아 있다. ZIP SHA-256 `f76f8026d27c19dac0f6c3092a373871ae69c0509e3cfaf03de811c337bd156d`, 전체 verify 및 패키지 빌드 exit 0, 패키지 9개 최종 통과 기록을 재확인했다. 제품 코드와 ZIP은 바뀌지 않았다.
+- 원격 전달 보류: 일반 push를 요청했으나 자동 승인 검토가 내부 소스와 약 97MB ZIP을 GitHub `seongrokjoe/Diagram_Maker`의 `main`으로 전송하는 내용·목적지에 대한 명시적 승인이 필요하다는 이유로 거부했다. push는 실행되지 않았으며 우회하지 않았다. 구현·배포 커밋과 전달 기록은 로컬에 보존한다.
+- 다음: 사용자에게 내부 소스·최신 ZIP·전달 기록을 위 GitHub main으로 일반 push하는 승인을 요청한다. 승인 후 `git push origin HEAD:main`과 원격/로컬 HEAD 일치·깨끗한 작업 트리 확인으로 전달을 마감한다. 사내 GLM 5.2/PostgreSQL의 실제 FOUP 품질 검증은 별도 현장 확인으로 남는다.
