@@ -40,9 +40,9 @@ ZIP SHA-256: `f76f8026d27c19dac0f6c3092a373871ae69c0509e3cfaf03de811c337bd156d`.
 
 구현·테스트·문서·최신 패키지와 이전 배포 패키지 삭제는 로컬 커밋 `07a2267` (`Stabilize natural diagram generation and deliver internal.18`)에 반영했다. 저장소 artifacts 전체를 다시 확인해 internal.18 ZIP과 SHA 파일만 남아 있음을 확인했으며 최신 ZIP 해시도 일치했다.
 
-최초 push는 자동 승인 검토의 사용량 한도로 실행되지 않았다. 2026-09-30 잔여 작업 재개 후 일반 push를 다시 요청했으나, 자동 승인 검토가 내부 소스와 약 97MB 배포 ZIP을 GitHub `seongrokjoe/Diagram_Maker`의 `main`으로 전송하는 내용·목적지에 대한 명시적 승인이 필요하다는 이유로 거부했다. 두 push 명령 모두 실행되지 않았으며 우회하지 않았다. 사용자에게 해당 내용·목적지의 전송 승인을 요청하는 단계이다.
+최초 push는 자동 승인 검토의 사용량 한도로 실행되지 않았다. 2026-09-30 잔여 작업 재개 후 일반 push를 다시 요청했으나, 자동 승인 검토가 내부 소스와 약 97MB 배포 ZIP을 GitHub `seongrokjoe/Diagram_Maker`의 `main`으로 전송하는 내용·목적지에 대한 명시적 승인이 필요하다는 이유로 거부했다. 두 push 명령 모두 실행되지 않았으며 우회하지 않았다. 이후 사용자가 내부 소스·최신 ZIP·전달 기록을 해당 GitHub main으로 전송하도록 명시적으로 승인했다.
 
-승인 후 남은 작업은 구현과 전달 기록 커밋을 `git push origin HEAD:main`으로 전송하고 `git ls-remote --heads origin main`과 로컬 HEAD 일치, 깨끗한 작업 트리를 확인하는 것이다. 제품 코드와 ZIP에는 추가 변경이 없어 전체 검증을 다시 실행하지 않았다.
+승인 후 `git push origin HEAD:main`이 exit 0으로 완료됐으며 구현 커밋 `07a2267`과 전달 기록 커밋 `9b7587c`를 원격에 반영했다. `git ls-remote --heads origin main`의 `9b7587c1b417088a30d60652b8a3147694e244b0`과 로컬 HEAD 일치 및 깨끗한 작업 트리를 확인했다. GitHub가 ZIP의 50MB 권장 크기 초과 경고를 표시했지만 전송은 수락했다. 이 완료 기록도 같은 원격으로 반영한다. 제품 코드와 ZIP에는 추가 변경이 없어 전체 검증을 다시 실행하지 않았다.
 
 ## 현장 확인
 
